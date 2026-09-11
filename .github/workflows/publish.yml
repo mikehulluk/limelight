@@ -32,7 +32,7 @@ jobs:
           # setuptools-scm reads the version from the tags.
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
 
       - name: Build the sdist and wheel
         run: uv build
