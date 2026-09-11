@@ -303,6 +303,17 @@ class _SemanticValidator:
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
                 f"cannot use a discrete x-axis; only line/scatter/stem artists support it"
             )
+        if kind == "line" and axis_data_type_kind(axes_spec["xAxis"]) == "timeSeries" and artist.get("xOverride") is None:
+            # A line's x is its source's index. On a time axis that index has
+            # to be a time or calendar one; noIndex would plot row numbers,
+            # and the app cannot turn row 0 into a date.
+            source_id, _ = refs.parse_column_ref(artist["y"])
+            source = self.sources.get(source_id)
+            if source is not None and source.get("index") == "noIndex":
+                raise LimelightError(
+                    f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
+                    f"draws against a time axis, but source {source_id!r} has no index to take its x values from"
+                )
         fields = ("x", "y") if kind in ("scatter", "stem") else ("y",)
         for field in fields:
             source_id, array_name = refs.parse_column_ref(artist[field])

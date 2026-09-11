@@ -2214,11 +2214,20 @@ class LimelightWindow(QMainWindow):
         self.figure_view_caption = None
         self.figure_view_panel = None
 
+        runtime = self.runtime
         tabs = QTabWidget()
-        tabs.addTab(self._build_story_tab(), "Story")
-        tabs.addTab(self._build_figures_tab(), "Figures")
-        tabs.addTab(self._build_data_tab(), "Data")
-        tabs.addTab(self._build_control_parameters_tab(), "ControlParameters")
+        # Every tab is built, so the wiring between them holds, but a tab with
+        # nothing to show is hidden rather than left empty: a package with no
+        # parameters has no Parameters tab. Tabs are found by name, never by
+        # index, so hiding one moves nothing.
+        for widget, title, has_content in (
+            (self._build_story_tab(), "Story", bool(runtime.story_blocks)),
+            (self._build_figures_tab(), "Figures", bool(runtime.figure_spec_order)),
+            (self._build_data_tab(), "Data", bool(runtime.sources)),
+            (self._build_control_parameters_tab(), "Parameters", bool(runtime.control_parameters)),
+        ):
+            index = tabs.addTab(widget, title)
+            tabs.setTabVisible(index, has_content)
         self.tabs = tabs
         self.setCentralWidget(tabs)
 
@@ -2264,7 +2273,7 @@ class LimelightWindow(QMainWindow):
         self._build_view_menu()
 
         self.help_menu = QMenu("&Help", self)
-        report_issue_action = QAction("report-issue", self)
+        report_issue_action = QAction("&Report an Issue...", self)
         report_issue_action.setObjectName("report-issue")
         report_issue_action.triggered.connect(self._report_issue)
         self.help_menu.addAction(report_issue_action)
@@ -2280,6 +2289,9 @@ class LimelightWindow(QMainWindow):
         self.help_button.setMenu(self.help_menu)
         self.help_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.help_button.setAutoRaise(True)
+        # The menu-indicator arrow Qt adds after the text is, at menu-bar
+        # size, a stray comma; the button reads as a menu without it.
+        self.help_button.setStyleSheet("QToolButton::menu-indicator { image: none; }")
 
         self.menuBar().setCornerWidget(self.help_button, Qt.Corner.TopRightCorner)
 
@@ -3141,7 +3153,7 @@ class LimelightWindow(QMainWindow):
         self.figure_view_title.setText(
             self.runtime.figure_view_heading(figure_id, index=figure_view_index)
         )
-        self.figure_view_caption.setText(figure_spec["caption"] or "")
+        self.figure_view_caption.setText(figure_spec.get("caption") or "")
         self.figure_view_panel.show_figure(
             figure_id,
             figure_view_index=figure_view_index,
@@ -3394,7 +3406,7 @@ class FigureViewWindow(QMainWindow):
         self.figure_view_panel = InteractiveFigureViewPanel(runtime, on_parameter_changed=on_parameter_changed)
         layout.addWidget(self.figure_view_panel, stretch=1)
 
-        caption = QLabel(figure_spec["caption"] or "")
+        caption = QLabel(figure_spec.get("caption") or "")
         caption.setWordWrap(True)
         layout.addWidget(caption)
 

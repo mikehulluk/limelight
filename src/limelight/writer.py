@@ -2390,9 +2390,12 @@ class LimelightProject:
         )
 
     def render_story_markdown(self) -> tuple[str, list[FigureView]]:
+        """The authored story, or nothing: a package can be figures alone, and
+        the app then shows no Story tab rather than a page with a title on it."""
+
         if self.story_markdown is not None:
             return self.story_markdown, []
-        return f"# {self.title}\n", []
+        return "", []
 
     def resolve_story(self) -> ResolvedStory:
         """Package the story: convert its images, rewrite it, number it, sign it.

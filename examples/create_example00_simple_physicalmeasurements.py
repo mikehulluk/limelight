@@ -148,7 +148,17 @@ in    { limelightVersion = "1.0"
               ]
             , schema = Some dailySummarySchema
             , header = True
-            , index = Limelight.Index.noIndex
+              -- One row per day from 2026-08-01, which is what the figure's
+              -- calendar axis draws against. A day's ordinal is one less than
+              -- Python's date.toordinal().
+            , index =
+                Limelight.Index.regularCalendar
+                  { calendar = Limelight.Calendar.prolepticGregorian
+                  , calendarUnit = Limelight.CalendarUnit.day
+                  , startOrdinal = 739828
+                  , calendarStep = 1
+                  , renderAnchor = Limelight.PeriodRenderAnchor.periodStart
+                  }
             , provenance = None Limelight.SourceProvenance
             , signatures = [] : List Limelight.DocumentSignature
             }

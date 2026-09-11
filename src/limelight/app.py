@@ -347,7 +347,7 @@ def figure_view_caption_markup(figure_spec: dict[str, Any], number: int | None) 
     a cross-reference points at is always printed somewhere a reader can see.
     """
 
-    return figure_caption_markup(number, figure_spec["caption"] or figure_spec["title"])
+    return figure_caption_markup(number, figure_spec.get("caption") or figure_spec["title"])
 
 
 # Story images are sized to fit rather than filled to the column: a small
