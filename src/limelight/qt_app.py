@@ -38,6 +38,7 @@ from PySide6.QtCore import (
     Qt,
     QtMsgType,
     QSettings,
+    QSize,
     QSignalBlocker,
     QThreadPool,
     QTimer,
@@ -256,6 +257,10 @@ def _ensure_application() -> tuple[QApplication, bool]:
     app = QApplication(sys.argv[:1])
     QApplication.setOrganizationName("Limelight")
     QApplication.setApplicationName("Limelight")
+    # The desktop entry the installers ship is limelight.desktop; naming it
+    # lets a Wayland shell, which ignores window icons, find the icon and
+    # group the windows by that entry.
+    QApplication.setDesktopFileName("limelight")
 
     icon = _application_icon()
     if not icon.isNull():
@@ -521,10 +526,21 @@ def _set_windows_app_user_model_id() -> None:
         logger.warning("Could not set Windows AppUserModelID: %s", error)
 
 
+# The sizes a window icon is published at. An SVG icon draws at any size but
+# advertises none, and Qt's X11 backend hands the window system only the
+# sizes an icon advertises - so a bare SVG icon reaches the taskbar as no
+# icon at all, and GNOME shows its placeholder.
+_ICON_SIZES = (16, 22, 24, 32, 48, 64, 128, 256)
+
+
 def _application_icon() -> QIcon:
-    icon = QIcon(str(APP_ICON_PATH))
-    if icon.isNull():
+    source = QIcon(str(APP_ICON_PATH))
+    if source.isNull():
         logger.warning("Limelight application icon could not be loaded from %s", APP_ICON_PATH)
+        return source
+    icon = QIcon()
+    for size in _ICON_SIZES:
+        icon.addPixmap(source.pixmap(QSize(size, size)))
     return icon
 
 
