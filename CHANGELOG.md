@@ -7,6 +7,19 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-09-11
+
+### Added
+
+- `LL desktop-entry` gives a pip or uv install on Linux what the native
+  installers have: an applications-menu entry, a taskbar icon, and
+  `.limelight` files that open with Limelight. `--remove` undoes it.
+
+### Fixed
+
+- The window icon was an SVG, which advertised no sizes, so the window
+  carried no icon for the taskbar; it is now published at real sizes.
+
 ## [0.0.2] - 2026-09-11
 
 ### Added
@@ -55,6 +68,7 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/mikehulluk/limelight/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/mikehulluk/limelight/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/mikehulluk/limelight/releases/tag/v0.0.1
