@@ -27,7 +27,7 @@ logger = logging.getLogger("limelight.cli")
 
 # The subcommands, in the order they are shown. `LL` uses these to tell a
 # request for the CLI from a package to open in the app.
-COMMANDS = ("json", "summary", "verify", "pdf")
+COMMANDS = ("json", "summary", "verify", "pdf", "desktop-entry")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -63,10 +63,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
 
+    desktop_parser = subparsers.add_parser(
+        "desktop-entry",
+        help="Install a Linux desktop entry for this install, so the app has a taskbar icon and owns .limelight files",
+    )
+    desktop_parser.add_argument("--remove", action="store_true", help="Remove the entry instead")
+
     args = parser.parse_args(argv)
     log_path = configure_logging()
     logger.info("Limelight CLI started with log file %s", log_path)
 
+    if args.command == "desktop-entry":
+        return _run_desktop_entry(remove=args.remove)
     if args.command == "verify":
         return _run_verify(args.packages)
     if args.command == "pdf":
@@ -88,6 +96,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.exception("Unexpected Limelight failure")
         return 1
 
+    return 0
+
+
+def _run_desktop_entry(*, remove: bool) -> int:
+    from . import desktop_entry
+
+    try:
+        paths = desktop_entry.remove() if remove else desktop_entry.install()
+    except (RuntimeError, FileNotFoundError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    verb = "Removed" if remove else "Wrote"
+    for path in paths:
+        print(f"{verb} {path}")
+    if not remove:
+        print("Limelight now appears in the applications menu, and .limelight files open with it.")
+    elif not paths:
+        print("No desktop entry was installed.")
     return 0
 
 

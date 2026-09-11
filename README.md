@@ -43,6 +43,11 @@ limelight-cli pdf example.limelight        # render a package's story to PDF
 `LL` is the short form of both: `LL example.limelight` opens the app, and
 `LL verify example.limelight` (or `summary`, `json`, `pdf`) runs the CLI.
 
+On a Linux desktop, `LL desktop-entry` gives a pip or uv install what the
+native installers have: an entry in the applications menu, a taskbar icon,
+and `.limelight` files that open with Limelight. `LL desktop-entry --remove`
+takes it away again.
+
 The scripts in `examples/` build sample packages into `_build/examples/`, and
 `src/limelight/language-reference/` holds the Dhall types a manifest is
 written against; the writer copies them into every package it builds.
