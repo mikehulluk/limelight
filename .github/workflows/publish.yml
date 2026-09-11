@@ -21,7 +21,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: pypi
+    # A job-level permissions block replaces the workflow's, so contents has
+    # to be repeated here or the checkout cannot read the repository.
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v7
