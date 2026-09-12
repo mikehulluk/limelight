@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Defines the MIME type that limelight.desktop declares. Without this file installed
+  into /usr/share/mime/packages, application/x-limelight-package matches nothing and
+  the file association silently never fires.
+
+  Only the archive form is matched. A package being authored is a directory,
+  which the desktop stack reports as inode/directory, and associating that is
+  neither possible nor wanted.
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-limelight-package">
+    <comment>Limelight package</comment>
+    <comment xml:lang="en-GB">Limelight package</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.limelight"/>
+    <icon name="limelight"/>
+    <generic-icon name="x-office-document"/>
+  </mime-type>
+</mime-info>

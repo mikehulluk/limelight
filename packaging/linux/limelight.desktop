@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Limelight
+GenericName=Limelight Package Viewer
+Comment=Read and explore Limelight data packages
+Exec=limelight %f
+Icon=limelight
+Terminal=false
+Categories=Science;DataVisualization;Education;
+MimeType=application/x-limelight-package;
+StartupWMClass=limelight
+Keywords=data;plot;figure;dataset;report;

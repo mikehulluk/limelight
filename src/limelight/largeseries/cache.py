@@ -1,0 +1,274 @@
+from __future__ import annotations
+
+import datetime
+import os
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import h5py
+import numpy as np
+
+from .arraysource import ArraySource, HdfArraySource
+from .cachedir import resolve_cache_dir
+from .constants import (
+    DEFAULT_CHUNK_SIZE,
+    HASH_STREAM_BLOCK,
+    MIN_LEVEL_BUCKETS,
+    SCHEMA_VERSION,
+    aligned_stream_block,
+    is_power_of_two,
+)
+from .exceptions import CacheCorruptError, InvalidSourceSpecError
+from .hashing import StreamingHasher
+from .memo import MemoEntry, lookup_memo, update_memo
+from .pyramid import LevelArrays, LevelZeroBuilder, cascade_levels
+from .timing import TimingProbeLike
+
+
+@dataclass(frozen=True)
+class SourceSpec:
+    """Describes where a raw series lives and how to interpret its x-axis."""
+
+    hdf5_path: Path
+    y_dataset: str
+    x_dataset: str | None = None
+    irregular_x: bool = False
+    x0: float = 0.0
+    dx: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.irregular_x and self.x_dataset is None:
+            raise InvalidSourceSpecError("irregular_x=True requires an x_dataset")
+        if not self.irregular_x and self.x_dataset is not None:
+            raise InvalidSourceSpecError("x_dataset is only used when irregular_x=True")
+
+    def open_y(self) -> ArraySource:
+        return HdfArraySource(self.hdf5_path, self.y_dataset)
+
+    def open_x(self) -> ArraySource | None:
+        if not self.irregular_x:
+            return None
+        return HdfArraySource(self.hdf5_path, self.x_dataset)
+
+
+@dataclass(frozen=True)
+class CacheHandle:
+    """An open cache file plus enough metadata to answer queries without re-opening."""
+
+    path: Path
+    content_hash: str
+    source_length: int
+    chunk_size: int
+    irregular_x: bool
+    n_levels: int
+    dtype: np.dtype
+    x_dtype: np.dtype | None
+    _h5: h5py.File = field(repr=False, compare=False)
+
+    def level_group(self, level: int) -> h5py.Group:
+        return self._h5[f"/levels/{level}"]
+
+
+def build_or_get_cache(
+    spec: SourceSpec,
+    *,
+    cache_dir: Path | None = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    force: bool = False,
+    stream_block: int = HASH_STREAM_BLOCK,
+    timing: TimingProbeLike | None = None,
+) -> CacheHandle:
+    if not is_power_of_two(chunk_size):
+        raise InvalidSourceSpecError(f"chunk_size must be a power of two, got {chunk_size}")
+
+    resolved_cache_dir = resolve_cache_dir(cache_dir)
+    source_path = spec.hdf5_path.resolve()
+    stat = source_path.stat()
+    mtime_ns = stat.st_mtime_ns
+    size = stat.st_size
+
+    if not force:
+        entry = lookup_memo(resolved_cache_dir, source_path, spec.y_dataset, mtime_ns, size, chunk_size)
+        if entry is not None:
+            dest = resolved_cache_dir / f"{entry.content_hash}.h5"
+            if dest.exists():
+                hit_start = timing.start() if timing is not None else None
+                try:
+                    handle = open_existing_cache(resolved_cache_dir, entry.content_hash)
+                except CacheCorruptError:
+                    pass
+                else:
+                    if timing is not None and hit_start is not None:
+                        timing.log(
+                            "limelight.largeseries.cache.hit",
+                            hit_start,
+                            (
+                                ("source_length", handle.source_length),
+                                ("chunk_size", handle.chunk_size),
+                                ("n_levels", handle.n_levels),
+                                ("cache_bytes", dest.stat().st_size),
+                                ("content_hash", handle.content_hash),
+                            ),
+                        )
+                    return handle
+
+    start = timing.start() if timing is not None else None
+
+    block = aligned_stream_block(stream_block, chunk_size)
+    hasher = StreamingHasher()
+    builder = LevelZeroBuilder(chunk_size, spec.irregular_x)
+
+    y_array = spec.open_y()
+    x_array = spec.open_x()
+    try:
+        source_length = y_array.length
+        dtype = y_array.dtype
+        x_dtype = x_array.dtype if x_array is not None else None
+
+        if x_array is not None:
+            for y_block, x_block in zip(y_array.iter_blocks(block), x_array.iter_blocks(block)):
+                hasher.update(y_block)
+                hasher.update(x_block)
+                builder.feed(y_block, x_block)
+        else:
+            for y_block in y_array.iter_blocks(block):
+                hasher.update(y_block)
+                builder.feed(y_block, None)
+    finally:
+        y_array.close()
+        if x_array is not None:
+            x_array.close()
+
+    level0 = builder.finish()
+    content_hash = hasher.hexdigest()
+
+    levels = cascade_levels(level0, MIN_LEVEL_BUCKETS)
+
+    dest_path = resolved_cache_dir / f"{content_hash}.h5"
+    _write_cache_file(
+        dest_path,
+        spec=spec,
+        chunk_size=chunk_size,
+        content_hash=content_hash,
+        source_length=source_length,
+        levels=levels,
+        dtype=dtype,
+        x_dtype=x_dtype,
+    )
+
+    update_memo(
+        resolved_cache_dir,
+        source_path,
+        spec.y_dataset,
+        MemoEntry(
+            mtime_ns=mtime_ns,
+            size=size,
+            chunk_size=chunk_size,
+            content_hash=content_hash,
+            irregular_x=spec.irregular_x,
+        ),
+    )
+
+    if timing is not None and start is not None:
+        timing.log(
+            "limelight.largeseries.cache.build",
+            start,
+            (
+                ("source_length", source_length),
+                ("chunk_size", chunk_size),
+                ("n_levels", len(levels)),
+                ("cache_bytes", dest_path.stat().st_size),
+                ("content_hash", content_hash),
+            ),
+        )
+
+    return open_existing_cache(resolved_cache_dir, content_hash)
+
+
+def open_existing_cache(cache_dir: Path, content_hash: str) -> CacheHandle:
+    path = Path(cache_dir) / f"{content_hash}.h5"
+    if not path.is_file():
+        raise FileNotFoundError(path)
+
+    handle_file = h5py.File(path, "r")
+    try:
+        attrs = handle_file.attrs
+        if attrs.get("content_hash") != content_hash:
+            raise CacheCorruptError(f"{path} content_hash attribute does not match filename")
+        if int(attrs.get("schema_version", -1)) != SCHEMA_VERSION:
+            raise CacheCorruptError(f"{path} has an unsupported schema_version")
+
+        irregular_x = bool(attrs["irregular_x"])
+        n_levels = int(attrs["n_levels"])
+        for level in range(n_levels):
+            if f"/levels/{level}/y_min" not in handle_file or f"/levels/{level}/y_max" not in handle_file:
+                raise CacheCorruptError(f"{path} is missing level {level} data")
+            if irregular_x and (
+                f"/levels/{level}/x_min" not in handle_file or f"/levels/{level}/x_max" not in handle_file
+            ):
+                raise CacheCorruptError(f"{path} is missing level {level} x data")
+
+        return CacheHandle(
+            path=path,
+            content_hash=content_hash,
+            source_length=int(attrs["source_length"]),
+            chunk_size=int(attrs["chunk_size"]),
+            irregular_x=irregular_x,
+            n_levels=n_levels,
+            dtype=np.dtype(attrs["dtype"]),
+            x_dtype=np.dtype(attrs["x_dtype"]) if irregular_x else None,
+            _h5=handle_file,
+        )
+    except Exception:
+        handle_file.close()
+        raise
+
+
+def close_cache(handle: CacheHandle) -> None:
+    handle._h5.close()
+
+
+def _write_cache_file(
+    dest_path: Path,
+    *,
+    spec: SourceSpec,
+    chunk_size: int,
+    content_hash: str,
+    source_length: int,
+    levels: list[LevelArrays],
+    dtype: np.dtype,
+    x_dtype: np.dtype | None,
+) -> None:
+    fd, tmp_name = tempfile.mkstemp(prefix="cache-", suffix=".h5.tmp", dir=dest_path.parent)
+    os.close(fd)
+    try:
+        with h5py.File(tmp_name, "w") as handle:
+            handle.attrs["schema_version"] = SCHEMA_VERSION
+            handle.attrs["content_hash"] = content_hash
+            handle.attrs["source_length"] = source_length
+            handle.attrs["chunk_size"] = chunk_size
+            handle.attrs["irregular_x"] = np.uint8(1 if spec.irregular_x else 0)
+            handle.attrs["dtype"] = str(dtype)
+            if spec.irregular_x and x_dtype is not None:
+                handle.attrs["x_dtype"] = str(x_dtype)
+            handle.attrs["n_levels"] = len(levels)
+            handle.attrs["source_path_hint"] = str(spec.hdf5_path)
+            handle.attrs["dataset_path_hint"] = spec.y_dataset
+            handle.attrs["built_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+            for level_index, level in enumerate(levels):
+                group = handle.create_group(f"/levels/{level_index}")
+                group.create_dataset("y_min", data=level.y_min, compression="lzf")
+                group.create_dataset("y_max", data=level.y_max, compression="lzf")
+                if spec.irregular_x:
+                    group.create_dataset("x_min", data=level.x_min, compression="lzf")
+                    group.create_dataset("x_max", data=level.x_max, compression="lzf")
+
+        os.replace(tmp_name, dest_path)
+    except BaseException:
+        try:
+            os.remove(tmp_name)
+        except OSError:
+            pass
+        raise

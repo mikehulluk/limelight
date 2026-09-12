@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="beam" x1="12" y1="12" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e6ff70"/>
+      <stop offset="1" stop-color="#c8f53a" stop-opacity="0.45"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#172026"/>
+  <!-- beam from a lamp in the top-left corner, widening down-right -->
+  <path d="M12 12 L64 30 L64 64 L30 64 Z" fill="url(#beam)"/>
+  <!-- lamp -->
+  <circle cx="12" cy="12" r="7.5" fill="#f7ffc2"/>
+  <!-- chart line caught in the beam -->
+  <path d="M30 54 L38 44 L46 48 L56 36" fill="none" stroke="#172026" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="56" cy="36" r="3.6" fill="#172026"/>
+</svg>

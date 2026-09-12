@@ -1,0 +1,36 @@
+# Line endings.
+#
+# This repository was carried between a Windows machine and a Linux one without
+# its history, and arrived with roughly two thirds of its text files stored as
+# CRLF and the rest as LF. Nothing enforced either, so any tool that rewrote a
+# file could silently convert one to the other and turn a small edit into a
+# whole-file diff.
+#
+# `text=auto` settles it: Git stores every text file with LF, and checks it out
+# with whatever the platform expects - CRLF on Windows where core.autocrlf is
+# set, LF here. The two working copies can now disagree about endings on disk
+# without disagreeing about the file.
+* text=auto
+
+# Formats where a byte that looks like a line ending is data, not formatting.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.h5 binary
+*.pdf binary
+*.limelight binary
+
+# Stated explicitly rather than left to autodetection, so the intent survives a
+# file that happens to start with something that looks binary.
+*.py text
+*.dhall text
+*.md text
+*.txt text
+*.toml text
+*.yml text
+*.json text
+*.csv text
+*.html text
+*.hs text

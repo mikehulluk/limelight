@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# The PyPI name. "limelight" itself is on PyPI's prohibited list, so the
+# distribution is limelight-app; the import name and commands stay limelight.
+name = "limelight-app"
+# The version is the git tag (v0.0.1 -> 0.0.1); commits after a tag get a
+# .devN suffix. See [tool.setuptools_scm].
+dynamic = ["version"]
+description = "A portable package format for data-driven figures and analysis stories, and a desktop app for reading them."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Mike Hull", email = "mikehulluk@gmail.com" }]
+keywords = ["data", "visualization", "figures", "plots", "story", "report", "dhall", "matplotlib", "qt"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Education",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+    "cryptography>=42.0",
+    "h5py>=3.10",
+    "linkify-it-py>=2.0",
+    "markdown-it-py[linkify]>=4.0",
+    "matplotlib>=3.8",
+    "mdit-py-plugins>=0.6",
+    "numpy>=1.26",
+    "pillow>=10.0",
+    "PySide6>=6.6",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+packaging = ["pyinstaller>=6.10"]
+
+[project.urls]
+Homepage = "https://github.com/mikehulluk/limelight"
+Source = "https://github.com/mikehulluk/limelight"
+Issues = "https://github.com/mikehulluk/limelight/issues"
+
+[project.scripts]
+limelight-cli = "limelight.cli:main"
+# The short command: opens a package in the app, or runs a limelight-cli
+# subcommand. Upper-case on purpose: `ll` is the usual alias for `ls -l`, and
+# aliases are case-sensitive even where filesystems are not.
+LL = "limelight.ll:main"
+
+# A gui-script gets a windowed launcher on Windows (pythonw), so the app does
+# not drag a console window along with it. Logging already goes to a file.
+[project.gui-scripts]
+limelight-gui = "limelight.gui_cli:main"
+
+[tool.setuptools_scm]
+# Nothing to configure: the tag is the version. Building from a checkout with
+# no tag at all falls back to 0.0.0.devN, which is loud enough to notice.
+fallback_version = "0.0.0"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Only the listed data files go into the wheel.
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.package-data]
+limelight = ["assets/*.svg", "language-reference/*.dhall"]

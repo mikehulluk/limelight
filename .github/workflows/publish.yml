@@ -1,0 +1,51 @@
+name: Publish to PyPI
+
+# A pushed v* tag uploads the sdist and wheel to PyPI through Trusted
+# Publishing: PyPI accepts this workflow's OIDC token in place of an API
+# token, so there is no secret to store. The workflow file name and the
+# environment name below are what the publisher on PyPI is registered
+# against; change either and the upload is refused.
+#
+# There is deliberately no manual trigger. A release on PyPI cannot be
+# replaced, so the only way to publish is the tag that names the version.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # setuptools-scm reads the version from the tags.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build the sdist and wheel
+        run: uv build
+
+      # The version comes from the tag, so a mismatch here means the tag is
+      # not on a clean release commit. Better to stop than to upload a
+      # 0.0.2.dev0 that can never be removed.
+      - name: Check the built version matches the tag
+        run: |
+          expected="limelight_app-${GITHUB_REF_NAME#v}"
+          ls dist
+          for file in dist/*; do
+            case "$(basename "$file")" in
+              "$expected".tar.gz | "$expected"-py3-none-any.whl) ;;
+              *) echo "::error::$file does not match tag $GITHUB_REF_NAME"; exit 1 ;;
+            esac
+          done
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
