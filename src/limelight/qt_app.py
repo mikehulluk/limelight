@@ -4662,6 +4662,9 @@ def _install_timeseries_artist(runtime: LimelightRuntime, axes: Any, artist: dic
         handle,
         spec,
         target_buckets=artist.get("targetBuckets"),
+        color=artist.get("color"),
+        fill_color=artist.get("fillColor"),
+        fill_alpha=artist.get("fillAlpha"),
         timing=runtime.timing,
     )
 

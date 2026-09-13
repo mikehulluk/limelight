@@ -44,12 +44,18 @@ let ScatterArtist =
       }
 
 -- A large-series (min/max envelope) artist, backed by an entire hdf Source.
+-- `color` is the envelope's edge lines (and the line itself once zoomed in
+-- to raw samples); `fillColor` and `fillAlpha` are the band between the
+-- edges, defaulting to the same colour, fully opaque.
 let TimeSeriesArtist =
       { id : Core.Id
       , y : Text
       , label : Optional Core.DisplayText
       , transform : Transforms.Transform
       , targetBuckets : Optional Natural
+      , color : Optional Text
+      , fillColor : Optional Text
+      , fillAlpha : Optional Double
       , visibleWhen : Optional TextControlParameterMatch
       }
 

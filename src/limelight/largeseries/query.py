@@ -19,6 +19,11 @@ class QueryResult:
     y_max: np.ndarray
     level: int
     from_cache: bool
+    # True when every point is an unreduced source sample (so y_min == y_max
+    # and the series should be drawn as a plain line, not an envelope).
+    raw: bool = False
+    # Number of source samples covered by the query (before any reduction).
+    sample_count: int = 0
 
 
 def query_range(
@@ -71,7 +76,9 @@ def query_range(
                 centers = (np.arange(bucket_id0, bucket_id1, dtype=np.float64) + 0.5) * bucket_width
                 x = spec.x0 + centers * spec.dx
 
-            result = QueryResult(x=x, y_min=y_min, y_max=y_max, level=level, from_cache=True)
+            result = QueryResult(
+                x=x, y_min=y_min, y_max=y_max, level=level, from_cache=True, sample_count=requested_samples
+            )
         else:
             result = _raw_fallback(handle, spec, i0, i1, target_buckets)
 
@@ -122,7 +129,9 @@ def _raw_fallback(
 
     if sample_count <= target_buckets:
         y = y_raw.astype(MINMAX_DTYPE, copy=False)
-        return QueryResult(x=x, y_min=y, y_max=y, level=-1, from_cache=False)
+        return QueryResult(
+            x=x, y_min=y, y_max=y, level=-1, from_cache=False, raw=True, sample_count=sample_count
+        )
 
     bucket_width = -(-sample_count // target_buckets)  # ceil division
     y_min, y_max, x_min, x_max = reduce_block_to_buckets(y_raw, x_raw, bucket_width)
@@ -134,7 +143,9 @@ def _raw_fallback(
         bucket_centers = (np.arange(n_buckets, dtype=np.float64) + 0.5) * bucket_width
         bucket_x = spec.x0 + (i0 + bucket_centers) * spec.dx
 
-    return QueryResult(x=bucket_x, y_min=y_min, y_max=y_max, level=-1, from_cache=False)
+    return QueryResult(
+        x=bucket_x, y_min=y_min, y_max=y_max, level=-1, from_cache=False, sample_count=sample_count
+    )
 
 
 def full_x_range(handle: CacheHandle, spec: SourceSpec) -> tuple[float, float]:

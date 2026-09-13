@@ -6,12 +6,15 @@ from typing import Callable
 from matplotlib.axes import Axes
 from matplotlib.collections import PolyCollection
 from matplotlib.lines import Line2D
+from matplotlib.text import Text
 
 from .cache import CacheHandle, SourceSpec
 from .query import QueryResult, full_x_range, query_range
 from .timing import TimingProbeLike
 
 DEFAULT_TARGET_BUCKETS = 2000
+INDICATOR_GID = "limelight-envelope-indicator"
+DEFAULT_FILL_ALPHA = 1.0
 
 
 def plot_envelope(
@@ -19,22 +22,35 @@ def plot_envelope(
     result: QueryResult,
     *,
     color: str | None = None,
+    fill_color: str | None = None,
+    fill_alpha: float | None = None,
     line_kwargs: dict | None = None,
     fill_kwargs: dict | None = None,
 ) -> tuple[Line2D, Line2D, PolyCollection]:
+    """Draws a min/max envelope: two edge lines and the band between them.
+
+    `color` is the edge colour and, unless `fill_color` is given, the band
+    colour too; the band is opaque unless `fill_alpha` says otherwise. With no
+    colour given at all the series takes one step of the axes' colour cycle,
+    so all three artists read as a single series rather than one colour per line.
+    """
     line_kwargs = dict(line_kwargs or {})
     fill_kwargs = dict(fill_kwargs or {})
-    if color is not None:
-        line_kwargs.setdefault("color", color)
-        fill_kwargs.setdefault("color", color)
+    if color is None:
+        color = line_kwargs.get("color") or ax._get_lines.get_next_color()
+    line_kwargs["color"] = color
+    fill_kwargs["color"] = fill_color if fill_color is not None else color
+    if fill_alpha is not None:
+        fill_kwargs["alpha"] = fill_alpha
 
     line_kwargs.setdefault("linewidth", 0.8)
-    fill_kwargs.setdefault("alpha", 0.35)
+    fill_kwargs.setdefault("alpha", DEFAULT_FILL_ALPHA)
     fill_kwargs.setdefault("linewidth", 0.0)
 
     (line_min,) = ax.plot(result.x, result.y_min, **line_kwargs)
     (line_max,) = ax.plot(result.x, result.y_max, **line_kwargs)
     fill = ax.fill_between(result.x, result.y_min, result.y_max, **fill_kwargs)
+    _apply_envelope_mode(line_max, fill, result)
 
     return line_min, line_max, fill
 
@@ -50,6 +66,47 @@ def update_envelope_artists(
     # fill is a FillBetweenPolyCollection; set_data() (not set_verts()) is required
     # so its cached _bbox used by get_datalim()/relim() is refreshed too.
     fill.set_data(result.x, result.y_min, result.y_max)
+    _apply_envelope_mode(line_max, fill, result)
+
+
+def _apply_envelope_mode(line_max: Line2D, fill: PolyCollection, result: QueryResult) -> None:
+    """Show the envelope only when there is one.
+
+    Once the query returns raw samples (zoomed in far enough that every point is
+    a single source value) y_min and y_max coincide, so the max line and the
+    fill would just retrace the min line; hide them and let the min line stand
+    as the plain data line.
+    """
+    show_envelope = not result.raw
+    line_max.set_visible(show_envelope)
+    fill.set_visible(show_envelope)
+
+
+def indicator_label(result: QueryResult) -> str:
+    """Short description of what the viewer is looking at: raw samples or an envelope."""
+    if result.raw:
+        return f"raw · {result.sample_count:,} samples"
+    points = int(result.x.shape[0])
+    per_bucket = result.sample_count / points if points else 0.0
+    return f"min/max · ~{per_bucket:,.0f} samples/bucket"
+
+
+def add_indicator(ax: Axes, color: str) -> Text:
+    """Adds a small corner badge to the axes, stacked below any earlier badges."""
+    existing = sum(1 for text in ax.texts if text.get_gid() == INDICATOR_GID)
+    return ax.text(
+        0.99,
+        0.98 - 0.08 * existing,
+        "",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=7,
+        color=color,
+        gid=INDICATOR_GID,
+        bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "edgecolor": color, "alpha": 0.8},
+        zorder=10,
+    )
 
 
 @dataclass
@@ -62,10 +119,19 @@ class ZoomSync:
     target_buckets: int = DEFAULT_TARGET_BUCKETS
     on_query: Callable[[QueryResult], None] | None = None
     timing: TimingProbeLike | None = None
+    # Edge colour (None: next in the axes' cycle), band colour (None: same as
+    # the edges) and band opacity (None: opaque).
+    color: str | None = None
+    fill_color: str | None = None
+    fill_alpha: float | None = None
+    # Show a corner badge saying whether the axes currently shows raw samples
+    # or a min/max envelope, so a viewer can tell how far they have zoomed in.
+    indicator: bool = True
 
     _line_min: Line2D | None = field(default=None, init=False, repr=False)
     _line_max: Line2D | None = field(default=None, init=False, repr=False)
     _fill: PolyCollection | None = field(default=None, init=False, repr=False)
+    _indicator: Text | None = field(default=None, init=False, repr=False)
     _cid: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -78,7 +144,12 @@ class ZoomSync:
         result = query_range(
             self.handle, self.spec, x_start, x_end, self._estimate_target_buckets(), timing=self.timing
         )
-        self._line_min, self._line_max, self._fill = plot_envelope(self.ax, result)
+        self._line_min, self._line_max, self._fill = plot_envelope(
+            self.ax, result, color=self.color, fill_color=self.fill_color, fill_alpha=self.fill_alpha
+        )
+        if self.indicator:
+            self._indicator = add_indicator(self.ax, self._line_min.get_color())
+            self._indicator.set_text(indicator_label(result))
         self.ax.relim()
         self.ax.autoscale_view(scalex=False, scaley=True)
         if self.on_query is not None:
@@ -94,6 +165,8 @@ class ZoomSync:
             self.handle, self.spec, x_start, x_end, self._estimate_target_buckets(), timing=self.timing
         )
         update_envelope_artists(self._line_min, self._line_max, self._fill, result)
+        if self._indicator is not None:
+            self._indicator.set_text(indicator_label(result))
         ax.relim()
         ax.autoscale_view(scalex=False, scaley=True)
         if self.on_query is not None:

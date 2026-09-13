@@ -347,11 +347,18 @@ class _SemanticValidator:
         visible_when = artist.get("visibleWhen")
         if visible_when is not None:
             self._require_text_control_parameter(visible_when["controlParameter"], f"artist {artist['id']!r} visibleWhen")
-        color = artist.get("color")
-        if color is not None and not is_color_like(color):
+        for color_field in ("color", "fillColor"):
+            color = artist.get(color_field)
+            if color is not None and not is_color_like(color):
+                raise LimelightError(
+                    f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
+                    f"has an invalid {color_field} {color!r}"
+                )
+        fill_alpha = artist.get("fillAlpha")
+        if fill_alpha is not None and not 0.0 <= float(fill_alpha) <= 1.0:
             raise LimelightError(
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
-                f"has an invalid color {color!r}"
+                f"fillAlpha {fill_alpha!r} is outside 0..1"
             )
         marker = artist.get("marker")
         if marker is not None and kind in ("line", "scatter") and marker not in _VALID_MARKERS:

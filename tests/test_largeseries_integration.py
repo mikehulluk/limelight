@@ -12,7 +12,7 @@ from limelight.reader import LimelightError, LimelightPackage
 from limelight.writer import Index, LimelightProject, TimeSeriesArtist, hdf_array
 
 
-def _hdf_package(tmp_path: Path) -> Path:
+def _hdf_package(tmp_path: Path, **artist_fields: object) -> Path:
     h5_path = tmp_path / "series.h5"
     with h5py.File(h5_path, "w") as handle:
         handle.create_dataset("/y", data=np.arange(1000, dtype=np.float64))
@@ -30,7 +30,7 @@ def _hdf_package(tmp_path: Path) -> Path:
         data="bigseries",
         x="unused",
         y=[],
-        time_series=[TimeSeriesArtist(data="bigseries", array="value")],
+        time_series=[TimeSeriesArtist(data="bigseries", array="value", **artist_fields)],
     )
 
     out_dir = tmp_path / "pkg"
@@ -64,6 +64,34 @@ def test_writer_round_trip_produces_expected_hdf_source_and_artist_shape(tmp_pat
     [artist] = axes_spec["actions"]
     assert artist["y"] == "bigseries['value']"
     assert artist["transform"] == "identity"
+
+
+def test_timeseries_artist_colours_round_trip_and_validate(tmp_path: Path) -> None:
+    package_dir = _hdf_package(tmp_path, color="#123456", fill_color="tab:orange", fill_alpha=0.4)
+    with LimelightPackage.open(package_dir) as package:
+        manifest = package.manifest_json()
+
+    [artist] = manifest["figures"][0]["axesSpecs"][0]["actions"]
+    assert artist["color"] == "#123456"
+    assert artist["fillColor"] == "tab:orange"
+    assert artist["fillAlpha"] == 0.4
+    semantic.validate_manifest_semantics(manifest)
+
+
+@pytest.mark.parametrize(
+    ("artist_fields", "message"),
+    [
+        ({"fill_color": "not-a-colour"}, "invalid fillColor"),
+        ({"fill_alpha": 1.5}, "fillAlpha 1.5 is outside 0..1"),
+    ],
+)
+def test_timeseries_artist_bad_fill_is_rejected(tmp_path: Path, artist_fields: dict, message: str) -> None:
+    package_dir = _hdf_package(tmp_path, **artist_fields)
+    with LimelightPackage.open(package_dir) as package:
+        manifest = package.manifest_json()
+
+    with pytest.raises(LimelightError, match=message):
+        semantic.validate_manifest_semantics(manifest)
 
 
 def test_timeseries_artist_on_hdf_source_validates_cleanly(tmp_path: Path) -> None:

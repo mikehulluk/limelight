@@ -1093,6 +1093,9 @@ class TimeSeriesArtist:
     id: str | None = None
     label: str | None = None
     target_buckets: int | None = None
+    color: str | None = None
+    fill_color: str | None = None
+    fill_alpha: float | None = None
     visible_when: "TextControlParameterMatch | None" = None
 
 
@@ -1383,6 +1386,9 @@ class FigureSpec:
                     ("label", _optional_display_text(time_series.label)),
                     ("transform", "Limelight.Transform.identity"),
                     ("targetBuckets", _optional_natural(time_series.target_buckets)),
+                    ("color", _optional_text(time_series.color)),
+                    ("fillColor", _optional_text(time_series.fill_color)),
+                    ("fillAlpha", _optional_double(time_series.fill_alpha)),
                     ("visibleWhen", _optional_expr("Limelight.TextControlParameterMatch", visible_when)),
                 ]
             )

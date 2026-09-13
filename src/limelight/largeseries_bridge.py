@@ -92,9 +92,12 @@ def install_timeseries_artist(
     spec: largeseries.SourceSpec,
     *,
     target_buckets: int | None = None,
+    color: str | None = None,
+    fill_color: str | None = None,
+    fill_alpha: float | None = None,
     timing: Any | None = None,
 ) -> largeseries.ZoomSync:
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"color": color, "fill_color": fill_color, "fill_alpha": fill_alpha}
     if target_buckets is not None:
         kwargs["target_buckets"] = target_buckets
     if timing is not None:
