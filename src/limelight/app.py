@@ -1134,9 +1134,16 @@ def first_axes_spec(figure_spec: dict[str, Any]) -> dict[str, Any] | None:
     return axes_specs[0]
 
 
-def secondary_axes_spec(figure_spec: dict[str, Any]) -> dict[str, Any] | None:
-    axes_specs = figure_spec["axesSpecs"]
-    return axes_specs[1] if len(axes_specs) > 1 else None
+# A single panel renders at this height:width; each further stacked panel adds
+# a little less than a whole one, since the panels share one x-axis strip.
+FIGURE_PANEL_ASPECT = 0.58
+FIGURE_EXTRA_PANEL_ASPECT = 0.47
+
+
+def figure_aspect(figure_spec: dict[str, Any] | None) -> float:
+    """Height as a fraction of width for a figure, from how many panels it stacks."""
+    panels = len(figure_spec["axesSpecs"]) if figure_spec is not None else 1
+    return FIGURE_PANEL_ASPECT + FIGURE_EXTRA_PANEL_ASPECT * max(0, panels - 1)
 
 
 def figure_controls(figure_spec: dict[str, Any]) -> list[dict[str, Any]]:

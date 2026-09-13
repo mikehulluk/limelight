@@ -1087,6 +1087,31 @@ class ScatterArtist:
 
 
 @dataclass
+class Panel:
+    """One further plot stacked below a figure's first, sharing its x-axis.
+
+    `lines` takes the same shorthand as `y=` on add_line_figure: an array
+    name, an (array, label) pair, or a LineArtist.
+    """
+
+    lines: Sequence["str | tuple[str, str] | LineArtist"] = ()
+    y_axis: "AxisDataType | None" = None
+    id: str | None = None
+
+
+def _to_lines(items: Sequence["str | tuple[str, str] | LineArtist"]) -> list["LineArtist"]:
+    lines: list[LineArtist] = []
+    for item in items:
+        if isinstance(item, LineArtist):
+            lines.append(item)
+        elif isinstance(item, tuple):
+            lines.append(LineArtist(array=item[0], label=item[1]))
+        else:
+            lines.append(LineArtist(array=item, label=item))
+    return lines
+
+
+@dataclass
 class TimeSeriesArtist:
     data: str
     array: str
@@ -1294,11 +1319,18 @@ class FigureSpec:
     map_specs: list["MapSpec"] = field(default_factory=list)
     time_series: list[TimeSeriesArtist] = field(default_factory=list)
     table_views: list["TableViewSpec"] = field(default_factory=list)
+    # Further panels below the first. `lines2`/`y2_axis` are the original
+    # two-panel form and render as the first extra panel.
+    panels: list[Panel] = field(default_factory=list)
     lines2: list[LineArtist] = field(default_factory=list)
     y2_axis: AxisDataType | None = None
     stems: list[StemArtist] = field(default_factory=list)
     form_title: str | None = None
     form_caption: str | None = None
+
+    def _extra_panels(self) -> list[Panel]:
+        panels = [Panel(lines=self.lines2, y_axis=self.y2_axis)] if self.lines2 else []
+        return panels + list(self.panels)
 
     def _line_actions(self, lines: list[LineArtist]) -> list[str]:
         actions = []
@@ -1395,12 +1427,11 @@ class FigureSpec:
             plot_artist = _constructor("Limelight.PlotArtist.timeSeries", payload)
             actions.append(_constructor("Limelight.AxesAction.AxesActionAddData", f"({plot_artist})"))
 
+        extra_panels = self._extra_panels()
         x_axis = self.x_axis
-        x_axis2 = None
-        if self.lines2:
+        if extra_panels:
             shared_group = self.x_axis.share_group or f"{self.id}-x-axis-share"
             x_axis = replace(self.x_axis, share_group=shared_group)
-            x_axis2 = replace(self.x_axis, share_group=shared_group)
 
         plot = _record(
             [
@@ -1431,12 +1462,12 @@ class FigureSpec:
         )
 
         axes_specs = [plot] if actions else []
-        if self.lines2:
-            plot2_actions = self._line_actions(self.lines2)
+        for number, panel in enumerate(extra_panels, start=2):
+            panel_id = panel.id or f"{self.id}-plot{number}"
             axes_specs.append(
                 _record(
                     [
-                        ("id", _quote(f"{self.id}-plot2")),
+                        ("id", _quote(panel_id)),
                         (
                             "frame",
                             _record(
@@ -1452,13 +1483,13 @@ class FigureSpec:
                         ("caption", "None Limelight.DisplayText"),
                         (
                             "xAxis",
-                            _axis_spec(f"{self.id}-x2-axis", x_axis2),
+                            _axis_spec(f"{self.id}-x{number}-axis", x_axis),
                         ),
                         (
                             "yAxis",
-                            _axis_spec(f"{self.id}-y2-axis", self.y2_axis or AxisDataType.continuous(label="Value")),
+                            _axis_spec(f"{self.id}-y{number}-axis", panel.y_axis or AxisDataType.continuous(label="Value")),
                         ),
-                        ("actions", _list(plot2_actions, "Limelight.AxesAction")),
+                        ("actions", _list(self._line_actions(panel.lines), "Limelight.AxesAction")),
                     ]
                 )
             )
@@ -2258,21 +2289,11 @@ class LimelightProject:
         table_views: Sequence[TableViewSpec] = (),
         y2: Sequence[str | tuple[str, str] | LineArtist] = (),
         y2_axis: AxisDataType | None = None,
+        panels: Sequence[Panel] = (),
         stem: Sequence[StemArtist] = (),
         form_title: str | None = None,
         form_caption: str | None = None,
     ) -> FigureSpec:
-        def _to_lines(items: Sequence[str | tuple[str, str] | LineArtist]) -> list[LineArtist]:
-            lines: list[LineArtist] = []
-            for item in items:
-                if isinstance(item, LineArtist):
-                    lines.append(item)
-                elif isinstance(item, tuple):
-                    lines.append(LineArtist(array=item[0], label=item[1]))
-                else:
-                    lines.append(LineArtist(array=item, label=item))
-            return lines
-
         lines = _to_lines(y)
         lines2 = _to_lines(y2)
         inferred_x_axis = AxisDataType.time_series(label=x) if time_series else AxisDataType.continuous(label=x)
@@ -2292,6 +2313,7 @@ class LimelightProject:
             table_views=list(table_views),
             lines2=lines2,
             y2_axis=y2_axis,
+            panels=[replace(panel, lines=_to_lines(panel.lines)) for panel in panels],
             stems=list(stem),
             form_title=form_title,
             form_caption=form_caption,

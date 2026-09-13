@@ -113,8 +113,8 @@ from .app import (
     axis_label,
     axis_scale,
     figure_controls,
+    figure_aspect,
     first_axes_spec,
-    secondary_axes_spec,
     table_view_cell_styles,
     table_view_column_alignment,
     table_view_column_formats,
@@ -1353,43 +1353,46 @@ def _render_figure_view_to_matplotlib_figure(
         _draw_map_contents(runtime, axes, figure_id, figure_spec["mapSpecs"][0], figure_view_index=figure_view_index)
         return
 
-    axes_spec = first_axes_spec(figure_spec)
-    axes_spec2 = secondary_axes_spec(figure_spec)
+    # Every axesSpec is one panel in a vertical stack. The AxesSpec `frame`
+    # field is not consulted: the writer emits the same placeholder frame for
+    # every panel, so honouring it would overlap them.
+    axes_specs = figure_spec["axesSpecs"]
+    first_axes_spec(figure_spec)  # raises on an empty list
+    panels = figure.subplots(len(axes_specs), 1, squeeze=False)[:, 0]
+    _share_x_axes(panels, axes_specs)
 
-    if axes_spec2 is not None:
-        axes, axes2 = figure.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [1, 1]})
-    else:
-        axes = figure.add_subplot(111)
-        axes2 = None
-
-    _draw_plot_contents(
-        runtime,
-        axes,
-        figure_id,
-        axes_spec,
-        figure_view_index=figure_view_index,
-        figure_view_actions=_actions_for_axes(figure_view_actions, axes_spec["id"]),
-        parameter_values=parameter_values,
-        zoom_syncs=zoom_syncs,
-        show_title=True,
-        show_x_axis=axes_spec2 is None,
-        hover_sink=hover_sink,
-    )
-
-    if axes_spec2 is not None:
+    last = len(axes_specs) - 1
+    for index, (axes, axes_spec) in enumerate(zip(panels, axes_specs)):
         _draw_plot_contents(
             runtime,
-            axes2,
+            axes,
             figure_id,
-            axes_spec2,
+            axes_spec,
             figure_view_index=figure_view_index,
-            figure_view_actions=_actions_for_axes(figure_view_actions, axes_spec2["id"]),
+            figure_view_actions=_actions_for_axes(figure_view_actions, axes_spec["id"]),
             parameter_values=parameter_values,
             zoom_syncs=zoom_syncs,
-            show_title=False,
-            show_x_axis=True,
+            show_title=index == 0,
+            show_x_axis=index == last,
             hover_sink=hover_sink,
         )
+
+
+def _share_x_axes(panels: Sequence[Any], axes_specs: Sequence[dict[str, Any]]) -> None:
+    """Links the x-axes of panels whose xAxis specs name the same shareGroup.
+
+    Panels with no shareGroup are still linked to each other: a stack of
+    panels reads as one figure, and a package written before shareGroup was
+    honoured expects to pan and zoom them together.
+    """
+    leaders: dict[str | None, Any] = {}
+    for axes, axes_spec in zip(panels, axes_specs):
+        group = axes_spec["xAxis"].get("shareGroup")
+        leader = leaders.get(group)
+        if leader is None:
+            leaders[group] = axes
+        else:
+            axes.sharex(leader)
 
 
 def _draw_scatter_artist(
@@ -3627,10 +3630,8 @@ class StoryFigureViewPanel(QWidget):
         """The pixels a static render of this figure fills, at the current width."""
 
         figure_spec = self.runtime.figure_specs.get(self.figure_id) if self.figure_id is not None else None
-        has_secondary_axes = figure_spec is not None and secondary_axes_spec(figure_spec) is not None
-        aspect = 1.05 if has_secondary_axes else 0.58
         width = max(320, self.width())
-        return width, max(260, int(width * aspect))
+        return width, max(260, int(width * figure_aspect(figure_spec)))
 
     def _fit_placeholder(self) -> None:
         """Take the size the next render will have, showing the last one scaled.

@@ -38,8 +38,8 @@ from .app import (
     STORY_LINE_HEIGHT,
     LimelightRuntime,
     StorySpacing,
+    figure_aspect,
     figure_view_caption_markup,
-    secondary_axes_spec,
     story_rhythm_css,
     table_view_cell_styles,
     table_view_column_alignment,
@@ -60,8 +60,6 @@ MATHJAX_SCRIPT = "https://cdn.jsdelivr.net/npm/mathjax@4/tex-svg.js"
 # Figures are laid out at the width of the text column, so their labels print
 # at the story's size, then rasterised at a higher dpi so the page stays crisp.
 FIGURE_OUTPUT_DPI = 220
-FIGURE_SECONDARY_AXES_ASPECT = 1.05
-FIGURE_DEFAULT_ASPECT = 0.58
 
 PAGE_MARGIN_MM = 15.0
 # A page that runs as long as its content still needs a number to print at.
@@ -215,13 +213,8 @@ def _figure_image_html(
     heading: str,
     column_px: int,
 ) -> str:
-    aspect = (
-        FIGURE_SECONDARY_AXES_ASPECT
-        if secondary_axes_spec(figure_spec) is not None
-        else FIGURE_DEFAULT_ASPECT
-    )
     width = column_px
-    height = int(width * aspect)
+    height = int(width * figure_aspect(figure_spec))
     png_bytes = renderers.render_figure_png(
         figure_id=state.figure_id,
         figure_view_index=state.index,
