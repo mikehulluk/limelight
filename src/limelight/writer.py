@@ -1087,17 +1087,68 @@ class ScatterArtist:
     visible_when: "TextControlParameterMatch | None" = None
 
 
+Frame = tuple[float, float, float, float]
+"""A panel's exact place in its figure: (left, bottom, width, height), each a
+fraction of the figure, as matplotlib's `add_axes` takes them."""
+
+
+@dataclass(frozen=True)
+class FigureSize:
+    """How big a figure is drawn in the story and on the page.
+
+    `width` is millimetres or a percent of the text column, as for an image;
+    left unset, the figure fills the column. `aspect` is height over width;
+    left unset, it follows from how many panels are stacked.
+    """
+
+    width: ImageWidth | None = None
+    aspect: float | None = None
+
+    def render(self) -> str:
+        return _record(
+            [
+                ("width", _optional_image_width(self.width)),
+                ("aspect", _optional_double(self.aspect)),
+            ]
+        )
+
+
+def _optional_figure_size(value: "FigureSize | None") -> str:
+    if value is None:
+        return "None Limelight.FigureSize"
+    return f"Some\n{_indent(value.render(), 2)}"
+
+
+def _optional_frame(value: Frame | None) -> str:
+    if value is None:
+        return "None Limelight.Frame"
+    left, bottom, width, height = value
+    frame = _record(
+        [
+            ("left", _dhall_float(left)),
+            ("bottom", _dhall_float(bottom)),
+            ("width", _dhall_float(width)),
+            ("height", _dhall_float(height)),
+        ]
+    )
+    return f"Some\n{_indent(frame, 2)}"
+
+
 @dataclass
 class Panel:
     """One further plot stacked below a figure's first, sharing its x-axis.
 
     `lines` takes the same shorthand as `y=` on add_line_figure: an array
-    name, an (array, label) pair, or a LineArtist.
+    name, an (array, label) pair, or a LineArtist. `height` is the panel's
+    share of the stack relative to the others (all 1 by default); `frame`
+    instead places it exactly, and takes it out of the stack.
     """
 
     lines: Sequence["str | tuple[str, str] | LineArtist"] = ()
     y_axis: "AxisDataType | None" = None
     id: str | None = None
+    height: float | None = None
+    frame: Frame | None = None
 
 
 def _to_lines(items: Sequence["str | tuple[str, str] | LineArtist"]) -> list["LineArtist"]:
@@ -1325,6 +1376,11 @@ class FigureSpec:
     panels: list[Panel] = field(default_factory=list)
     lines2: list[LineArtist] = field(default_factory=list)
     y2_axis: AxisDataType | None = None
+    # The figure's drawn size, and the first panel's share of the stack or
+    # its exact place; the other panels carry their own.
+    size: FigureSize | None = None
+    panel_height: float | None = None
+    panel_frame: Frame | None = None
     stems: list[StemArtist] = field(default_factory=list)
     form_title: str | None = None
     form_caption: str | None = None
@@ -1437,17 +1493,8 @@ class FigureSpec:
         plot = _record(
             [
                 ("id", _quote(plot_id)),
-                (
-                    "frame",
-                    _record(
-                        [
-                            ("left", _dhall_float(0.10)),
-                            ("bottom", _dhall_float(0.12)),
-                            ("width", _dhall_float(0.82)),
-                            ("height", _dhall_float(0.78)),
-                        ]
-                    ),
-                ),
+                ("frame", _optional_frame(self.panel_frame)),
+                ("heightRatio", _optional_double(self.panel_height)),
                 ("title", "None Limelight.DisplayText"),
                 ("caption", "None Limelight.DisplayText"),
                 (
@@ -1469,17 +1516,8 @@ class FigureSpec:
                 _record(
                     [
                         ("id", _quote(panel_id)),
-                        (
-                            "frame",
-                            _record(
-                                [
-                                    ("left", _dhall_float(0.10)),
-                                    ("bottom", _dhall_float(0.12)),
-                                    ("width", _dhall_float(0.82)),
-                                    ("height", _dhall_float(0.78)),
-                                ]
-                            ),
-                        ),
+                        ("frame", _optional_frame(panel.frame)),
+                        ("heightRatio", _optional_double(panel.height)),
                         ("title", "None Limelight.DisplayText"),
                         ("caption", "None Limelight.DisplayText"),
                         (
@@ -1523,6 +1561,7 @@ class FigureSpec:
                 ("id", _quote(self.id)),
                 ("title", _quote(self.title)),
                 ("caption", _optional_display_text(self.caption)),
+                ("size", _optional_figure_size(self.size)),
                 ("axesSpecs", _list(axes_specs, "Limelight.AxesSpec")),
                 ("mapSpecs", _list([map_spec.render() for map_spec in self.map_specs], "Limelight.MapSpec")),
                 ("formSpecs", _list(form_specs, "Limelight.FormSpec")),
@@ -2291,6 +2330,9 @@ class LimelightProject:
         y2: Sequence[str | tuple[str, str] | LineArtist] = (),
         y2_axis: AxisDataType | None = None,
         panels: Sequence[Panel] = (),
+        size: FigureSize | None = None,
+        panel_height: float | None = None,
+        panel_frame: Frame | None = None,
         stem: Sequence[StemArtist] = (),
         form_title: str | None = None,
         form_caption: str | None = None,
@@ -2315,6 +2357,9 @@ class LimelightProject:
             lines2=lines2,
             y2_axis=y2_axis,
             panels=[replace(panel, lines=_to_lines(panel.lines)) for panel in panels],
+            size=size,
+            panel_height=panel_height,
+            panel_frame=panel_frame,
             stems=list(stem),
             form_title=form_title,
             form_caption=form_caption,

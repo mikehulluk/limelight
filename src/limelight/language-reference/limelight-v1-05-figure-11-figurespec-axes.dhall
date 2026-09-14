@@ -57,9 +57,16 @@ let AxesDecorator =
 
 let AxesAction = < AxesActionAddData : PlotArtists.PlotArtist | AxesActionSetLimits : AxisLimit | AxesActionAddDecorator : AxesDecorator >
 
+-- One panel of a figure. Panels without a `frame` are stacked top to bottom
+-- in list order, their margins fitted to their labels automatically, each
+-- as tall as its `heightRatio` (1 when absent) says relative to the others.
+-- A `frame` places the panel exactly, in normalized figure coordinates, the
+-- way matplotlib's `add_axes` does - for panels side by side, or an inset -
+-- and leaves its margins to the author.
 let AxesSpec =
       { id : Types.AxesSpecId
-      , frame : Types.Frame
+      , frame : Optional Types.Frame
+      , heightRatio : Optional Double
       , title : Optional Core.DisplayText
       , caption : Optional Core.DisplayText
       , xAxis : AxisSpec

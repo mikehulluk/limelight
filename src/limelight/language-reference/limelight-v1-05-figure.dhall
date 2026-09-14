@@ -49,6 +49,7 @@ in  { Frame = Types.Frame
     , FormCtrlSpec = Forms.FormCtrlSpec
     , FormSpec = Forms.FormSpec
 
+    , FigureSize = FigureSpecs.FigureSize
     , FigureSpec = FigureSpecs.FigureSpec
 
     , FigureViewAction = FigureViews.FigureViewAction

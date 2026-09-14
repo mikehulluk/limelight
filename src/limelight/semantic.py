@@ -246,7 +246,9 @@ class _SemanticValidator:
 
     def _validate_figures(self) -> None:
         for figure in self.manifest["figures"]:
+            self._validate_figure_size(figure)
             for axes_spec in figure["axesSpecs"]:
+                self._validate_panel_geometry(figure, axes_spec)
                 self._validate_axes_spec(figure, axes_spec)
             for map_spec in figure["mapSpecs"]:
                 self._validate_map_spec(figure, map_spec)
@@ -255,6 +257,37 @@ class _SemanticValidator:
                     self._validate_control(form_spec, control)
             for table_view_spec in figure["tableViewSpecs"]:
                 self._validate_table_view_spec(figure, table_view_spec)
+
+    def _validate_figure_size(self, figure: dict[str, Any]) -> None:
+        size = optional_field(figure, "size")
+        if size is None:
+            return
+        figure_id = figure["id"]
+        width = optional_field(size, "width")
+        if width is not None:
+            value = float(width["value"])
+            if value <= 0:
+                raise LimelightError(f"FigureSpec {figure_id!r} size width {value!r} must be positive")
+            if width["unit"] == "percent" and value > 100:
+                raise LimelightError(f"FigureSpec {figure_id!r} size width {value!r}% is wider than the column")
+        aspect = optional_field(size, "aspect")
+        if aspect is not None and float(aspect) <= 0:
+            raise LimelightError(f"FigureSpec {figure_id!r} size aspect {aspect!r} must be positive")
+
+    def _validate_panel_geometry(self, figure: dict[str, Any], axes_spec: dict[str, Any]) -> None:
+        where = f"FigureSpec {figure['id']!r} AxesSpec {axes_spec['id']!r}"
+        height_ratio = optional_field(axes_spec, "heightRatio")
+        if height_ratio is not None and float(height_ratio) <= 0:
+            raise LimelightError(f"{where} heightRatio {height_ratio!r} must be positive")
+        frame = optional_field(axes_spec, "frame")
+        if frame is None:
+            return
+        left, bottom = float(frame["left"]), float(frame["bottom"])
+        width, height = float(frame["width"]), float(frame["height"])
+        if width <= 0 or height <= 0:
+            raise LimelightError(f"{where} frame must have a positive width and height")
+        if left < 0 or bottom < 0 or left + width > 1 + 1e-9 or bottom + height > 1 + 1e-9:
+            raise LimelightError(f"{where} frame must lie within the figure (0..1 on each axis)")
 
     def _validate_figure_views(self) -> None:
         story_numbers: dict[int, str] = {}

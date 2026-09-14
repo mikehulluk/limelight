@@ -13,7 +13,7 @@ import pytest
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
-from limelight.app import LimelightRuntime, first_axes_spec
+from limelight.app import LimelightRuntime
 from limelight.reader import LimelightError, open_limelight
 from limelight.semantic import validate_manifest_semantics
 from limelight.writer import LimelightProject, axes_action_add_rect_decorator, figure_view_action
@@ -95,7 +95,7 @@ def test_a_rect_is_drawn_without_moving_the_axes(tmp_path: Path) -> None:
         manifest = package.manifest_json()
         runtime = LimelightRuntime(package, manifest)
         [view] = manifest["figureViews"]
-        axes_spec = first_axes_spec(runtime.figure_specs["fig"])
+        [axes_spec] = runtime.figure_specs["fig"]["axesSpecs"]
 
         axes = Figure().add_subplot(111)
         actions = _actions_for_axes(view["actions"], axes_spec["id"])

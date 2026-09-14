@@ -17,6 +17,7 @@ from limelight import (
     LineArtist,
     LimelightProject,
     PageGeometry,
+    Panel,
     SliderCtrlSpec,
     StemArtist,
     TextControlParameterMatch,
@@ -272,14 +273,22 @@ def build_project() -> LimelightProject:
         data="filter-bode",
         x="frequency-hz",
         y=bode_lines("magnitude-db", "Magnitude"),
-        y2=bode_lines("phase-deg", "Phase"),
+        # The magnitude panel carries the story, so it gets twice the height
+        # of the phase panel beneath it.
+        panel_height=2.0,
+        panels=[
+            Panel(
+                lines=bode_lines("phase-deg", "Phase"),
+                y_axis=AxisDataType.continuous(label="Phase", unit="deg"),
+                height=1.0,
+            )
+        ],
         caption=(
             "Magnitude and phase response of the selected low-pass filter, plotted against a "
             "logarithmically-spaced frequency axis."
         ),
         x_axis=AxisDataType.continuous(label="Frequency", unit="Hz", scale="Log", share_group="bode-frequency"),
         y_axis=AxisDataType.continuous(label="Magnitude", unit="dB"),
-        y2_axis=AxisDataType.continuous(label="Phase", unit="deg"),
         controls=[filter_dropdown],
     )
 

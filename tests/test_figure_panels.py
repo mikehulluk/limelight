@@ -148,3 +148,89 @@ def test_figure_aspect_grows_with_each_panel() -> None:
     assert figure_aspect(spec(1)) == 0.58
     assert figure_aspect(spec(2)) == pytest.approx(1.05)
     assert figure_aspect(spec(3)) > figure_aspect(spec(2))
+
+
+def _sized_package(tmp_path: Path, **figure_kwargs: object) -> Path:
+    project = LimelightProject(title="Sized", authors=["Test"])
+    project.add_csv_dataset(id="src", arrays={"t": [0.0, 1.0, 2.0], "a": [1.0, 2.0, 3.0], "b": [3.0, 2.0, 1.0]})
+    project.add_line_figure(id="fig", title="Fig", data="src", x="t", y=["a"], **figure_kwargs)
+    folder = tmp_path / "pkg"
+    project.write_folder(folder)
+    return folder
+
+
+def test_height_ratios_size_the_stacked_panels(tmp_path: Path) -> None:
+    from limelight.writer import Panel
+
+    figure, manifest = _render(_sized_package(tmp_path, panel_height=3.0, panels=[Panel(lines=["b"])]), "fig")
+
+    [figure_spec] = manifest["figures"]
+    assert [spec.get("heightRatio") for spec in figure_spec["axesSpecs"]] == [3.0, None]
+    assert all(spec.get("frame") is None for spec in figure_spec["axesSpecs"])
+    top, bottom = figure.axes
+    ratio = top.get_position().height / bottom.get_position().height
+    assert ratio == pytest.approx(3.0, rel=0.05)
+
+
+def test_frames_place_panels_exactly_and_side_by_side(tmp_path: Path) -> None:
+    from limelight.writer import Panel
+
+    folder = _sized_package(
+        tmp_path,
+        panel_frame=(0.1, 0.15, 0.35, 0.75),
+        panels=[Panel(lines=["b"], frame=(0.6, 0.15, 0.35, 0.75))],
+    )
+    figure, manifest = _render(folder, "fig")
+
+    [figure_spec] = manifest["figures"]
+    assert figure_spec["axesSpecs"][1]["frame"] == {"left": 0.6, "bottom": 0.15, "width": 0.35, "height": 0.75}
+    left, right = figure.axes
+    assert left.get_position().bounds == pytest.approx((0.1, 0.15, 0.35, 0.75))
+    assert right.get_position().bounds == pytest.approx((0.6, 0.15, 0.35, 0.75))
+    # Neither sits below the other, so both label the x-axis.
+    assert [axes.get_xlabel() for axes in figure.axes] == ["t", "t"]
+    # An exact layout is the author's; nothing re-fits it.
+    assert figure.get_layout_engine() is None
+
+
+def test_figure_size_sets_width_and_aspect(tmp_path: Path) -> None:
+    from limelight.app import figure_aspect, figure_width_px
+    from limelight.writer import FigureSize, ImageWidth
+
+    folder = _sized_package(tmp_path, size=FigureSize(width=ImageWidth.percent(50), aspect=1.25))
+    with open_limelight(folder) as package:
+        manifest = package.manifest_json()
+    validate_manifest_semantics(manifest)
+    [figure_spec] = manifest["figures"]
+    assert figure_spec["size"] == {"width": {"value": 50.0, "unit": "percent"}, "aspect": 1.25}
+    assert figure_aspect(figure_spec) == 1.25
+    assert figure_width_px(figure_spec, 800, 96.0) == 400
+
+    folder = _sized_package(tmp_path / "mm", size=FigureSize(width=ImageWidth.millimetres(50.8)))
+    with open_limelight(folder) as package:
+        [figure_spec] = package.manifest_json()["figures"]
+    assert figure_width_px(figure_spec, 800, 96.0) == 192  # 2 inches at 96 dpi
+    assert figure_width_px(figure_spec, 800, 192.0) == 384  # and at a zoomed resolution
+    assert figure_width_px(figure_spec, 100, 96.0) == 100  # never wider than the column
+    assert figure_aspect(figure_spec) == pytest.approx(0.58)  # no aspect: from the one panel
+
+
+@pytest.mark.parametrize(
+    ("figure_kwargs", "message"),
+    [
+        ({"size": "FigureSize(width=ImageWidth.percent(120))"}, "wider than the column"),
+        ({"size": "FigureSize(aspect=0)"}, "aspect 0 must be positive"),
+        ({"panel_height": -1.0}, "heightRatio -1 must be positive"),
+        ({"panel_frame": (0.5, 0.5, 0.6, 0.4)}, "within the figure"),
+        ({"panel_frame": (0.1, 0.1, 0.0, 0.5)}, "positive width and height"),
+    ],
+)
+def test_bad_sizes_are_rejected(tmp_path: Path, figure_kwargs: dict, message: str) -> None:
+    from limelight.reader import LimelightError
+    from limelight.writer import FigureSize, ImageWidth  # noqa: F401 - named in the parametrised source
+
+    kwargs = {key: (eval(value) if isinstance(value, str) else value) for key, value in figure_kwargs.items()}
+    with open_limelight(_sized_package(tmp_path, **kwargs)) as package:
+        manifest = package.manifest_json()
+    with pytest.raises(LimelightError, match=message):
+        validate_manifest_semantics(manifest)

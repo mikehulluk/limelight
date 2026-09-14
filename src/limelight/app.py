@@ -1131,13 +1131,6 @@ def _is_story_figure_block(block: Any) -> bool:
     return isinstance(block, dict) and "figureView" in block
 
 
-def first_axes_spec(figure_spec: dict[str, Any]) -> dict[str, Any] | None:
-    axes_specs = figure_spec["axesSpecs"]
-    if not axes_specs:
-        raise TypeError(f"FigureSpec {figure_spec['id']!r} has no axesSpecs")
-    return axes_specs[0]
-
-
 # A single panel renders at this height:width; each further stacked panel adds
 # a little less than a whole one, since the panels share one x-axis strip.
 FIGURE_PANEL_ASPECT = 0.58
@@ -1145,9 +1138,39 @@ FIGURE_EXTRA_PANEL_ASPECT = 0.47
 
 
 def figure_aspect(figure_spec: dict[str, Any] | None) -> float:
-    """Height as a fraction of width for a figure, from how many panels it stacks."""
-    panels = len(figure_spec["axesSpecs"]) if figure_spec is not None else 1
+    """Height as a fraction of width for a figure.
+
+    The figure's own `size.aspect` when it gives one; otherwise from how many
+    panels it stacks.
+    """
+    if figure_spec is None:
+        return FIGURE_PANEL_ASPECT
+    size = optional_field(figure_spec, "size") or {}
+    aspect = optional_field(size, "aspect")
+    if aspect is not None:
+        return float(aspect)
+    panels = sum(1 for spec in figure_spec["axesSpecs"] if optional_field(spec, "frame") is None)
     return FIGURE_PANEL_ASPECT + FIGURE_EXTRA_PANEL_ASPECT * max(0, panels - 1)
+
+
+def figure_width_px(figure_spec: dict[str, Any] | None, column_px: int, dots_per_inch: float) -> int:
+    """The pixels a figure is drawn across, within a column `column_px` wide.
+
+    `size.width` in millimetres is a physical width, resolved at the
+    resolution the column is laid out at; in percent it is of the column.
+    Neither exceeds the column; without one the figure fills it.
+    """
+    if figure_spec is None:
+        return column_px
+    size = optional_field(figure_spec, "size") or {}
+    width = optional_field(size, "width")
+    if width is None:
+        return column_px
+    if width["unit"] == "millimetres":
+        pixels = mm_to_px(float(width["value"]), dots_per_inch)
+    else:
+        pixels = int(round(column_px * float(width["value"]) / 100.0))
+    return max(1, min(column_px, pixels))
 
 
 def figure_controls(figure_spec: dict[str, Any]) -> list[dict[str, Any]]:

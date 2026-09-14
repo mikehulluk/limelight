@@ -116,7 +116,7 @@ from .app import (
     axis_scale,
     figure_controls,
     figure_aspect,
-    first_axes_spec,
+    figure_width_px,
     table_view_cell_styles,
     table_view_column_alignment,
     table_view_column_formats,
@@ -1364,15 +1364,13 @@ def _render_figure_view_to_matplotlib_figure(
         _draw_map_contents(runtime, axes, figure_id, figure_spec["mapSpecs"][0], figure_view_index=figure_view_index)
         return
 
-    # Every axesSpec is one panel in a vertical stack. The AxesSpec `frame`
-    # field is not consulted: the writer emits the same placeholder frame for
-    # every panel, so honouring it would overlap them.
     axes_specs = figure_spec["axesSpecs"]
-    first_axes_spec(figure_spec)  # raises on an empty list
-    panels = figure.subplots(len(axes_specs), 1, squeeze=False)[:, 0]
+    if not axes_specs:
+        raise TypeError(f"FigureSpec {figure_id!r} has no axesSpecs")
+    panels = _add_panels(figure, axes_specs)
     _share_x_axes(panels, axes_specs)
+    labels_x = _panels_labelling_x(panels, axes_specs)
 
-    last = len(axes_specs) - 1
     for index, (axes, axes_spec) in enumerate(zip(panels, axes_specs)):
         _draw_plot_contents(
             runtime,
@@ -1384,9 +1382,51 @@ def _render_figure_view_to_matplotlib_figure(
             parameter_values=parameter_values,
             zoom_syncs=zoom_syncs,
             show_title=index == 0,
-            show_x_axis=index == last,
+            show_x_axis=index in labels_x,
             hover_sink=hover_sink,
         )
+
+
+def _add_panels(figure: MatplotlibFigure, axes_specs: Sequence[dict[str, Any]]) -> list[Any]:
+    """One Axes per axesSpec, placed as the spec asks.
+
+    Panels without a `frame` are stacked top to bottom, each `heightRatio`
+    tall relative to the others, and the figure's layout engine fits their
+    margins to their labels. A panel with a `frame` is placed exactly there,
+    as matplotlib's `add_axes` does, and the layout engine leaves it alone;
+    when every panel is placed that way there is nothing for it to do.
+    """
+    panels: list[Any] = [None] * len(axes_specs)
+    stacked = [index for index, spec in enumerate(axes_specs) if spec.get("frame") is None]
+    if stacked:
+        ratios = [float(axes_specs[index].get("heightRatio") or 1.0) for index in stacked]
+        grid = figure.add_gridspec(len(stacked), 1, height_ratios=ratios)
+        for row, index in enumerate(stacked):
+            panels[index] = figure.add_subplot(grid[row, 0])
+    else:
+        figure.set_layout_engine("none")
+    for index, spec in enumerate(axes_specs):
+        frame = spec.get("frame")
+        if frame is not None:
+            panels[index] = figure.add_axes((frame["left"], frame["bottom"], frame["width"], frame["height"]))
+    return panels
+
+
+def _panels_labelling_x(panels: Sequence[Any], axes_specs: Sequence[dict[str, Any]]) -> set[int]:
+    """Which panels label their x-axis: those with no panel of their share group below them.
+
+    Panels sharing an x-axis read as one column, so only the lowest labels
+    it; a panel sharing with nothing labels its own.
+    """
+    bottoms = [axes.get_position().y0 for axes in panels]
+    groups = [spec["xAxis"].get("shareGroup") for spec in axes_specs]
+    labelling: set[int] = set()
+    for index, group in enumerate(groups):
+        siblings = [other for other in range(len(panels)) if other != index and groups[other] == group]
+        # Ungrouped panels are still linked together by _share_x_axes.
+        if not any(bottoms[other] < bottoms[index] - 1e-9 for other in siblings):
+            labelling.add(index)
+    return labelling
 
 
 def _share_x_axes(panels: Sequence[Any], axes_specs: Sequence[dict[str, Any]]) -> None:
@@ -3620,6 +3660,9 @@ class StoryFigureViewPanel(QWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
         self.image_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.image_label.customContextMenuRequested.connect(self._show_context_menu_at_label)
+        # A double-click on the static figure opens it in its own window; an
+        # explored figure keeps its clicks for the matplotlib canvas.
+        self.image_label.installEventFilter(self)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu_at_table)
 
@@ -3720,8 +3763,9 @@ class StoryFigureViewPanel(QWidget):
         """The pixels a static render of this figure fills, at the current width."""
 
         figure_spec = self.runtime.figure_specs.get(self.figure_id) if self.figure_id is not None else None
-        width = max(320, self.width())
-        return width, max(260, int(width * figure_aspect(figure_spec)))
+        column = max(320, self.width())
+        width = figure_width_px(figure_spec, column, CSS_PIXELS_PER_INCH * self._zoom)
+        return width, max(1, int(width * figure_aspect(figure_spec)))
 
     def _fit_placeholder(self) -> None:
         """Take the size the next render will have, showing the last one scaled.
@@ -3744,6 +3788,16 @@ class StoryFigureViewPanel(QWidget):
             )
         self.image_label.setFixedHeight(height)
 
+    def eventFilter(self, watched: Any, event: Any) -> bool:
+        if (
+            watched is self.image_label
+            and event.type() == QEvent.Type.MouseButtonDblClick
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            self._popout()
+            return True
+        return super().eventFilter(watched, event)
+
     def _show_context_menu_at_label(self, position: Any) -> None:
         self._show_context_menu(self.image_label.mapToGlobal(position))
 
@@ -3752,7 +3806,7 @@ class StoryFigureViewPanel(QWidget):
             return
 
         menu = QMenu(self)
-        popout_action = QAction("Popout", self)
+        popout_action = QAction("Open Window", self)
         popout_action.triggered.connect(self._popout)
         menu.addAction(popout_action)
         if self.mode == "interactive":
@@ -3760,7 +3814,7 @@ class StoryFigureViewPanel(QWidget):
             unexplore_action.triggered.connect(self._show_static)
             menu.addAction(unexplore_action)
         elif self.mode != "table":
-            explore_action = QAction("Explore", self)
+            explore_action = QAction("Explore Here", self)
             explore_action.triggered.connect(self._explore_inline)
             menu.addAction(explore_action)
         menu.exec(global_position)

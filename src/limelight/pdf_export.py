@@ -39,6 +39,7 @@ from .app import (
     LimelightRuntime,
     StorySpacing,
     figure_aspect,
+    figure_width_px,
     figure_view_caption_markup,
     story_rhythm_css,
     table_view_cell_styles,
@@ -80,6 +81,9 @@ FIGURE_IMAGE_TAG_PREFIX = '<img class="limelight-figure-image"'
 FIGURE_IMAGE_CSS = """img.limelight-figure-image {
   width: 100%;
   height: auto;
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
 }"""
 # Rich text lays out in logical (~96 dpi) coordinates regardless of the
 # writer's device resolution, so fallback figures are scaled to a printable
@@ -213,7 +217,7 @@ def _figure_image_html(
     heading: str,
     column_px: int,
 ) -> str:
-    width = column_px
+    width = figure_width_px(figure_spec, column_px, CSS_PIXELS_PER_INCH)
     height = int(width * figure_aspect(figure_spec))
     png_bytes = renderers.render_figure_png(
         figure_id=state.figure_id,
@@ -225,8 +229,12 @@ def _figure_image_html(
         dpi=FIGURE_OUTPUT_DPI,
     )
     encoded = base64.b64encode(png_bytes).decode("ascii")
+    # The column is the image's 100%; a narrower figure is that fraction of
+    # it, so it keeps its size relative to the page whatever the page is.
+    percent = 100.0 * width / column_px
     return (
         f'{FIGURE_IMAGE_TAG_PREFIX} alt="{html.escape(heading)}" '
+        f'style="width: {percent:.2f}%" '
         f'src="data:image/png;base64,{encoded}">'
     )
 

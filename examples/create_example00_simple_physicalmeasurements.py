@@ -169,14 +169,18 @@ in    { limelightVersion = "1.0"
           , caption =
               Some
                 "Daily averaging removes individual sensor jitter while preserving the discharge trend."
+          -- Drawn at two thirds of the column, a little squarer than the
+          -- default; the size a figure is drawn at is the figure's to say.
+          , size =
+              Some
+                { width = Some { value = 66.0, unit = Limelight.ImageWidthUnit.percent }
+                , aspect = Some 0.7
+                }
           , axesSpecs =
             [ { id = "voltage-plot"
-              , frame =
-                { left = 0.10
-                , bottom = 0.12
-                , width = 0.82
-                , height = 0.78
-                }
+              -- No frame: the panel is laid out by the renderer.
+              , frame = None Limelight.Frame
+              , heightRatio = None Double
               , title = None Text
               , caption = None Limelight.DisplayText
               , xAxis =

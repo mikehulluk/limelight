@@ -7,6 +7,22 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- A figure can say how big it is drawn: `FigureSpec.size` takes a `width`
+  in millimetres or percent of the column, as an image does, and an
+  `aspect` (height over width). `add_line_figure(size=FigureSize(...))`.
+- A figure's panels can be sized: `heightRatio` on an AxesSpec sets its
+  share of the stack, and `frame` places it exactly, as matplotlib's
+  `add_axes` does, for panels side by side or an inset. `Panel(height=...)`,
+  `Panel(frame=...)`, and `panel_height=` / `panel_frame=` for the first
+  panel on `add_line_figure`.
+
+### Changed
+
+- `AxesSpec.frame` is now optional, and honoured when given; the writer no
+  longer emits a placeholder frame for every panel.
+
 ## [0.0.6] - 2026-09-14
 
 ### Fixed
