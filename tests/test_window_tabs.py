@@ -115,3 +115,60 @@ def test_window_routes_cache_progress_to_its_status_bar(qt_app, tmp_path: Path) 
         assert "25%" in window._cache_progress.label.text()
     finally:
         window.close()
+
+
+def test_ctrl_wheel_over_a_figure_zooms_the_story(qt_app, tmp_path: Path) -> None:
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+
+    from limelight.qt_app import STORY_ZOOM_STEPS, StoryFigureViewPanel
+
+    project = LimelightProject(title="Zoom", authors=["Test"])
+    project.add_csv_dataset(id="src", arrays={"x": [1.0, 2.0], "y": [3.0, 4.0]})
+    project.add_line_figure(id="fig", title="Fig", data="src", x="x", y=["y"])
+    view = project.story_figure(ref="fig", id="fig-view", actions=[])
+    project.set_story_markdown(f"# Story\n\n{view}\n")
+    folder = tmp_path / "pkg.limelight"
+    project.write_folder(folder)
+
+    window = _open_window(qt_app, folder)
+    try:
+        story = window.story_blocks
+        assert story is not None
+        qt_app.processEvents()
+        figures = [
+            story.layout.itemAt(i).widget()
+            for i in range(story.layout.count())
+            if isinstance(story.layout.itemAt(i).widget(), StoryFigureViewPanel)
+        ]
+        assert figures, "the story should hold the figure block"
+        assert story._zoom == 1.0
+
+        def wheel(widget, steps: int, ctrl: bool) -> bool:
+            modifiers = Qt.KeyboardModifier.ControlModifier if ctrl else Qt.KeyboardModifier.NoModifier
+            event = QWheelEvent(
+                QPointF(5, 5), widget.mapToGlobal(QPoint(5, 5)), QPoint(0, 0), QPoint(0, 120 * steps),
+                Qt.MouseButton.NoButton, modifiers, Qt.ScrollPhase.NoScrollPhase, False,
+            )
+            qt_app.sendEvent(widget, event)
+            return event.isAccepted()
+
+        # A static figure is an image label that ignores the wheel, which the
+        # window system then hands up to the story's viewport; sendEvent does
+        # no such climbing, so the test delivers where the climb ends.
+        assert not wheel(figures[0].image_label, +1, ctrl=True)
+        wheel(story.viewport(), +1, ctrl=True)
+        assert story._zoom == STORY_ZOOM_STEPS[STORY_ZOOM_STEPS.index(1.0) + 1]
+        wheel(story.viewport(), -1, ctrl=True)
+        assert story._zoom == 1.0
+        # A plain wheel scrolls rather than zooms.
+        wheel(story.viewport(), +1, ctrl=False)
+        assert story._zoom == 1.0
+
+        # In Explore mode the matplotlib canvas keeps every wheel event, so a
+        # Ctrl+wheel over the plot leaves the story's zoom alone.
+        figures[0]._explore_inline()
+        assert wheel(figures[0].plot_panel.canvas, +1, ctrl=True)
+        assert story._zoom == 1.0
+    finally:
+        window.close()

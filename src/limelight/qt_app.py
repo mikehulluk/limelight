@@ -220,6 +220,13 @@ STORY_ZOOM_STEPS = (0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.
 
 # Ctrl with any of these zooms the story. `Equal` is the unshifted key most
 # keyboards put `+` on, and is what people actually press.
+def _zoom_direction_of_wheel(event: Any) -> int | None:
+    """+1/-1 for a Ctrl+wheel step, None for an ordinary (scrolling) wheel."""
+    if not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+        return None
+    return 1 if event.angleDelta().y() > 0 else -1
+
+
 STORY_ZOOM_KEYS = {
     Qt.Key.Key_Plus: 1,
     Qt.Key.Key_Equal: 1,
@@ -738,7 +745,7 @@ class StoryTextPanel(QWidget):
             return super().eventFilter(watched, event)
 
         if event.type() == QEvent.Type.Wheel:
-            self.zoomRequested.emit(1 if event.angleDelta().y() > 0 else -1)
+            self.zoomRequested.emit(_zoom_direction_of_wheel(event))
             return True
 
         # Chromium zooms the focused view on these, which would zoom one block.
@@ -4177,6 +4184,24 @@ class StoryBlockPanel(QScrollArea):
     @property
     def zoom(self) -> float:
         return self._zoom
+
+    def wheelEvent(self, event: Any) -> None:
+        """Ctrl+wheel anywhere in the story zooms it; a plain wheel scrolls.
+
+        Text blocks catch this in their own web view, which would otherwise
+        zoom just that block; a figure's image, a caption and the space
+        between blocks let the wheel through to here. A figure in Explore
+        mode is the exception: its matplotlib canvas keeps every wheel event
+        for itself, so the story does not zoom out from under a plot being
+        worked on.
+        """
+
+        direction = _zoom_direction_of_wheel(event)
+        if direction is None:
+            super().wheelEvent(event)
+            return
+        self._on_zoom_requested(direction)
+        event.accept()
 
     def _on_zoom_requested(self, direction: int) -> None:
         if self._disposed:
