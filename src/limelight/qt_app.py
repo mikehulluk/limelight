@@ -137,7 +137,7 @@ from .pdf_export import (
     printed_page,
     write_html_to_pdf,
 )
-from .reader import LimelightError, LimelightPackage, open_limelight
+from .reader import PACKAGE_SUFFIXES, LimelightError, LimelightPackage, open_limelight
 from .semantic import (
     axis_data_type_kind,
     axis_limit_shape,
@@ -170,7 +170,9 @@ STORY_TEXT_MIN_HEIGHT = 44
 # A package is a folder while it is being authored and an archive once it is
 # distributed, so both shapes need an entry point in the UI. A file dialog
 # cannot offer both at once, hence the separate folder command.
-PACKAGE_FILE_FILTER = "Limelight packages (*.limelight);;All files (*)"
+PACKAGE_FILE_FILTER = (
+    "Limelight packages (" + " ".join(f"*{suffix}" for suffix in PACKAGE_SUFFIXES) + ");;All files (*)"
+)
 
 
 @dataclass(frozen=True)
@@ -319,7 +321,7 @@ class StartupPackageDialog(QDialog):
         layout.addWidget(heading)
 
         description = QLabel(
-            "Choose a .limelight package file, or the folder of a package you are working on."
+            "Choose a .limelight or .ll package file, or the folder of a package you are working on."
         )
         description.setWordWrap(True)
         layout.addWidget(description)

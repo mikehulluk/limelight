@@ -14,6 +14,7 @@
     <comment xml:lang="en-GB">Limelight package</comment>
     <sub-class-of type="application/zip"/>
     <glob pattern="*.limelight"/>
+    <glob pattern="*.ll"/>
     <icon name="limelight"/>
     <generic-icon name="x-office-document"/>
   </mime-type>

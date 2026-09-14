@@ -27,7 +27,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "package",
         nargs="?",
-        help="Path to a .limelight folder or archive; omit it to be asked on startup",
+        help="Path to a .limelight or .ll folder or archive; omit it to be asked on startup",
     )
     parser.add_argument(
         "--log-file",

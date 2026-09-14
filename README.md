@@ -3,8 +3,8 @@
 Limelight is a portable package format for data-driven figures and analysis
 stories, and a desktop app for reading them.
 
-A Limelight package is a folder, or a `.limelight` archive with the same
-layout, holding a `project.dhall` manifest alongside the datasets it
+A Limelight package is a folder, or an archive with the same layout, named
+with either a `.limelight` or a `.ll` extension, holding a `project.dhall` manifest alongside the datasets it
 describes, the figure specs drawn from them, and a story that walks a reader
 through the analysis. The app opens either form, validates the manifest,
 resolves the data, renders the figures, and follows the story.

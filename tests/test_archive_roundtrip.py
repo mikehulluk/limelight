@@ -77,3 +77,27 @@ def test_opening_a_non_package_file_reports_a_clear_error(tmp_path: Path) -> Non
 
     with pytest.raises(LimelightError):
         open_limelight(not_a_package)
+
+
+@pytest.mark.parametrize("suffix", [".limelight", ".ll"])
+def test_both_extensions_open_as_folder_and_archive(tmp_path: Path, suffix: str) -> None:
+    project = build_project()
+    folder = project.write_folder(tmp_path / f"folder-form{suffix}")
+    archive = project.write_archive(tmp_path / f"archive-form{suffix}")
+
+    for path in (folder, archive):
+        with open_limelight(path) as package:
+            assert package.manifest_json()["project"]["title"] == "Archive Round Trip"
+
+
+@pytest.mark.parametrize("suffix", [".limelight", ".ll"])
+def test_overwrite_is_allowed_only_for_package_suffixed_folders(tmp_path: Path, suffix: str) -> None:
+    project = build_project()
+    target = tmp_path / f"pkg{suffix}"
+    project.write_folder(target)
+    project.write_folder(target, overwrite=True)
+
+    plain = tmp_path / "pkg.data"
+    plain.mkdir()
+    with pytest.raises(ValueError, match=r"\.limelight, \.ll"):
+        project.write_folder(plain, overwrite=True)

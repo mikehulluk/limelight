@@ -21,6 +21,7 @@ from .images import (
     convert_image,
 )
 from .largeseries import DEFAULT_CHUNK_SIZE
+from .reader import PACKAGE_SUFFIXES
 from .signing import DocumentSignature, sign_document
 from .story_markdown import (
     ImageWidthError,
@@ -2588,8 +2589,11 @@ class LimelightProject:
             if package_root.is_file():
                 package_root.unlink()
             else:
-                if package_root.suffix != ".limelight":
-                    raise ValueError(f"Refusing to recursively overwrite non-.limelight folder {package_root}")
+                if package_root.suffix not in PACKAGE_SUFFIXES:
+                    raise ValueError(
+                        f"Refusing to recursively overwrite folder {package_root}; "
+                        f"a package folder ends in one of {', '.join(PACKAGE_SUFFIXES)}"
+                    )
                 shutil.rmtree(package_root)
 
         package_root.mkdir(parents=True, exist_ok=True)

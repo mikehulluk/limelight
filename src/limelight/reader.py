@@ -26,6 +26,12 @@ def dhall_tool_path(name: str) -> str:
     return name
 
 
+# The file extensions a package may carry, in either folder or archive form:
+# the long one names the format, the short one is quicker to type. The reader
+# itself goes by content (a folder, or a zip), never by the name.
+PACKAGE_SUFFIXES: tuple[str, ...] = (".limelight", ".ll")
+
+
 def open_limelight(path: str | Path) -> "LimelightPackage":
     return LimelightPackage.open(path)
 

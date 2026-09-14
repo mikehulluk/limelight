@@ -44,6 +44,7 @@ _MIME = """<?xml version="1.0" encoding="UTF-8"?>
   <mime-type type="application/x-limelight-package">
     <comment>Limelight package</comment>
     <glob pattern="*.limelight"/>
+    <glob pattern="*.ll"/>
   </mime-type>
 </mime-info>
 """

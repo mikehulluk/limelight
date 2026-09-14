@@ -43,7 +43,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "associate"; Description: "Open .limelight packages with {#AppName}"; GroupDescription: "File associations:"
+Name: "associate"; Description: "Open .limelight and .ll packages with {#AppName}"; GroupDescription: "File associations:"
 
 [Files]
 Source: "..\..\dist\limelight\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -54,8 +54,9 @@ Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Registry]
-; A .limelight package is normally a folder, but archives use the same extension.
+; A package is normally a folder, but archives use the same extensions.
 Root: HKA; Subkey: "Software\Classes\.limelight"; ValueType: string; ValueName: ""; ValueData: "Limelight.Package"; Flags: uninsdeletevalue; Tasks: associate
+Root: HKA; Subkey: "Software\Classes\.ll"; ValueType: string; ValueName: ""; ValueData: "Limelight.Package"; Flags: uninsdeletevalue; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\Limelight.Package"; ValueType: string; ValueName: ""; ValueData: "Limelight Package"; Flags: uninsdeletekey; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\Limelight.Package\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\Limelight.Package\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associate

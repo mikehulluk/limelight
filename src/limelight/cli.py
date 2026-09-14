@@ -42,16 +42,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     json_parser = subparsers.add_parser("json", help="Print the normalized project manifest as JSON")
-    json_parser.add_argument("package", help="Path to a .limelight folder or archive")
+    json_parser.add_argument("package", help="Path to a .limelight or .ll folder or archive")
 
     summary_parser = subparsers.add_parser("summary", help="Print a project summary")
-    summary_parser.add_argument("package", help="Path to a .limelight folder or archive")
+    summary_parser.add_argument("package", help="Path to a .limelight or .ll folder or archive")
 
     verify_parser = subparsers.add_parser("verify", help="Validate one or more Limelight packages")
-    verify_parser.add_argument("packages", nargs="+", help="Paths to .limelight folders or archives")
+    verify_parser.add_argument("packages", nargs="+", help="Paths to .limelight or .ll folders or archives")
 
     pdf_parser = subparsers.add_parser("pdf", help="Render each package's story document to a PDF")
-    pdf_parser.add_argument("packages", nargs="+", help="Paths to .limelight folders or archives")
+    pdf_parser.add_argument("packages", nargs="+", help="Paths to .limelight or .ll folders or archives")
     pdf_parser.add_argument(
         "--rolling-build",
         action="store_true",
@@ -65,7 +65,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     desktop_parser = subparsers.add_parser(
         "desktop-entry",
-        help="Install a Linux desktop entry for this install, so the app has a taskbar icon and owns .limelight files",
+        help="Install a Linux desktop entry for this install, so the app has a taskbar icon and owns .limelight and .ll files",
     )
     desktop_parser.add_argument("--remove", action="store_true", help="Remove the entry instead")
 
@@ -111,7 +111,7 @@ def _run_desktop_entry(*, remove: bool) -> int:
     for path in paths:
         print(f"{verb} {path}")
     if not remove:
-        print("Limelight now appears in the applications menu, and .limelight files open with it.")
+        print("Limelight now appears in the applications menu, and .limelight and .ll files open with it.")
     elif not paths:
         print("No desktop entry was installed.")
     return 0

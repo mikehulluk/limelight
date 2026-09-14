@@ -28,6 +28,7 @@ def test_install_writes_an_entry_pointing_at_this_install(tmp_path: Path, monkey
     assert "MimeType=application/x-limelight-package;" in entry
     mime = (tmp_path / "share" / "mime" / "packages" / "limelight.xml").read_text()
     assert '<glob pattern="*.limelight"/>' in mime
+    assert '<glob pattern="*.ll"/>' in mime
     assert [p.name for p in written] == ["limelight.desktop", "limelight.xml"]
 
 

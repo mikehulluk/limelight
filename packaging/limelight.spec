@@ -141,7 +141,7 @@ if sys.platform == "darwin":
                     "CFBundleTypeName": "Limelight Package",
                     "CFBundleTypeRole": "Viewer",
                     "LSItemContentTypes": ["public.data"],
-                    "CFBundleTypeExtensions": ["limelight"],
+                    "CFBundleTypeExtensions": ["limelight", "ll"],
                 }
             ],
         },
