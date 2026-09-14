@@ -30,6 +30,7 @@ from matplotlib.ticker import FuncFormatter, MultipleLocator
 from PySide6.QtCore import (
     QBuffer,
     QEvent,
+    QEventLoop,
     QByteArray,
     QIODevice,
     QObject,
@@ -75,6 +76,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QAbstractItemView,
+    QProgressBar,
     QProgressDialog,
     QPushButton,
     QScrollArea,
@@ -2194,6 +2196,69 @@ def _shortcuts(standard: QKeySequence.StandardKey, *extras: str) -> list[QKeySeq
     return shortcuts
 
 
+class CacheProgressSignals(QObject):
+    """Carries a large-series cache build's progress onto the GUI thread.
+
+    Builds run wherever a figure is first drawn - a story render worker or
+    the main thread - so the report goes through a signal, which Qt queues
+    across threads and calls directly on the main one.
+    """
+
+    progress = Signal(str, int, int)
+
+
+class CacheProgressIndicator(QWidget):
+    """A status-bar widget: which large series are being cached, and how far along.
+
+    One entry per (source, column) build in flight; the bar shows the samples
+    streamed across all of them, and the widget hides itself once every
+    build has finished.
+    """
+
+    LINGER_MS = 1500
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._builds: dict[str, tuple[int, int]] = {}
+        self.label = QLabel()
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        self.bar.setTextVisible(False)
+        self.bar.setFixedWidth(120)
+        self.bar.setFixedHeight(12)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self.label)
+        layout.addWidget(self.bar)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._hide_if_idle)
+        self.hide()
+
+    def report(self, series: str, done: int, total: int) -> None:
+        self._builds[series] = (done, total)
+        active = {name: (d, t) for name, (d, t) in self._builds.items() if d < t}
+        done_all = sum(d for d, _ in self._builds.values())
+        total_all = sum(t for _, t in self._builds.values())
+        self.bar.setValue(int(1000 * done_all / total_all) if total_all else 0)
+        if active:
+            name = next(iter(active))
+            others = f" (+{len(active) - 1} more)" if len(active) > 1 else ""
+            percent = int(100 * done_all / total_all) if total_all else 0
+            self.label.setText(f"Preparing large-series cache for {name}{others}: {percent}%")
+            self._hide_timer.stop()
+        else:
+            self.label.setText("Large-series cache ready")
+            self._hide_timer.start(self.LINGER_MS)
+        self.show()
+
+    def _hide_if_idle(self) -> None:
+        if all(d >= t for d, t in self._builds.values()):
+            self._builds.clear()
+            self.hide()
+
+
 class LimelightWindow(QMainWindow):
     def __init__(self, package: LimelightPackage, manifest: dict[str, Any], *, debug_timing: bool = False) -> None:
         super().__init__()
@@ -2212,11 +2277,26 @@ class LimelightWindow(QMainWindow):
         self.figure_view_title: QLabel | None = None
         self.figure_view_panel: InteractiveFigureViewPanel | None = None
         self.figure_view_caption: QLabel | None = None
+        self._cache_progress = CacheProgressIndicator()
+        self.statusBar().addPermanentWidget(self._cache_progress)
+        self._cache_progress_signals = CacheProgressSignals()
+        self._cache_progress_signals.progress.connect(self._on_cache_progress)
         self._update_window_title()
         self._build_menus()
         self._add_recent_path(package.path)
 
         self._build_central_tabs()
+
+    def _report_cache_progress(self, source_id: str, column: str, done: int, total: int) -> None:
+        # Runs on whichever thread is building the cache; only the signal crosses.
+        self._cache_progress_signals.progress.emit(f"{source_id}['{column}']", done, total)
+
+    def _on_cache_progress(self, series: str, done: int, total: int) -> None:
+        self._cache_progress.report(series, done, total)
+        # A build on the main thread (an interactive figure's first draw)
+        # blocks the event loop, so nothing would repaint until it finished;
+        # let paint events through, but not the user's clicks.
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
     def _build_central_tabs(self) -> None:
         if self.story_blocks is not None:
@@ -2236,6 +2316,7 @@ class LimelightWindow(QMainWindow):
         self.figure_view_panel = None
 
         runtime = self.runtime
+        runtime.cache_progress = self._report_cache_progress
         tabs = QTabWidget()
         # Every tab is built, so the wiring between them holds, but a tab with
         # nothing to show is hidden rather than left empty: a package with no

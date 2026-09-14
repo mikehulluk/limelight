@@ -165,3 +165,27 @@ def test_corrupt_cache_file_triggers_rebuild(tmp_path: Path) -> None:
     handle3 = open_existing_cache(cache_dir, content_hash)
     assert "y_max" in handle3.level_group(0)
     close_cache(handle3)
+
+
+def test_build_reports_progress_and_a_hit_reports_nothing(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.h5"
+    n = 5000
+    with h5py.File(source_path, "w") as handle:
+        handle.create_dataset("/y", data=np.arange(n, dtype=np.float64))
+    spec = SourceSpec(hdf5_path=source_path, y_dataset="/y")
+
+    reports: list[tuple[int, int]] = []
+    handle = build_or_get_cache(
+        spec, cache_dir=tmp_path / "cache", chunk_size=8, stream_block=1024, progress=lambda d, t: reports.append((d, t))
+    )
+    close_cache(handle)
+
+    assert reports[-1] == (n, n)
+    assert all(t == n for _, t in reports)
+    assert [d for d, _ in reports] == sorted(d for d, _ in reports)
+    assert len(reports) >= 5  # one per streamed block, then the final one
+
+    reports.clear()
+    handle = build_or_get_cache(spec, cache_dir=tmp_path / "cache", chunk_size=8, progress=lambda d, t: reports.append((d, t)))
+    close_cache(handle)
+    assert reports == []

@@ -74,3 +74,44 @@ def test_a_package_with_parameters_and_a_story_shows_every_tab(qt_app, tmp_path:
         assert window.help_button.text() == "Help"
     finally:
         window.close()
+
+
+def test_cache_progress_indicator_shows_builds_and_hides_when_done(qt_app) -> None:
+    from limelight.qt_app import CacheProgressIndicator
+
+    indicator = CacheProgressIndicator()
+    indicator.LINGER_MS = 0
+    assert indicator.isHidden()
+
+    indicator.report("big['y']", 250, 1000)
+    assert not indicator.isHidden()
+    assert "big['y']" in indicator.label.text() and "25%" in indicator.label.text()
+
+    indicator.report("other['z']", 0, 1000)
+    assert "+1 more" in indicator.label.text()
+
+    indicator.report("big['y']", 1000, 1000)
+    assert "other['z']" in indicator.label.text() and "+1 more" not in indicator.label.text()
+
+    indicator.report("other['z']", 1000, 1000)
+    assert "ready" in indicator.label.text()
+    indicator._hide_if_idle()
+    assert indicator.isHidden()
+
+
+def test_window_routes_cache_progress_to_its_status_bar(qt_app, tmp_path: Path) -> None:
+    project = LimelightProject(title="Progress", authors=["Test"])
+    project.add_csv_dataset(id="src", arrays={"x": [1.0, 2.0], "y": [3.0, 4.0]})
+    project.add_line_figure(id="fig", title="Fig", data="src", x="x", y=["y"])
+    folder = tmp_path / "pkg.limelight"
+    project.write_folder(folder)
+
+    window = _open_window(qt_app, folder)
+    try:
+        assert window.runtime.cache_progress is not None
+        window.runtime.cache_progress("big", "y", 1, 4)
+        qt_app.processEvents()
+        assert "big['y']" in window._cache_progress.label.text()
+        assert "25%" in window._cache_progress.label.text()
+    finally:
+        window.close()

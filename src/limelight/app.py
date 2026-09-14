@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from threading import RLock
 from time import perf_counter
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import h5py
 
@@ -543,6 +543,10 @@ class LimelightRuntime:
         self._source_rows_lock = RLock()
         self._largeseries_caches: dict[str, Any] = {}
         self._largeseries_caches_lock = RLock()
+        # Called as (source_id, column, samples_done, source_length) while a
+        # large-series cache is being built, from whichever thread is building
+        # it; the GUI sets this to show the build's progress.
+        self.cache_progress: Callable[[str, str, int, int], None] | None = None
 
     def _default_control_parameter_value(self, control_parameter: dict[str, Any]) -> str | float | None:
         data_type = control_parameter["dataType"]

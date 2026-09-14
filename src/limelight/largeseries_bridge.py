@@ -72,10 +72,17 @@ def get_or_build_cache(
         if handle is None:
             start_time = runtime.timing.start()
             spec = hdf_source_spec(source, runtime.package, column_name)
+            report = runtime.cache_progress
+            progress = (
+                (lambda done, total: report(source_id, column_name, done, total))
+                if report is not None
+                else None
+            )
             handle = largeseries.build_or_get_cache(
                 spec,
                 chunk_size=source["largeSeriesChunkSize"],
                 timing=runtime.timing,
+                progress=progress,
             )
             runtime.timing.log(
                 "largeseries.cache.build_or_get",

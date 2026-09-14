@@ -5,6 +5,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import h5py
 import numpy as np
@@ -81,7 +82,14 @@ def build_or_get_cache(
     force: bool = False,
     stream_block: int = HASH_STREAM_BLOCK,
     timing: TimingProbeLike | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> CacheHandle:
+    """Opens the cache for `spec`, building it first if there is none.
+
+    A build streams the whole source once; `progress(samples_done, source_length)`
+    is called after each block and once more when the cache is written, so a
+    caller can show how far along a long build is. A cache hit reports nothing.
+    """
     if not is_power_of_two(chunk_size):
         raise InvalidSourceSpecError(f"chunk_size must be a power of two, got {chunk_size}")
 
@@ -129,15 +137,22 @@ def build_or_get_cache(
         dtype = y_array.dtype
         x_dtype = x_array.dtype if x_array is not None else None
 
+        samples_done = 0
         if x_array is not None:
             for y_block, x_block in zip(y_array.iter_blocks(block), x_array.iter_blocks(block)):
                 hasher.update(y_block)
                 hasher.update(x_block)
                 builder.feed(y_block, x_block)
+                samples_done += y_block.shape[0]
+                if progress is not None:
+                    progress(samples_done, source_length)
         else:
             for y_block in y_array.iter_blocks(block):
                 hasher.update(y_block)
                 builder.feed(y_block, None)
+                samples_done += y_block.shape[0]
+                if progress is not None:
+                    progress(samples_done, source_length)
     finally:
         y_array.close()
         if x_array is not None:
@@ -172,6 +187,9 @@ def build_or_get_cache(
             irregular_x=spec.irregular_x,
         ),
     )
+
+    if progress is not None:
+        progress(source_length, source_length)
 
     if timing is not None and start is not None:
         timing.log(
