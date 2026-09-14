@@ -21,9 +21,14 @@ REPOSITORY_ROOT = Path(SPECPATH).resolve().parent
 VERSION = os.environ.get("LIMELIGHT_VERSION") or installed_version("limelight-app")
 SOURCE_ROOT = REPOSITORY_ROOT / "src"
 
+from PyInstaller.utils.hooks import copy_metadata
+
 datas = [
     (str(SOURCE_ROOT / "limelight" / "assets"), "limelight/assets"),
     (str(SOURCE_ROOT / "limelight" / "language-reference"), "limelight/language-reference"),
+    # The app reads its own version from the distribution's metadata, for
+    # the About box and to know whether a release is newer than itself.
+    *copy_metadata("limelight-app"),
 ]
 
 hiddenimports = [

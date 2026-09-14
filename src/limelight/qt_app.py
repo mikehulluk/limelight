@@ -35,6 +35,7 @@ from PySide6.QtCore import (
     QIODevice,
     QObject,
     QPoint,
+    QProcess,
     QRunnable,
     Qt,
     QtMsgType,
@@ -76,6 +77,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QAbstractItemView,
+    QPlainTextEdit,
     QProgressBar,
     QProgressDialog,
     QPushButton,
@@ -139,6 +141,7 @@ from .pdf_export import (
     printed_page,
     write_html_to_pdf,
 )
+from . import updates
 from .reader import PACKAGE_SUFFIXES, LimelightError, LimelightPackage, open_limelight
 from .semantic import (
     axis_data_type_kind,
@@ -2243,6 +2246,199 @@ def _shortcuts(standard: QKeySequence.StandardKey, *extras: str) -> list[QKeySeq
     return shortcuts
 
 
+class _UpdateTaskSignals(QObject):
+    finished = Signal(object)  # a Release, a Path, or the Exception that stopped it
+    progress = Signal(int, int)
+
+
+class _UpdateCheckTask(QRunnable):
+    """Asks GitHub for the latest release, off the GUI thread."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.signals = _UpdateTaskSignals()
+
+    def run(self) -> None:
+        try:
+            self.signals.finished.emit(updates.fetch_latest_release())
+        except Exception as error:  # reported to the user, whatever it was
+            logger.exception("Update check failed")
+            self.signals.finished.emit(error)
+
+
+class _InstallerDownloadTask(QRunnable):
+    """Downloads one release asset and checks it against the release's checksums."""
+
+    def __init__(self, release: "updates.Release", asset_name: str, url: str, destination: Path) -> None:
+        super().__init__()
+        self.release = release
+        self.asset_name = asset_name
+        self.url = url
+        self.destination = destination
+        self.signals = _UpdateTaskSignals()
+
+    def run(self) -> None:
+        try:
+            expected = updates.expected_sha256(self.release, self.asset_name)
+            updates.download(self.url, self.destination, progress=self.signals.progress.emit)
+            if expected is not None and updates.sha256_of(self.destination) != expected:
+                self.destination.unlink(missing_ok=True)
+                raise updates.UpdateError(
+                    f"{self.asset_name} did not match the release's published checksum; not installing it."
+                )
+            self.signals.finished.emit(self.destination)
+        except Exception as error:
+            logger.exception("Update download failed")
+            self.signals.finished.emit(error)
+
+
+class UpdateDialog(QDialog):
+    """A newer release, its notes, and the way to it that fits this install.
+
+    A Windows installer is fetched, checked and run silently, relaunching the
+    app after; a Python-package install is upgraded in place with the tool
+    that installed it, then offered a restart; the other bundles are pointed
+    at the download, since nothing can swap them from inside.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None,
+        *,
+        release: "updates.Release",
+        current: str,
+        kind: "updates.InstallKind",
+    ) -> None:
+        super().__init__(parent)
+        self.release = release
+        self.current = current
+        self.kind = kind
+        self._process: QProcess | None = None
+        self.setWindowTitle("Update Limelight")
+        self.resize(560, 460)
+
+        layout = QVBoxLayout(self)
+        heading = QLabel(f"<b>Limelight {release.version} is available.</b>")
+        layout.addWidget(heading)
+        layout.addWidget(
+            QLabel(f"You have {current}, installed via {updates.describe_install(kind)}.")
+        )
+        self.notes = QTextBrowser()
+        self.notes.setOpenExternalLinks(True)
+        self.notes.setMarkdown(release.notes or "_No release notes._")
+        layout.addWidget(self.notes, 1)
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.hide()
+        layout.addWidget(self.output, 1)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+
+        buttons = QDialogButtonBox()
+        self.update_button = buttons.addButton(self._update_button_text(), QDialogButtonBox.ButtonRole.AcceptRole)
+        self.update_button.clicked.disconnect()
+        self.update_button.clicked.connect(self._apply)
+        page_button = buttons.addButton("Release Page", QDialogButtonBox.ButtonRole.ActionRole)
+        page_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(release.page_url)))
+        self.close_button = buttons.addButton("Later", QDialogButtonBox.ButtonRole.RejectRole)
+        self.close_button.clicked.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _update_button_text(self) -> str:
+        if self.kind is updates.InstallKind.WINDOWS_INSTALLER:
+            return "Update Now"
+        if self.kind.updates_in_place:
+            return "Upgrade Now"
+        return "Open Download"
+
+    def _apply(self) -> None:
+        if self.kind is updates.InstallKind.WINDOWS_INSTALLER:
+            self._apply_windows_installer()
+        elif self.kind.updates_in_place:
+            self._apply_python_package()
+        else:
+            asset = updates.installer_asset(self.release, self.kind)
+            QDesktopServices.openUrl(QUrl(asset[1] if asset else self.release.page_url))
+            self.accept()
+
+    # ---- Windows: run the installer over the top ----
+    def _apply_windows_installer(self) -> None:
+        asset = updates.installer_asset(self.release, self.kind)
+        if asset is None:
+            self.status.setText("This release has no Windows installer; opening its page instead.")
+            QDesktopServices.openUrl(QUrl(self.release.page_url))
+            return
+        name, url = asset
+        self.update_button.setEnabled(False)
+        self.status.setText(f"Downloading {name}...")
+        task = _InstallerDownloadTask(self.release, name, url, updates.download_directory() / name)
+        task.signals.progress.connect(self._show_download_progress)
+        task.signals.finished.connect(self._run_installer)
+        QThreadPool.globalInstance().start(task)
+
+    def _show_download_progress(self, done: int, total: int) -> None:
+        if total > 0:
+            self.status.setText(f"Downloading... {100 * done // total}% of {total / 1e6:.1f} MB")
+        else:
+            self.status.setText(f"Downloading... {done / 1e6:.1f} MB")
+
+    def _run_installer(self, outcome: object) -> None:
+        if isinstance(outcome, Exception):
+            self.status.setText(str(outcome))
+            self.update_button.setEnabled(True)
+            return
+        installer = outcome
+        self.status.setText("Starting the installer; Limelight will close and reopen when it is done.")
+        try:
+            updates.launch_windows_installer(installer, relaunch=Path(sys.executable))
+        except updates.UpdateError as error:
+            self.status.setText(str(error))
+            self.update_button.setEnabled(True)
+            return
+        QApplication.instance().quit()
+
+    # ---- pip / uv: upgrade the package in place ----
+    def _apply_python_package(self) -> None:
+        command = updates.python_upgrade_command(self.kind, self.release.version)
+        self.update_button.setEnabled(False)
+        self.notes.hide()
+        self.output.show()
+        self.output.appendPlainText("$ " + " ".join(command))
+        self.status.setText("Upgrading...")
+        process = QProcess(self)
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        process.readyReadStandardOutput.connect(
+            lambda: self.output.appendPlainText(bytes(process.readAllStandardOutput()).decode("utf-8", "replace").rstrip())
+        )
+        process.finished.connect(self._python_upgrade_finished)
+        process.errorOccurred.connect(lambda _: self._python_upgrade_finished(-1, QProcess.ExitStatus.CrashExit))
+        self._process = process
+        process.start(command[0], command[1:])
+
+    def _python_upgrade_finished(self, exit_code: int, exit_status: object) -> None:
+        if self._process is None:
+            return
+        process, self._process = self._process, None
+        if exit_code != 0 or exit_status != QProcess.ExitStatus.NormalExit:
+            self.status.setText(
+                f"The upgrade did not complete (exit code {exit_code}). "
+                "You can run the command above in a terminal instead."
+            )
+            self.update_button.setEnabled(True)
+            return
+        self.status.setText(f"Limelight {self.release.version} is installed. Restart to use it?")
+        self.update_button.setText("Restart Now")
+        self.update_button.setEnabled(True)
+        self.update_button.clicked.disconnect()
+        self.update_button.clicked.connect(self._restart)
+
+    def _restart(self) -> None:
+        command = updates.relaunch_command()
+        QProcess.startDetached(command[0], command[1:])
+        QApplication.instance().quit()
+
+
 class CacheProgressSignals(QObject):
     """Carries a large-series cache build's progress onto the GUI thread.
 
@@ -2426,6 +2622,11 @@ class LimelightWindow(QMainWindow):
         report_issue_action.setObjectName("report-issue")
         report_issue_action.triggered.connect(self._report_issue)
         self.help_menu.addAction(report_issue_action)
+
+        update_action = QAction("Check for &Updates...", self)
+        update_action.setObjectName("check-for-updates")
+        update_action.triggered.connect(self._check_for_updates)
+        self.help_menu.addAction(update_action)
 
         self.help_menu.addSeparator()
 
@@ -2698,8 +2899,32 @@ class LimelightWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About Limelight",
-            f"Limelight\n\nCurrent project: {self.runtime.project_title}",
+            f"Limelight {updates.current_version()}\n"
+            f"Installed via {updates.describe_install(updates.install_kind())}\n\n"
+            f"Current project: {self.runtime.project_title}",
         )
+
+    def _check_for_updates(self) -> None:
+        self._begin_wait_state("Checking for updates...")
+        task = _UpdateCheckTask()
+        task.signals.finished.connect(self._show_update_check_result)
+        QThreadPool.globalInstance().start(task)
+
+    def _show_update_check_result(self, outcome: object) -> None:
+        self._end_wait_state()
+        current = updates.current_version()
+        if isinstance(outcome, Exception):
+            QMessageBox.warning(self, "Check for Updates", f"Could not check for updates.\n\n{outcome}")
+            return
+        release = outcome
+        if not updates.is_newer(release.version, current):
+            QMessageBox.information(
+                self,
+                "Check for Updates",
+                f"Limelight {current} is the latest version.",
+            )
+            return
+        UpdateDialog(self, release=release, current=current, kind=updates.install_kind()).exec()
 
     def _show_document_information(self) -> None:
         project = self.runtime.manifest["project"]

@@ -7,6 +7,17 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- Help > Check for Updates... looks up the latest release on GitHub and
+  shows its notes. A Windows installer install downloads the new installer,
+  checks it against the release's `SHA256SUMS`, and runs it silently,
+  reopening Limelight after; a pip or uv install is upgraded in place with
+  the tool that installed it and offered a restart; the macOS and Linux
+  bundles are pointed at the download. The About box now says which
+  version this is and how it was installed.
+- Each release publishes a `SHA256SUMS` file alongside its installers.
+
 ## [0.0.7] - 2026-09-14
 
 ### Added

@@ -126,6 +126,14 @@ jobs:
           path: dist/installer
           merge-multiple: true
 
+      # The app verifies a downloaded installer against this before running it.
+      - name: Write the installers' checksums
+        shell: bash
+        run: |
+          cd dist/installer
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Extract the release notes from the changelog
         shell: bash
         run: |
