@@ -7,6 +7,13 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-09-14
+
+### Fixed
+
+- Ctrl+wheel zooms the story over a figure as well as over text; before, it
+  only scrolled there. A figure in Explore mode keeps the wheel for its plot.
+
 ## [0.0.5] - 2026-09-14
 
 ### Added
@@ -105,7 +112,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/mikehulluk/limelight/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/mikehulluk/limelight/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/mikehulluk/limelight/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/mikehulluk/limelight/compare/v0.0.2...v0.0.3
