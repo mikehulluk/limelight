@@ -7,6 +7,22 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-09-14
+
+### Added
+
+- A package may be named `.ll` as well as `.limelight`: the open dialog,
+  the installers' file associations and the desktop entry accept both.
+- The status bar shows a large-series cache being built, with a progress
+  bar, rather than leaving the app looking hung while it streams the source.
+
+### Fixed
+
+- Zooming into a large series with irregular x now reaches the raw samples.
+  The sample range was located from the coarsest pyramid level, so a tight
+  span still resolved to millions of samples; it is now located from the
+  per-chunk bounds and made exact from the two boundary chunks.
+
 ## [0.0.4] - 2026-09-14
 
 ### Added
@@ -89,7 +105,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/mikehulluk/limelight/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/mikehulluk/limelight/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/mikehulluk/limelight/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/mikehulluk/limelight/compare/v0.0.1...v0.0.2
