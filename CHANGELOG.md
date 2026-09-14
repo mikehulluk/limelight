@@ -7,6 +7,27 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-09-14
+
+### Added
+
+- A figure stacks any number of panels, not just two: `add_line_figure`
+  takes `panels=[Panel(...), ...]` (`y2=` remains as the two-panel form),
+  and the app and PDF size the figure from the panel count. Panels' x-axes
+  are linked by their `shareGroup`, which was validated but never honoured.
+- A time-series artist takes `color`, `fillColor` and `fillAlpha` for its
+  envelope's edges and band.
+- A badge in the corner of a large-series plot says whether it shows a
+  min/max envelope or raw samples, and roughly how many samples each
+  bucket folds.
+
+### Changed
+
+- A large-series envelope draws in one colour, opaque, where it used to
+  take a colour-cycle step for each of its min line, max line and fill.
+  Once zoomed in far enough that every point is a real sample it draws as a
+  plain line rather than a collapsed envelope.
+
 ## [0.0.3] - 2026-09-11
 
 ### Added
@@ -68,7 +89,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/mikehulluk/limelight/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/mikehulluk/limelight/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/mikehulluk/limelight/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/mikehulluk/limelight/releases/tag/v0.0.1
