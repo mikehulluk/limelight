@@ -65,6 +65,9 @@ class CacheHandle:
     dtype: np.dtype
     x_dtype: np.dtype | None
     _h5: h5py.File = field(repr=False, compare=False)
+    # Per-handle memo of small arrays read from the cache file (see
+    # query.level0_x_bounds); the handle is frozen but the dict is not.
+    _memo: dict = field(default_factory=dict, repr=False, compare=False)
 
     def level_group(self, level: int) -> h5py.Group:
         return self._h5[f"/levels/{level}"]

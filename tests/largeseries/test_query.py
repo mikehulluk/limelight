@@ -102,7 +102,61 @@ def test_irregular_x_index_range_boundaries(tmp_path: Path) -> None:
     cache_handle = build_or_get_cache(spec, cache_dir=tmp_path / "cache", chunk_size=4)
     try:
         i0, i1 = sample_index_range_for_x(cache_handle, spec, 4.0, 20.0)
-        assert i0 <= 2  # sample index 2 has x=4.0
-        assert i1 >= 10  # sample index 10 has x=20.0
+        assert i0 == 2  # sample index 2 has x=4.0
+        assert i1 == 11  # sample index 10 has x=20.0, and the range is half-open
+
+        # Bounds that fall between samples still bracket exactly the samples inside them.
+        assert sample_index_range_for_x(cache_handle, spec, 4.5, 19.5) == (3, 10)
+        # An empty span between two samples yields an empty range.
+        i0, i1 = sample_index_range_for_x(cache_handle, spec, 4.5, 5.5)
+        assert i0 >= i1
+    finally:
+        close_cache(cache_handle)
+
+
+def _build_irregular_handle(tmp_path: Path, n: int, chunk_size: int):
+    source_path = tmp_path / "source.h5"
+    rng = np.random.default_rng(1)
+    x_values = np.cumsum(rng.uniform(0.5, 1.5, size=n))
+    values = np.sin(x_values)
+    with h5py.File(source_path, "w") as handle:
+        handle.create_dataset("/y", data=values)
+        handle.create_dataset("/x", data=x_values)
+    spec = SourceSpec(hdf5_path=source_path, y_dataset="/y", x_dataset="/x", irregular_x=True)
+    cache_handle = build_or_get_cache(spec, cache_dir=tmp_path / "cache", chunk_size=chunk_size)
+    return spec, cache_handle, x_values
+
+
+def test_irregular_x_zoomed_in_query_reaches_raw_samples(tmp_path: Path) -> None:
+    spec, cache_handle, x_values = _build_irregular_handle(tmp_path, n=100_000, chunk_size=64)
+    try:
+        # Deep inside the series, a span of ~20 samples: nothing coarser than
+        # the samples themselves should come back.
+        x_start, x_end = float(x_values[50_000]), float(x_values[50_020])
+        result = query_range(cache_handle, spec, x_start, x_end, target_buckets=1000)
+        assert result.raw is True
+        assert result.sample_count == 21
+        np.testing.assert_array_equal(result.x, x_values[50_000:50_021])
+    finally:
+        close_cache(cache_handle)
+
+
+def test_irregular_x_index_lookup_reads_only_boundary_chunks(tmp_path: Path, monkeypatch) -> None:
+    from limelight.largeseries import arraysource
+
+    spec, cache_handle, x_values = _build_irregular_handle(tmp_path, n=100_000, chunk_size=64)
+    reads: list[int] = []
+    original = arraysource.HdfArraySource.read_range
+
+    def counting_read_range(self, start, end):
+        reads.append(end - start)
+        return original(self, start, end)
+
+    monkeypatch.setattr(arraysource.HdfArraySource, "read_range", counting_read_range)
+    try:
+        # Zoomed all the way out: the whole series is in range, but locating
+        # it must not read the whole x array.
+        sample_index_range_for_x(cache_handle, spec, float(x_values[0]), float(x_values[-1]))
+        assert reads and max(reads) <= 64
     finally:
         close_cache(cache_handle)

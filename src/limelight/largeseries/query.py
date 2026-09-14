@@ -175,17 +175,47 @@ def sample_index_range_for_x(
         i1 = math.ceil((x_end - spec.x0) / spec.dx) + 1
         return i0, i1
 
-    top_level = handle.n_levels - 1
-    group = handle.level_group(top_level)
-    x_min = np.asarray(group["x_min"])
-    x_max = np.asarray(group["x_max"])
-    bucket_width = handle.chunk_size << top_level
+    # Level 0's per-chunk x bounds locate the range to chunk precision; the
+    # top level's buckets are far too coarse (a handful per series) to zoom
+    # into. Only the two boundary chunks then need their raw x read to make
+    # the indexes exact, so the cost is bounded by 2 * chunk_size whatever
+    # the zoom.
+    x_min, x_max = level0_x_bounds(handle)
+    chunk_size = handle.chunk_size
 
-    bucket_lo = int(np.searchsorted(x_max, x_start, side="left"))
-    bucket_hi = int(np.searchsorted(x_min, x_end, side="right"))
-    bucket_lo = max(0, min(bucket_lo, len(x_min) - 1))
-    bucket_hi = max(bucket_lo, min(bucket_hi, len(x_min)))
+    chunk_lo = int(np.searchsorted(x_max, x_start, side="left"))
+    chunk_hi = int(np.searchsorted(x_min, x_end, side="right"))
+    chunk_lo = max(0, min(chunk_lo, len(x_min) - 1))
+    chunk_hi = max(chunk_lo, min(chunk_hi, len(x_min)))
 
-    i0 = bucket_lo * bucket_width
-    i1 = bucket_hi * bucket_width
+    i0 = chunk_lo * chunk_size
+    i1 = min(chunk_hi * chunk_size, handle.source_length)
+    if i0 >= i1:
+        return i0, i1
+
+    x_array = spec.open_x()
+    if x_array is None:
+        return i0, i1
+    try:
+        head = x_array.read_range(i0, min(i0 + chunk_size, i1))
+        i0 += int(np.searchsorted(head, x_start, side="left"))
+        tail_start = max(i1 - chunk_size, i0)
+        tail = x_array.read_range(tail_start, i1)
+        i1 = tail_start + int(np.searchsorted(tail, x_end, side="right"))
+    finally:
+        x_array.close()
     return i0, i1
+
+
+def level0_x_bounds(handle: CacheHandle) -> tuple[np.ndarray, np.ndarray]:
+    """Level 0's (x_min, x_max) per chunk, read once per handle.
+
+    One float pair per chunk_size samples, so a few hundred KB for the
+    largest series; cheap to keep and consulted on every pan and zoom.
+    """
+    bounds = handle._memo.get("level0_x_bounds")
+    if bounds is None:
+        group = handle.level_group(0)
+        bounds = (np.asarray(group["x_min"]), np.asarray(group["x_max"]))
+        handle._memo["level0_x_bounds"] = bounds
+    return bounds
