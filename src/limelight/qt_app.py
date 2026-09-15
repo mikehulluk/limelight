@@ -296,8 +296,12 @@ def _configure_figure_typography() -> None:
     Labels are the story's size in the story's face, so a plot's axes read
     as part of the page; the size is in points, and a figure is laid out at
     CSS_PIXELS_PER_INCH so those points come out as the story's pixels.
-    Done once, for the process: rcParams are global, and figures are drawn
-    from worker threads as well as the main one.
+    Within a figure, axis labels are that size and tick numbers and the
+    legend a step smaller, so the labels lead; a title is the body size in
+    bold, since the figure sits under its caption and the story's headings
+    rather than above them. Every size is relative to font.size, so the one
+    number carries through. Done once, for the process: rcParams are global,
+    and figures are drawn from worker threads as well as the main one.
     """
 
     global _figure_typography_configured
@@ -309,6 +313,12 @@ def _configure_figure_typography() -> None:
             "font.size": STORY_FONT_PT,
             "font.family": "sans-serif",
             "font.sans-serif": [story_font_family(), "Segoe UI", "DejaVu Sans"],
+            "axes.titlesize": "medium",
+            "axes.titleweight": "bold",
+            "axes.labelsize": "medium",
+            "xtick.labelsize": "small",
+            "ytick.labelsize": "small",
+            "legend.fontsize": "small",
         }
     )
 
@@ -2073,7 +2083,7 @@ def _apply_axes_action_decorators(
                     rotation=90,
                     transform=axes.get_xaxis_transform(),
                     color=color,
-                    fontsize=8,
+                    fontsize="small",
                 )
             continue
         limit_axis, raw_window = _axis_limit_window(vspan["xLimit"], axes_spec["xAxis"], axes_spec["yAxis"])
@@ -2134,7 +2144,7 @@ def _apply_rect_decorator(axes: Any, axes_spec: dict[str, Any], rect: dict[str, 
             label,
             ha="center",
             va="bottom",
-            fontsize=8,
+            fontsize="small",
             color=_DEFAULT_DECORATOR_COLOR,
             clip_on=True,
         )
@@ -2168,7 +2178,7 @@ def _apply_arrow_annotation(axes: Any, annotation: dict[str, Any]) -> None:
                 xytext=_point_label_offset(annotation),
                 textcoords="offset points",
                 color=color,
-                fontsize=8,
+                fontsize="small",
                 ha="left",
                 va="center",
                 annotation_clip=True,
@@ -2182,7 +2192,7 @@ def _apply_arrow_annotation(axes: Any, annotation: dict[str, Any]) -> None:
         textcoords="data",
         arrowprops={"arrowstyle": "->", "color": color, "linewidth": 1.8},
         color=color,
-        fontsize=9,
+        fontsize="small",
         ha="center",
         va="center",
         annotation_clip=True,

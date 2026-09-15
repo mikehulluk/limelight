@@ -9,6 +9,11 @@ versions may break things.
 
 ### Changed
 
+- Figure text has a hierarchy: axis labels at the story's size, tick numbers
+  and legends a step smaller, and the title at the body size in bold rather
+  than larger than the story's headings. Decorator, annotation and arrow
+  labels are the same small step, and the large-series badge smaller still,
+  all relative to the story's size rather than fixed point sizes.
 - `set_story_markdown` requires `base_dir`, what relative image paths in the
   story resolve against; it used to default to the working directory.
 - A figure's pop-out window and Explore view open at the figure's own size

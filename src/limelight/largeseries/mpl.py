@@ -103,7 +103,7 @@ def add_indicator(ax: Axes, color: str) -> Text:
         transform=ax.transAxes,
         ha="right",
         va="top",
-        fontsize=7,
+        fontsize="x-small",
         color=color,
         gid=INDICATOR_GID,
         bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "edgecolor": color, "alpha": 0.8},
