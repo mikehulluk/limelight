@@ -10,6 +10,7 @@ import re
 import shutil
 import zipfile
 from dataclasses import dataclass, field, replace
+from datetime import date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Iterable, Mapping, Sequence
@@ -30,6 +31,7 @@ from .geometry import (
     DEFAULT_PAGE_WIDTH_MM,
 )
 from .largeseries import DEFAULT_CHUNK_SIZE
+from .metadata import METADATA_TYPES, MetadataError, parse_metadata_value
 from .reader import PACKAGE_SUFFIXES
 from .signing import DocumentSignature, sign_document
 from .story_markdown import (
@@ -2002,6 +2004,34 @@ class PlotArrow:
         )
 
 
+@dataclass(frozen=True)
+class MetadataEntry:
+    """One named, typed fact attached to the package. See LimelightProject.add_metadata."""
+
+    name: str
+    type: str
+    value: str
+
+    def __post_init__(self) -> None:
+        if not self.name or not self.name.strip():
+            raise ValueError("metadata name must not be empty")
+        if self.type not in METADATA_TYPES:
+            raise ValueError(f"metadata type must be one of {', '.join(METADATA_TYPES)}, got {self.type!r}")
+        try:
+            parse_metadata_value(self.type, self.value)
+        except MetadataError as error:
+            raise ValueError(f"metadata {self.name!r}: {error}") from None
+
+    def render(self) -> str:
+        return _record(
+            [
+                ("name", _quote(self.name)),
+                ("type", f"Limelight.MetadataType.{self.type}"),
+                ("value", _quote(self.value)),
+            ]
+        )
+
+
 class LimelightProject:
     def __init__(
         self,
@@ -2026,6 +2056,7 @@ class LimelightProject:
         self.updated = updated
         self.document_version = document_version
         self.control_parameters: list[ControlParameter] = []
+        self.metadata: list[MetadataEntry] = []
         self.datasets: list[Dataset] = []
         self.hdf_datasets: list[HdfDataset] = []
         self.figure_specs: list[FigureSpec] = []
@@ -2226,6 +2257,37 @@ class LimelightProject:
         self._resolved_story = None
         return str(source_path)
 
+    def add_metadata(
+        self,
+        name: str,
+        value: int | float | str | datetime | date,
+        *,
+        type: str | None = None,
+    ) -> MetadataEntry:
+        """Attach a named fact to the package, typed from the value given.
+
+        An int, float or datetime says its own type; a str is a `string`
+        unless `type="version"` (or another type) says otherwise, in which
+        case the text has to read as that type.
+        """
+        if isinstance(value, bool):
+            raise TypeError("metadata does not have a bool type; write it as a string or an int")
+        if type is None:
+            if isinstance(value, int):
+                type = "int"
+            elif isinstance(value, float):
+                type = "float"
+            elif isinstance(value, (datetime, date)):
+                type = "datetime"
+            else:
+                type = "string"
+        text = value.isoformat() if isinstance(value, (datetime, date)) else str(value)
+        if any(entry.name == name for entry in self.metadata):
+            raise ValueError(f"metadata {name!r} is already declared")
+        entry = MetadataEntry(name=name, type=type, value=text)
+        self.metadata.append(entry)
+        return entry
+
     def add_csv_dataset(
         self,
         *,
@@ -2405,6 +2467,7 @@ class LimelightProject:
             [
                 ("limelightVersion", _quote("1.0")),
                 ("project", project),
+                ("metadata", _list([entry.render() for entry in self.metadata], "Limelight.Metadata")),
                 (
                     "controlParameters",
                     _list(

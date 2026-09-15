@@ -33,6 +33,7 @@ let Assets     = ./limelight-v1-06-assets.dhall
 let Manifest =
       { limelightVersion : Core.Version
       , project : Document.Project
+      , metadata : List Document.Metadata
       , controlParameters : List Core.ControlParameter
       , sources : List Datasets.Source
       , figures : List Figure.FigureSpec

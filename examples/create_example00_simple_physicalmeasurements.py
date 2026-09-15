@@ -103,6 +103,12 @@ in    { limelightVersion = "1.0"
         , updated = None Text
         , documentVersion = Some "0.1"
         }
+      , metadata =
+        [ { name = "publishdate", type = Limelight.MetadataType.datetime, value = "2026-08-08T09:30:00+01:00" }
+        , { name = "campaign", type = Limelight.MetadataType.string, value = "bench-discharge-2026" }
+        , { name = "sensor-count", type = Limelight.MetadataType.int, value = "4" }
+        , { name = "pipeline", type = Limelight.MetadataType.version, value = "1.4.0" }
+        ]
       , controlParameters =
         [ { id = "sensor-site"
           , label = "Sensor site"

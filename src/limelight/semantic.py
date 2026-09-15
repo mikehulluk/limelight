@@ -7,6 +7,7 @@ from typing import Any, Iterable
 from matplotlib.colors import is_color_like
 
 from . import refs
+from .metadata import METADATA_TYPES, MetadataError, parse_metadata_value
 from .reader import LimelightError
 
 _VALID_MARKERS = ("o", "s", "^", "v", "D", "x", "+", "*", "p", "h", "<", ">")
@@ -125,6 +126,7 @@ class _SemanticValidator:
         self.hdf_source_ids: set[str] = set()
 
     def validate(self) -> None:
+        self._validate_metadata()
         self._require_unique_ids("ControlParameter", self.manifest["controlParameters"])
         self._require_unique_ids("Source", self.manifest["sources"])
         self._require_unique_ids("FigureSpec", self.manifest["figures"])
@@ -138,6 +140,24 @@ class _SemanticValidator:
         self._validate_figure_views()
         self._validate_assets()
         self._validate_story()
+
+    def _validate_metadata(self) -> None:
+        seen: set[str] = set()
+        for entry in self.manifest.get("metadata") or []:
+            name = entry["name"]
+            if not name.strip():
+                raise LimelightError("Metadata entry has an empty name")
+            if name in seen:
+                raise LimelightError(f"Metadata {name!r} is declared more than once")
+            seen.add(name)
+            if entry["type"] not in METADATA_TYPES:
+                raise LimelightError(
+                    f"Metadata {name!r} has unknown type {entry['type']!r}; expected one of {', '.join(METADATA_TYPES)}"
+                )
+            try:
+                parse_metadata_value(entry["type"], entry["value"])
+            except MetadataError as error:
+                raise LimelightError(f"Metadata {name!r}: {error}") from None
 
     def _require_unique_ids(self, label: str, items: list[dict[str, Any]]) -> None:
         seen: set[str] = set()

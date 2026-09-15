@@ -7,6 +7,15 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- A package can carry metadata: a top-level `metadata` list in the manifest
+  of `{ name, type, value }` entries, the types being `int`, `float`,
+  `datetime` (ISO 8601), `string` and `version` (semantic). `verify` checks
+  each value reads as its type; `LL meta <package>` prints them as a JSON
+  list with typed values; `summary` and the app's Document Information list
+  them. `project.add_metadata(name, value)` types an entry from its value.
+
 ### Changed
 
 - Figure text has a hierarchy: axis labels at the story's size, tick numbers

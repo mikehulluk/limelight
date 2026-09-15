@@ -38,6 +38,7 @@ limelight-gui example.limelight            # open a package in the desktop app
 limelight-cli summary example.limelight    # print a summary of a package
 limelight-cli verify example.limelight     # validate one or more packages
 limelight-cli pdf example.limelight        # render a package's story to PDF
+limelight-cli meta example.limelight       # print a package's metadata as JSON
 ```
 
 `LL` is the short form of both: `LL example.limelight` opens the app, and

@@ -14,6 +14,15 @@ let Project =
       , documentVersion : Optional Core.Version
       }
 
+-- Metadata the author attaches to the package: whatever facts should travel
+-- with it - a publish date, a run number, the pipeline version that made it.
+-- The value is written as text and read as the type says; `verify` checks
+-- that it does, so `LL meta` can hand out typed JSON. A `datetime` is ISO
+-- 8601; a `version` is semantic versioning (MAJOR.MINOR.PATCH[-pre][+build]).
+let MetadataType = < int | float | datetime | string | version >
+
+let Metadata = { name : Text, type : MetadataType, value : Text }
+
 let StoryFormat = < markdown >
 
 -- How wide the page is.
@@ -75,6 +84,8 @@ let Story =
       }
 
 in  { Project = Project
+    , MetadataType = MetadataType
+    , Metadata = Metadata
     , StoryFormat = StoryFormat
     , PageWidth = PageWidth
     , PageHeight = PageHeight

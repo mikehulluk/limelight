@@ -12,12 +12,14 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from limelight.app import LimelightRuntime
     from limelight.logging_config import configure_logging
+    from limelight.metadata import metadata_entries
     from limelight.reader import LimelightError, LimelightPackage, open_limelight
     from limelight.semantic import validate_manifest_semantics
     from limelight.settings import load_settings
 else:
     from .app import LimelightRuntime
     from .logging_config import configure_logging
+    from .metadata import metadata_entries
     from .reader import LimelightError, LimelightPackage, open_limelight
     from .semantic import validate_manifest_semantics
     from .settings import load_settings
@@ -27,7 +29,7 @@ logger = logging.getLogger("limelight.cli")
 
 # The subcommands, in the order they are shown. `LL` uses these to tell a
 # request for the CLI from a package to open in the app.
-COMMANDS = ("json", "summary", "verify", "pdf", "desktop-entry")
+COMMANDS = ("json", "summary", "verify", "pdf", "meta", "desktop-entry")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -63,6 +65,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
 
+    meta_parser = subparsers.add_parser(
+        "meta",
+        help="Print a package's metadata as a JSON list of {name, type, value}, values typed",
+    )
+    meta_parser.add_argument("package", help="Path to a .limelight or .ll folder or archive")
+
     desktop_parser = subparsers.add_parser(
         "desktop-entry",
         help="Install a Linux desktop entry for this install, so the app has a taskbar icon and owns .limelight and .ll files",
@@ -87,6 +95,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             validate_manifest_semantics(manifest)
             if args.command == "json":
                 print(json.dumps(manifest, indent=2))
+            elif args.command == "meta":
+                print(json.dumps(metadata_entries(manifest), indent=2))
             else:
                 print(_summarize(package, manifest))
     except (FileNotFoundError, LimelightError) as error:
@@ -132,6 +142,12 @@ def _summarize(package: LimelightPackage, manifest: dict[str, Any]) -> str:
         f"Figure views: {len(figure_views)}",
         f"Story: {story['documentPath']} ({story['format']})",
     ]
+
+    metadata = metadata_entries(manifest)
+    if metadata:
+        lines.append("")
+        lines.append("Metadata:")
+        lines.extend(f"- {entry['name']} ({entry['type']}): {entry['value']}" for entry in metadata)
 
     if figure_specs:
         lines.append("")

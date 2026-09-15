@@ -144,6 +144,7 @@ from .pdf_export import (
     write_html_to_pdf,
 )
 from . import updates
+from .metadata import metadata_entries
 from .reader import PACKAGE_SUFFIXES, LimelightError, LimelightPackage, open_limelight
 from .semantic import (
     axis_data_type_kind,
@@ -2957,6 +2958,11 @@ class LimelightWindow(QMainWindow):
         lines.append(f"Document version: {f'v{document_version}' if document_version else '(unversioned)'}")
         lines.append(f"Limelight schema version: v{self.runtime.manifest['limelightVersion']}")
         lines.append(f"Manifest SHA: {self.runtime.manifest_sha8}")
+        metadata = metadata_entries(self.runtime.manifest)
+        if metadata:
+            lines.append("")
+            lines.append("Metadata:")
+            lines.extend(f"  {entry['name']} ({entry['type']}): {entry['value']}" for entry in metadata)
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Document Information")
