@@ -540,7 +540,8 @@ This figure reads `series-110826.csv` from the RPI source folder.
 The import normalizes each source period to `CalendarDay` and calculates year-on-year percentage change. Annual rows compare with the prior year; monthly rows compare with the same month one year earlier. The calculated range runs from **{first_rpi.date}** to **{last_rpi.date}**.
 
 {project.story_figure("uk-rpi-yoy-change")}
-"""
+""",
+        base_dir=Path(__file__).parent,
     )
 
     return project

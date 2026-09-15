@@ -307,7 +307,8 @@ set limits and decorators with plain ISO date strings instead of numeric coordin
 as revenue, and shades the region without changing what the axes show.
 
 {project.story_figure("monthly-revenue-over-time", actions=revenue_actions)}
-"""
+""",
+        base_dir=Path(__file__).parent,
     )
 
     return project

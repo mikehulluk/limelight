@@ -27,20 +27,17 @@ def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_na
 
     index = source["index"]
     if index == "noIndex":
-        return largeseries.SourceSpec(hdf5_path=hdf5_path, y_dataset=y_dataset, x0=0.0, dx=1.0)
+        return largeseries.SourceSpec.uniform(hdf5_path, y_dataset, x0=0.0, dx=1.0)
 
     if "intOrigin" in index:
-        return largeseries.SourceSpec(
-            hdf5_path=hdf5_path,
-            y_dataset=y_dataset,
-            x0=float(index["intOrigin"]),
-            dx=float(index["intStep"]),
+        return largeseries.SourceSpec.uniform(
+            hdf5_path, y_dataset, x0=float(index["intOrigin"]), dx=float(index["intStep"])
         )
 
     if "timeStepNom" in index:
         dx = index["timeStepNom"] / index["timeStepDenom"]
         x0 = _epoch_offset_in_unit(index["timeOrigin"], index["timeStepUnit"])
-        return largeseries.SourceSpec(hdf5_path=hdf5_path, y_dataset=y_dataset, x0=x0, dx=dx)
+        return largeseries.SourceSpec.uniform(hdf5_path, y_dataset, x0=x0, dx=dx)
 
     if "irregularArrayCoordArray" in index or "irregularTimeCoordArray" in index:
         coord_column = index.get("irregularArrayCoordArray") or index.get("irregularTimeCoordArray")
@@ -48,12 +45,7 @@ def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_na
             raise KeyError(
                 f"Index coordinate array {coord_column!r} is not declared in yArrays of source {source['id']!r}"
             )
-        return largeseries.SourceSpec(
-            hdf5_path=hdf5_path,
-            y_dataset=y_dataset,
-            x_dataset=y_datasets[coord_column],
-            irregular_x=True,
-        )
+        return largeseries.SourceSpec.irregular(hdf5_path, y_dataset, y_datasets[coord_column])
 
     if "calendarStep" in index or "irregularCalendarCoordArray" in index:
         raise NotImplementedError(

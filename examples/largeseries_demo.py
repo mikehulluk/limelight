@@ -44,7 +44,7 @@ def build_synthetic_source() -> None:
 def main() -> None:
     build_synthetic_source()
 
-    spec = SourceSpec(hdf5_path=SOURCE_PATH, y_dataset="/y")
+    spec = SourceSpec.uniform(SOURCE_PATH, "/y", x0=0.0, dx=1.0)
 
     print("Building or reusing cache...")
     handle = build_or_get_cache(spec, cache_dir=CACHE_DIR)

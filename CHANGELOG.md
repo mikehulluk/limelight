@@ -9,6 +9,16 @@ versions may break things.
 
 ### Changed
 
+- `set_story_markdown` requires `base_dir`, what relative image paths in the
+  story resolve against; it used to default to the working directory.
+- A figure's pop-out window and Explore view open at the figure's own size
+  (its `size`, or the column and its panel count), shrunk to fit the screen.
+- `largeseries.SourceSpec` states every field; `SourceSpec.uniform(...)` and
+  `SourceSpec.irregular(...)` build the two kinds. A uniform grid's `dx`
+  must be positive.
+- Building a large-series cache checks that an irregular x array is sorted,
+  raising `NonMonotonicXError` at the first sample that steps back; every
+  range query relies on it, and used to be quietly wrong when it was not.
 - `targetBuckets` on a time-series artist now caps the envelope's resolution
   (one bucket per pixel column by default); it had been read and ignored.
 - The `frame` of a MapSpec, TableViewSpec and FormSpec is optional, and the

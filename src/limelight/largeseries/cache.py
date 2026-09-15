@@ -20,7 +20,7 @@ from .constants import (
     aligned_stream_block,
     is_power_of_two,
 )
-from .exceptions import CacheCorruptError, InvalidSourceSpecError
+from .exceptions import CacheCorruptError, InvalidSourceSpecError, NonMonotonicXError
 from .hashing import StreamingHasher
 from .memo import MemoEntry, lookup_memo, update_memo
 from .pyramid import LevelArrays, LevelZeroBuilder, cascade_levels
@@ -29,20 +29,37 @@ from .timing import TimingProbeLike
 
 @dataclass(frozen=True)
 class SourceSpec:
-    """Describes where a raw series lives and how to interpret its x-axis."""
+    """Describes where a raw series lives and how to interpret its x-axis.
+
+    Every field is stated: a series is either on a uniform grid, `x0 + i * dx`,
+    or has its x in a dataset of its own. `SourceSpec.uniform` and
+    `SourceSpec.irregular` say which without spelling out the other's fields.
+    """
 
     hdf5_path: Path
     y_dataset: str
-    x_dataset: str | None = None
-    irregular_x: bool = False
-    x0: float = 0.0
-    dx: float = 1.0
+    x_dataset: str | None
+    irregular_x: bool
+    x0: float
+    dx: float
 
     def __post_init__(self) -> None:
         if self.irregular_x and self.x_dataset is None:
             raise InvalidSourceSpecError("irregular_x=True requires an x_dataset")
         if not self.irregular_x and self.x_dataset is not None:
             raise InvalidSourceSpecError("x_dataset is only used when irregular_x=True")
+        if not self.irregular_x and not self.dx > 0:
+            raise InvalidSourceSpecError(f"dx must be positive on a uniform grid, got {self.dx}")
+
+    @classmethod
+    def uniform(cls, hdf5_path: str | Path, y_dataset: str, *, x0: float, dx: float) -> "SourceSpec":
+        """A series sampled at `x0 + i * dx`."""
+        return cls(hdf5_path=Path(hdf5_path), y_dataset=y_dataset, x_dataset=None, irregular_x=False, x0=x0, dx=dx)
+
+    @classmethod
+    def irregular(cls, hdf5_path: str | Path, y_dataset: str, x_dataset: str) -> "SourceSpec":
+        """A series whose x values are read from `x_dataset`, which must be sorted."""
+        return cls(hdf5_path=Path(hdf5_path), y_dataset=y_dataset, x_dataset=x_dataset, irregular_x=True, x0=0.0, dx=1.0)
 
     def open_y(self) -> ArraySource:
         return HdfArraySource(self.hdf5_path, self.y_dataset)
@@ -139,7 +156,13 @@ def build_or_get_cache(
 
         samples_done = 0
         if x_array is not None:
+            # Every range query searches the x bounds, so x has to be sorted;
+            # the one pass over it that the build makes is where to be sure.
+            previous_last: float | None = None
             for y_block, x_block in zip(y_array.iter_blocks(block), x_array.iter_blocks(block)):
+                _require_non_decreasing(x_block, previous_last, samples_done, spec)
+                if x_block.shape[0]:
+                    previous_last = float(x_block[-1])
                 hasher.update(y_block)
                 hasher.update(x_block)
                 builder.feed(y_block, x_block)
@@ -205,6 +228,23 @@ def build_or_get_cache(
         )
 
     return open_existing_cache(resolved_cache_dir, content_hash)
+
+
+def _require_non_decreasing(x_block: np.ndarray, previous_last: float | None, offset: int, spec: SourceSpec) -> None:
+    """Raise NonMonotonicXError at the first sample that steps backwards."""
+    if x_block.shape[0] == 0:
+        return
+    if previous_last is not None and x_block[0] < previous_last:
+        bad = offset
+    else:
+        steps = np.flatnonzero(x_block[1:] < x_block[:-1])
+        if steps.size == 0:
+            return
+        bad = offset + int(steps[0]) + 1
+    raise NonMonotonicXError(
+        f"{spec.hdf5_path}:{spec.x_dataset} is not sorted: sample {bad} is less than the one before it; "
+        f"a large-series x array must be non-decreasing"
+    )
 
 
 def open_existing_cache(cache_dir: Path, content_hash: str) -> CacheHandle:

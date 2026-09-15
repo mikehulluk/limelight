@@ -290,7 +290,7 @@ limelight --debug-timing _build/examples/example90-performance-test.limelight
                 )
             )
 
-    project.set_story_markdown("\n\n".join(sections))
+    project.set_story_markdown("\n\n".join(sections), base_dir=Path(__file__).parent)
 
 
 def build_project() -> LimelightProject:

@@ -2156,13 +2156,14 @@ class LimelightProject:
         self,
         markdown: str,
         *,
-        base_dir: str | Path = ".",
+        base_dir: str | Path,
         signers: Sequence[tuple[str, bytes]] = (),
     ) -> None:
         """Set the story from a string.
 
         ``base_dir`` is what relative image paths are resolved against. A story
-        read from a file gets that for free; one built in Python has to say.
+        read from a file gets that for free; one built in Python has to say,
+        since the working directory is whatever the script was run from.
         """
 
         self.story_markdown = markdown.strip() + "\n"

@@ -64,7 +64,7 @@ def test_a_package_with_parameters_and_a_story_shows_every_tab(qt_app, tmp_path:
     project.add_csv_dataset(id="src", arrays={"x": [0.0, 1.0], "y": [1.0, 2.0]})
     project.add_line_figure(id="fig", title="Fig", data="src", x="x", y=["y"])
     project.add_float_control_parameter(id="gain", label="Gain", default=1.0, min=0.0, max=2.0)
-    project.set_story_markdown("# A story\n\nWith a paragraph.\n")
+    project.set_story_markdown("# A story\n\nWith a paragraph.\n", base_dir=tmp_path)
     project.write_folder(tmp_path / "pkg")
 
     window = _open_window(qt_app, tmp_path / "pkg")
@@ -127,7 +127,7 @@ def test_ctrl_wheel_over_a_figure_zooms_the_story(qt_app, tmp_path: Path) -> Non
     project.add_csv_dataset(id="src", arrays={"x": [1.0, 2.0], "y": [3.0, 4.0]})
     project.add_line_figure(id="fig", title="Fig", data="src", x="x", y=["y"])
     view = project.story_figure(ref="fig", id="fig-view", actions=[])
-    project.set_story_markdown(f"# Story\n\n{view}\n")
+    project.set_story_markdown(f"# Story\n\n{view}\n", base_dir=tmp_path)
     folder = tmp_path / "pkg.limelight"
     project.write_folder(folder)
 

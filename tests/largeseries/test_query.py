@@ -17,7 +17,7 @@ def _build_uniform_handle(tmp_path: Path, n: int = 4096, chunk_size: int = 8):
     with h5py.File(source_path, "w") as handle:
         handle.create_dataset("/y", data=values)
 
-    spec = SourceSpec(hdf5_path=source_path, y_dataset="/y")
+    spec = SourceSpec.uniform(source_path, "/y", x0=0.0, dx=1.0)
     cache_handle = build_or_get_cache(spec, cache_dir=tmp_path / "cache", chunk_size=chunk_size)
     return spec, cache_handle, values
 
@@ -98,7 +98,7 @@ def test_irregular_x_index_range_boundaries(tmp_path: Path) -> None:
         handle.create_dataset("/y", data=values)
         handle.create_dataset("/x", data=x_values)
 
-    spec = SourceSpec(hdf5_path=source_path, y_dataset="/y", x_dataset="/x", irregular_x=True)
+    spec = SourceSpec.irregular(source_path, "/y", "/x")
     cache_handle = build_or_get_cache(spec, cache_dir=tmp_path / "cache", chunk_size=4)
     try:
         i0, i1 = sample_index_range_for_x(cache_handle, spec, 4.0, 20.0)
@@ -122,7 +122,7 @@ def _build_irregular_handle(tmp_path: Path, n: int, chunk_size: int):
     with h5py.File(source_path, "w") as handle:
         handle.create_dataset("/y", data=values)
         handle.create_dataset("/x", data=x_values)
-    spec = SourceSpec(hdf5_path=source_path, y_dataset="/y", x_dataset="/x", irregular_x=True)
+    spec = SourceSpec.irregular(source_path, "/y", "/x")
     cache_handle = build_or_get_cache(spec, cache_dir=tmp_path / "cache", chunk_size=chunk_size)
     return spec, cache_handle, x_values
 

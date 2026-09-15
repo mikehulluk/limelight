@@ -216,7 +216,8 @@ This package is a placeholder for developing map-oriented Limelight functionalit
 ## Next Steps
 
 The current figure includes a map spec backed by the wiki places latitude/longitude data. Map tiles, projections, labels, and geographic interaction can be added as the renderer settles.
-"""
+""",
+        base_dir=Path(__file__).parent,
     )
 
     return project

@@ -21,7 +21,7 @@ def _build_handle(tmp_path: Path, n: int = 4096, chunk_size: int = 8):
     with h5py.File(source_path, "w") as handle:
         handle.create_dataset("/y", data=values)
 
-    spec = SourceSpec(hdf5_path=source_path, y_dataset="/y")
+    spec = SourceSpec.uniform(source_path, "/y", x0=0.0, dx=1.0)
     cache_handle = build_or_get_cache(spec, cache_dir=tmp_path / "cache", chunk_size=chunk_size)
     return spec, cache_handle
 

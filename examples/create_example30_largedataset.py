@@ -81,7 +81,7 @@ Blah Blah
 {fig_view0}
     """
 
-    project.set_story_markdown(md)
+    project.set_story_markdown(md, base_dir=Path(__file__).parent)
 
     return project
 

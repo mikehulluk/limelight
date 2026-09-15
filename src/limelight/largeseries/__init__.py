@@ -7,6 +7,7 @@ from .constants import DEFAULT_CHUNK_SIZE
 from .exceptions import (
     CacheCorruptError,
     InvalidSourceSpecError,
+    NonMonotonicXError,
     LargeSeriesError,
     UnsupportedQueryError,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "DEFAULT_CHUNK_SIZE",
     "HdfArraySource",
     "InvalidSourceSpecError",
+    "NonMonotonicXError",
     "LargeSeriesError",
     "QueryResult",
     "SourceIdentity",

@@ -337,7 +337,8 @@ The original signal has a discrete spectrum: energy at the three sinusoidal comp
 {project.story_figure("input-bode", actions=component_frequency_markers("input-bode"))}
 
 {project.story_figure("bode-response", actions=component_frequency_markers("bode-response"))}
-"""
+""",
+        base_dir=Path(__file__).parent,
     )
 
     return project

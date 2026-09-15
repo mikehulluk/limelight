@@ -49,7 +49,7 @@ def test_story_figures_are_numbered_from_one() -> None:
 
     first = project.story_figure("prey")
     second = project.story_figure("predator")
-    project.set_story_markdown(f"# Numbering\n\n{first}\n\n{second}\n")
+    project.set_story_markdown(f"# Numbering\n\n{first}\n\n{second}\n", base_dir=".")
     project.render_project_dhall()
 
     assert [view.story_number for view in project.figure_views] == [1, 2]
@@ -63,7 +63,7 @@ def test_numbering_follows_the_document_not_the_call_order() -> None:
     first = project.story_figure("prey")
     second = project.story_figure("predator")
     # Written into the story the other way round.
-    project.set_story_markdown(f"# Numbering\n\n{second}\n\n{first}\n")
+    project.set_story_markdown(f"# Numbering\n\n{second}\n\n{first}\n", base_dir=".")
     project.render_project_dhall()
 
     numbers = {view.ref: view.story_number for view in project.figure_views}
@@ -75,7 +75,7 @@ def test_a_repeated_figure_keeps_its_first_number() -> None:
 
     first = project.story_figure("prey")
     second = project.story_figure("predator")
-    project.set_story_markdown(f"# Numbering\n\n{first}\n\n{second}\n\n{first}\n")
+    project.set_story_markdown(f"# Numbering\n\n{first}\n\n{second}\n\n{first}\n", base_dir=".")
     project.render_project_dhall()
 
     numbers = {view.ref: view.story_number for view in project.figure_views}
@@ -86,7 +86,7 @@ def test_an_explicit_number_overrides_story_order() -> None:
     project = LimelightProject(title="Numbering", authors=["Test"])
 
     directive = project.story_figure("prey", number=7)
-    project.set_story_markdown(f"# Numbering\n\n{directive}\n")
+    project.set_story_markdown(f"# Numbering\n\n{directive}\n", base_dir=".")
     project.render_project_dhall()
 
     assert project.figure_views[0].story_number == 7

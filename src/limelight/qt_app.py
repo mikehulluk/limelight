@@ -3792,6 +3792,23 @@ class FigureViewWindow(QMainWindow):
             figure_view_index=figure_view_index,
             figure_view_actions=figure_view_actions,
         )
+        self._open_at_figure_size()
+
+    def _open_at_figure_size(self) -> None:
+        """Size the window to the figure, shrunk to fit the screen if it must.
+
+        adjustSize() would cap at two thirds of the screen and let the layout
+        squash the canvas; scaling the whole hint keeps the figure's shape.
+        """
+
+        hint = self.sizeHint()
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            self.resize(hint)
+            return
+        available = screen.availableGeometry()
+        scale = min(1.0, 0.9 * available.width() / max(1, hint.width()), 0.9 * available.height() / max(1, hint.height()))
+        self.resize(int(hint.width() * scale), int(hint.height() * scale))
 
     def apply_story_state(
         self,
@@ -4656,6 +4673,13 @@ class StoryBlockPanel(QScrollArea):
         self.figure_pool.waitForDone()
 
 
+def _figure_natural_size_px(runtime: LimelightRuntime, figure_spec: dict[str, Any]) -> tuple[int, int]:
+    """The pixels a figure is drawn at on a story column at screen resolution."""
+    column = runtime.page_geometry.content_width_px(CSS_PIXELS_PER_INCH) or int(7.2 * CSS_PIXELS_PER_INCH)
+    width = figure_width_px(figure_spec, column, CSS_PIXELS_PER_INCH)
+    return width, max(1, int(width * figure_aspect(figure_spec)))
+
+
 class InteractiveFigureViewPanel(QWidget):
     def __init__(self, runtime: LimelightRuntime, *, on_parameter_changed: Callable[[], None] | None = None) -> None:
         super().__init__()
@@ -4675,7 +4699,7 @@ class InteractiveFigureViewPanel(QWidget):
         self.controls_layout.setSpacing(8)
         self.controls_container.hide()
         layout.addWidget(self.controls_container)
-        self.figure = MatplotlibFigure(figsize=(7.2, 4.8), constrained_layout=True)
+        self.figure = MatplotlibFigure(constrained_layout=True)
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.canvas.mpl_connect("motion_notify_event", self._on_hover)
         self.canvas.mpl_connect("figure_leave_event", lambda _event: QToolTip.hideText())
@@ -4759,6 +4783,12 @@ class InteractiveFigureViewPanel(QWidget):
         self.table.hide()
         self.toolbar.show()
         self.canvas.show()
+        # The canvas grows with its window; this is the size it asks for, and
+        # so what a pop-out opens at: the figure's own, as the story draws it.
+        if figure_spec is not None:
+            width, height = _figure_natural_size_px(self.runtime, figure_spec)
+            self.figure.set_size_inches(width / CSS_PIXELS_PER_INCH, height / CSS_PIXELS_PER_INCH, forward=True)
+            self.canvas.updateGeometry()
         _render_figure_view_to_matplotlib_figure(
             self.runtime,
             self.figure,

@@ -110,7 +110,7 @@ def test_a_viewport_width_prints_on_a_real_page() -> None:
 
 def _built_page(tmp_path: Path, geometry: WrittenPageGeometry) -> dict[str, object]:
     project = LimelightProject(title="Page", authors=["Test"], page=geometry)
-    project.set_story_markdown("# Page\n\nProse.\n")
+    project.set_story_markdown("# Page\n\nProse.\n", base_dir=tmp_path)
     package = tmp_path / "page.limelight"
     project.write_folder(package, overwrite=True)
     with open_limelight(package) as opened:
@@ -144,7 +144,7 @@ def test_the_writer_records_a_fluid_document(tmp_path: Path) -> None:
 
 def test_a_project_that_says_nothing_is_paged_a4(tmp_path: Path) -> None:
     project = LimelightProject(title="Page", authors=["Test"])
-    project.set_story_markdown("# Page\n\nProse.\n")
+    project.set_story_markdown("# Page\n\nProse.\n", base_dir=tmp_path)
     package = tmp_path / "default.limelight"
     project.write_folder(package, overwrite=True)
 
@@ -156,7 +156,7 @@ def test_a_project_that_says_nothing_is_paged_a4(tmp_path: Path) -> None:
 
 def test_a_project_that_says_nothing_has_the_default_spacing(tmp_path: Path) -> None:
     project = LimelightProject(title="Page", authors=["Test"])
-    project.set_story_markdown("# Page\n\nProse.\n")
+    project.set_story_markdown("# Page\n\nProse.\n", base_dir=tmp_path)
     package = tmp_path / "default.limelight"
     project.write_folder(package, overwrite=True)
 
@@ -177,7 +177,7 @@ def test_the_writer_records_the_story_spacing(tmp_path: Path) -> None:
             heading_gap_after_mm=1.5,
         ),
     )
-    project.set_story_markdown("# Page\n\nProse.\n")
+    project.set_story_markdown("# Page\n\nProse.\n", base_dir=tmp_path)
     package = tmp_path / "spaced.limelight"
     project.write_folder(package, overwrite=True)
 
