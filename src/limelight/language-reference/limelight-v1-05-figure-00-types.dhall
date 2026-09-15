@@ -5,8 +5,10 @@
 
 let Core = ./limelight-v1-00-core.dhall
 
--- Matplotlib `Figure.add_axes` uses `(left, bottom, width, height)` in
--- normalized figure coordinates. Limelight uses the same shape for now.
+-- Where a region sits in its figure: `(left, bottom, width, height)` in
+-- normalized figure coordinates, as matplotlib's `Figure.add_axes` takes
+-- them. An AxesSpec with a frame is placed exactly there; the other specs
+-- carry the field, unread, for the day their layout is authored too.
 let Frame =
       { left : Double
       , bottom : Double

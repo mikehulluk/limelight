@@ -94,10 +94,9 @@ def install_kind() -> InstallKind:
         if os.environ.get("APPIMAGE"):
             return InstallKind.LINUX_APPIMAGE
         return InstallKind.LINUX_PACKAGE
-    # uv keeps each tool in its own environment under a `tools` directory of
-    # its data home; nothing else lays a prefix out that way.
-    prefix = Path(sys.prefix)
-    if "uv" in prefix.parts and "tools" in prefix.parts:
+    # uv writes a receipt at the root of every environment it manages as a
+    # tool; a plain venv, whoever made it, has none.
+    if (Path(sys.prefix) / "uv-receipt.toml").is_file():
         return InstallKind.PYTHON_UV_TOOL
     return InstallKind.PYTHON_PACKAGE
 

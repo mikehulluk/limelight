@@ -1,8 +1,7 @@
 -- Limelight v1 figure map spec types.
 --
--- Map specs are placeholders for map-oriented figure regions. The runtime does
--- not render them yet; this shape gives us a stable place to develop the map
--- model alongside axes and forms.
+-- Map specs describe a map-oriented figure region: a lon/lat extent, with
+-- dataset points and GeoJSON layers drawn over it.
 
 let Core  = ./limelight-v1-00-core.dhall
 
@@ -43,7 +42,7 @@ let MapAction =
 
 let MapSpec =
       { id : Core.Id
-      , frame : Types.Frame
+      , frame : Optional Types.Frame
       , title : Optional Core.DisplayText
       , caption : Optional Core.DisplayText
       , actions : List MapAction

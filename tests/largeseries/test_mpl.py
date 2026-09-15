@@ -187,3 +187,22 @@ def test_zoom_sync_indicator_can_be_disabled(tmp_path: Path) -> None:
         sync.disconnect()
         plt.close(fig)
         close_cache(handle)
+
+
+def test_target_buckets_caps_the_pixel_resolution(tmp_path: Path) -> None:
+    spec, handle = _build_handle(tmp_path, n=8192, chunk_size=8)
+    fig, ax = plt.subplots(figsize=(8, 3), dpi=100)
+    fig.canvas.draw()
+    try:
+        # Drawn: one bucket per pixel column of the axes.
+        sync = ZoomSync(ax=ax, handle=handle, spec=spec)
+        assert sync._estimate_target_buckets() == int(ax.get_window_extent().width)
+        sync.disconnect()
+        # A cap lower than the width wins; one higher does nothing.
+        assert ZoomSync(ax=ax, handle=handle, spec=spec, target_buckets=50)._estimate_target_buckets() == 50
+        assert ZoomSync(ax=ax, handle=handle, spec=spec, target_buckets=10_000)._estimate_target_buckets() == int(
+            ax.get_window_extent().width
+        )
+    finally:
+        plt.close(fig)
+        close_cache(handle)

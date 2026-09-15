@@ -42,7 +42,7 @@ let CellStyleRule =
 -- and orders the shown columns.
 let TableViewSpec =
       { id : Core.Id
-      , frame : Types.Frame
+      , frame : Optional Types.Frame
       , title : Optional Core.DisplayText
       , caption : Optional Core.DisplayText
       , data : Text

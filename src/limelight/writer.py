@@ -20,6 +20,15 @@ from .images import (
     ImageConversionError,
     convert_image,
 )
+from .geometry import (
+    DEFAULT_BLOCK_GAP_MM,
+    DEFAULT_FIGURE_GAP_MM,
+    DEFAULT_HEADING_GAP_AFTER_MM,
+    DEFAULT_HEADING_GAP_BEFORE_MM,
+    DEFAULT_PAGE_HEIGHT_MM,
+    DEFAULT_PAGE_MARGIN_MM,
+    DEFAULT_PAGE_WIDTH_MM,
+)
 from .largeseries import DEFAULT_CHUNK_SIZE
 from .reader import PACKAGE_SUFFIXES
 from .signing import DocumentSignature, sign_document
@@ -199,10 +208,6 @@ def _optional_axis_group_id(value: str | None) -> str:
     return f"Some {_quote(value)}" if value is not None else "None Limelight.AxisGroupId"
 
 
-# A4 with the margins the PDF exporter has always used.
-DEFAULT_PAGE_WIDTH_MM = 210.0
-DEFAULT_PAGE_HEIGHT_MM = 297.0
-DEFAULT_PAGE_MARGIN_MM = 15.0
 
 
 @dataclass(frozen=True)
@@ -294,10 +299,6 @@ class PageGeometry:
         )
 
 
-DEFAULT_BLOCK_GAP_MM = 3.0
-DEFAULT_FIGURE_GAP_MM = 4.5
-DEFAULT_HEADING_GAP_BEFORE_MM = 5.0
-DEFAULT_HEADING_GAP_AFTER_MM = 2.0
 
 
 @dataclass(frozen=True)
@@ -1538,17 +1539,7 @@ class FigureSpec:
             control_form = _record(
                 [
                     ("id", _quote(f"{self.id}-controls")),
-                    (
-                        "frame",
-                        _record(
-                            [
-                                ("left", _dhall_float(0.10)),
-                                ("bottom", _dhall_float(0.92)),
-                                ("width", _dhall_float(0.82)),
-                                ("height", _dhall_float(0.06)),
-                            ]
-                        ),
-                    ),
+                    ("frame", "None Limelight.Frame"),
                     ("title", _optional_display_text(self.form_title)),
                     ("caption", _optional_display_text(self.form_caption)),
                     ("controls", _list([control.render() for control in self.controls], "Limelight.FormCtrlSpec")),
@@ -1658,24 +1649,13 @@ class MapSpec:
     actions: list[MapAction | str]
     title: str | None = None
     caption: str | None = None
-    frame: tuple[float, float, float, float] = (0.10, 0.12, 0.82, 0.78)
+    frame: Frame | None = None
 
     def render(self) -> str:
-        left, bottom, width, height = self.frame
         return _record(
             [
                 ("id", _quote(self.id)),
-                (
-                    "frame",
-                    _record(
-                        [
-                            ("left", _dhall_float(left)),
-                            ("bottom", _dhall_float(bottom)),
-                            ("width", _dhall_float(width)),
-                            ("height", _dhall_float(height)),
-                        ]
-                    ),
-                ),
+                ("frame", _optional_frame(self.frame)),
                 ("title", _optional_display_text(self.title)),
                 ("caption", _optional_display_text(self.caption)),
                 ("actions", _list([_map_action_from_value(value).render() for value in self.actions], "Limelight.MapAction")),
@@ -1732,27 +1712,16 @@ class TableViewSpec:
     columns: list[str] | None = None
     title: str | None = None
     caption: str | None = None
-    frame: tuple[float, float, float, float] = (0.10, 0.12, 0.82, 0.78)
+    frame: Frame | None = None
     column_formats: list[ColumnFormat] = field(default_factory=list)
     header_style: list[str] = field(default_factory=list)
     cell_styles: list[CellStyleRule] = field(default_factory=list)
 
     def render(self) -> str:
-        left, bottom, width, height = self.frame
         return _record(
             [
                 ("id", _quote(self.id)),
-                (
-                    "frame",
-                    _record(
-                        [
-                            ("left", _dhall_float(left)),
-                            ("bottom", _dhall_float(bottom)),
-                            ("width", _dhall_float(width)),
-                            ("height", _dhall_float(height)),
-                        ]
-                    ),
-                ),
+                ("frame", _optional_frame(self.frame)),
                 ("title", _optional_display_text(self.title)),
                 ("caption", _optional_display_text(self.caption)),
                 ("data", _quote(self.data)),

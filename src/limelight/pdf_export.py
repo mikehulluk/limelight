@@ -31,6 +31,9 @@ from PySide6.QtGui import (
 
 from .app import (
     CSS_PIXELS_PER_INCH,
+    DEFAULT_PAGE_HEIGHT_MM,
+    DEFAULT_PAGE_MARGIN_MM,
+    DEFAULT_PAGE_WIDTH_MM,
     MM_PER_INCH,
     STORY_FIGURE_CSS,
     STORY_FONT_PT,
@@ -62,14 +65,15 @@ MATHJAX_SCRIPT = "https://cdn.jsdelivr.net/npm/mathjax@4/tex-svg.js"
 # at the story's size, then rasterised at a higher dpi so the page stays crisp.
 FIGURE_OUTPUT_DPI = 220
 
-PAGE_MARGIN_MM = 15.0
 # A page that runs as long as its content still needs a number to print at.
 # This is tall enough that no story reaches the end of it, and Chromium trims
 # the sheet to the content rather than padding it out.
 CONTINUOUS_PAGE_HEIGHT_MM = 5000.0
-# A viewport width has no physical size, so a PDF of one falls back to A4.
-FALLBACK_PAGE_WIDTH_MM = 210.0
-FALLBACK_PAGE_HEIGHT_MM = 297.0
+# A viewport width has no physical size, so a PDF of one falls back to the
+# default page: A4.
+FALLBACK_PAGE_WIDTH_MM = DEFAULT_PAGE_WIDTH_MM
+FALLBACK_PAGE_HEIGHT_MM = DEFAULT_PAGE_HEIGHT_MM
+PAGE_MARGIN_MM = DEFAULT_PAGE_MARGIN_MM
 DOCUMENT_READY_TIMEOUT_MS = 20000
 DOCUMENT_READY_POLL_MS = 100
 PRINT_TIMEOUT_MS = 60000

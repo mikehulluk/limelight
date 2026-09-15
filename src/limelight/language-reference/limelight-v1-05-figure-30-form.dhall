@@ -14,7 +14,7 @@ let FormCtrlSpec = < dropdown : DropdownCtrlSpec | slider : SliderCtrlSpec >
 
 let FormSpec =
       { id : Core.Id
-      , frame : Types.Frame
+      , frame : Optional Types.Frame
       , title : Optional Core.DisplayText
       , caption : Optional Core.DisplayText
       , controls : List FormCtrlSpec

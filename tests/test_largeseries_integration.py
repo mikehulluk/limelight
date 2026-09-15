@@ -141,3 +141,16 @@ def test_timeseries_artist_on_csv_source_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(LimelightError, match="must reference an hdf source"):
         semantic.validate_manifest_semantics(manifest)
+
+
+def test_timeseries_artist_on_calendar_indexed_source_is_rejected(tmp_path: Path) -> None:
+    package_dir = _hdf_package(tmp_path)
+    with LimelightPackage.open(package_dir) as package:
+        manifest = package.manifest_json()
+
+    # Give the source a calendar index: months from January 2024.
+    [source] = manifest["sources"]
+    source["index"] = {"calendarStep": 1, "calendarUnit": "month", "calendarStart": "2024-01", "renderAnchor": "start"}
+
+    with pytest.raises(LimelightError, match="calendar index a timeSeries artist cannot plot"):
+        semantic.validate_manifest_semantics(manifest)

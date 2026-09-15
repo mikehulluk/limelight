@@ -15,6 +15,16 @@ from typing import Any, Callable, Sequence
 
 import h5py
 
+from .geometry import (  # re-exported: the page's numbers live in one place
+    DEFAULT_BLOCK_GAP_MM,
+    DEFAULT_FIGURE_GAP_MM,
+    DEFAULT_HEADING_GAP_AFTER_MM,
+    DEFAULT_HEADING_GAP_BEFORE_MM,
+    DEFAULT_PAGE_HEIGHT_MM,
+    DEFAULT_PAGE_MARGIN_MM,
+    DEFAULT_PAGE_WIDTH_MM,
+    MM_PER_INCH,
+)
 from . import refs
 from .logging_config import configure_logging
 from .reader import LimelightError, LimelightPackage, open_limelight
@@ -204,20 +214,6 @@ def _regular_index_value_at(index: Any, row_index: int) -> Any:
     raise ValueError(f"Unknown regular Index payload {index!r}")
 
 
-# What a package built before page geometry existed was laid out as: A4 in the
-# PDF, and whatever the window gave it on screen.
-DEFAULT_PAGE_WIDTH_MM = 210.0
-DEFAULT_PAGE_HEIGHT_MM = 297.0
-DEFAULT_PAGE_MARGIN_MM = 15.0
-
-# What a package built before spacing existed was set with: close to the
-# stylesheet constants both renderers used, so its look does not change.
-DEFAULT_BLOCK_GAP_MM = 3.0
-DEFAULT_FIGURE_GAP_MM = 4.5
-DEFAULT_HEADING_GAP_BEFORE_MM = 5.0
-DEFAULT_HEADING_GAP_AFTER_MM = 2.0
-
-MM_PER_INCH = 25.4
 
 # The story's type. 14 CSS pixels on screen is 10.5 points, and the page
 # prints at the same 10.5 points, so screen and paper set the same text; a

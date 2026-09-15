@@ -12,6 +12,8 @@ from .cache import CacheHandle, SourceSpec
 from .query import QueryResult, full_x_range, query_range
 from .timing import TimingProbeLike
 
+# Buckets across the axes when its pixel width is not known (a figure that
+# has not been drawn yet); once drawn, one bucket per pixel column.
 DEFAULT_TARGET_BUCKETS = 2000
 INDICATOR_GID = "limelight-envelope-indicator"
 DEFAULT_FILL_ALPHA = 1.0
@@ -116,7 +118,9 @@ class ZoomSync:
     ax: Axes
     handle: CacheHandle
     spec: SourceSpec
-    target_buckets: int = DEFAULT_TARGET_BUCKETS
+    # A cap on the buckets across the axes, for a series that need not be
+    # drawn at pixel resolution; None draws one bucket per pixel column.
+    target_buckets: int | None = None
     on_query: Callable[[QueryResult], None] | None = None
     timing: TimingProbeLike | None = None
     # Edge colour (None: next in the axes' cycle), band colour (None: same as
@@ -189,9 +193,10 @@ class ZoomSync:
             width = self.ax.get_window_extent().width
         except Exception:
             width = 0
-        if width and width > 1:
-            return max(1, int(width))
-        return self.target_buckets
+        buckets = max(1, int(width)) if width and width > 1 else DEFAULT_TARGET_BUCKETS
+        if self.target_buckets is not None:
+            buckets = min(buckets, max(1, self.target_buckets))
+        return buckets
 
     def disconnect(self) -> None:
         if self._cid is not None:

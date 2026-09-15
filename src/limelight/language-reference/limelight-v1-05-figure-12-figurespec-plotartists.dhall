@@ -44,6 +44,8 @@ let ScatterArtist =
       }
 
 -- A large-series (min/max envelope) artist, backed by an entire hdf Source.
+-- The envelope is drawn at one min/max bucket per pixel column; `targetBuckets`
+-- caps that, for a series that need not be drawn at full resolution.
 -- `color` is the envelope's edge lines (and the line itself once zoomed in
 -- to raw samples); `fillColor` and `fillAlpha` are the band between the
 -- edges, defaulting to the same colour, fully opaque.

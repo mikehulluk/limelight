@@ -7,6 +7,20 @@ versions may break things.
 
 ## [Unreleased]
 
+### Changed
+
+- `targetBuckets` on a time-series artist now caps the envelope's resolution
+  (one bucket per pixel column by default); it had been read and ignored.
+- The `frame` of a MapSpec, TableViewSpec and FormSpec is optional, and the
+  writer no longer emits a placeholder for it.
+
+### Fixed
+
+- `verify` rejects a time-series artist over a source with a calendar index,
+  which the app could not draw and used to fail on when the figure opened.
+- Check for Updates tells a uv tool install by the receipt uv leaves in its
+  environment, rather than by the look of its path.
+
 ## [0.0.8] - 2026-09-14
 
 ### Added

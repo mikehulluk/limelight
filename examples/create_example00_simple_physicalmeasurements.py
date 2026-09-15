@@ -218,12 +218,7 @@ in    { limelightVersion = "1.0"
             [] : List Limelight.MapSpec
           , formSpecs =
             [ { id = "voltage-controls"
-              , frame =
-                { left = 0.10
-                , bottom = 0.92
-                , width = 0.82
-                , height = 0.06
-                }
+              , frame = None Limelight.Frame
               , title = None Text
               , caption = None Limelight.DisplayText
               , controls =

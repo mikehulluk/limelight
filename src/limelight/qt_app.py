@@ -101,6 +101,8 @@ from PySide6.QtWidgets import (
 from . import refs
 from .app import (
     CSS_PIXELS_PER_INCH,
+    DEFAULT_PAGE_HEIGHT_MM,
+    DEFAULT_PAGE_WIDTH_MM,
     MM_PER_INCH,
     STORY_FIGURE_CSS,
     STORY_FONT_PT,
@@ -238,8 +240,8 @@ STORY_ZOOM_KEYS = {
     Qt.Key.Key_0: 0,
 }
 
-A4_WIDTH_MM = 210.0
-A4_HEIGHT_MM = 297.0
+A4_WIDTH_MM = DEFAULT_PAGE_WIDTH_MM
+A4_HEIGHT_MM = DEFAULT_PAGE_HEIGHT_MM
 
 APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "limelight-icon.svg"
 WINDOWS_APP_USER_MODEL_ID = "Limelight.ProjectViewer"

@@ -60,14 +60,21 @@ def test_is_newer(candidate: str, current: str, newer: bool) -> None:
         (True, "darwin", {}, "/Applications/Limelight.app", updates.InstallKind.MACOS_BUNDLE),
         (True, "linux", {"APPIMAGE": "/home/me/Limelight.AppImage"}, "/tmp/_MEI", updates.InstallKind.LINUX_APPIMAGE),
         (True, "linux", {}, "/opt/limelight", updates.InstallKind.LINUX_PACKAGE),
-        (False, "linux", {}, "/home/me/.local/share/uv/tools/limelight-app", updates.InstallKind.PYTHON_UV_TOOL),
+        (False, "linux", {}, "<uv tool env>", updates.InstallKind.PYTHON_UV_TOOL),
         (False, "linux", {}, "/home/me/dev/limelight/.venv", updates.InstallKind.PYTHON_PACKAGE),
+        # A path that merely looks like uv's is not a uv tool.
+        (False, "linux", {}, "/home/uv/tools/limelight/.venv", updates.InstallKind.PYTHON_PACKAGE),
     ],
 )
-def test_install_kind_is_told_from_how_the_app_runs(monkeypatch, frozen, platform, environ, prefix, kind) -> None:
+def test_install_kind_is_told_from_how_the_app_runs(monkeypatch, tmp_path, frozen, platform, environ, prefix, kind) -> None:
     monkeypatch.setattr(sys, "frozen", frozen, raising=False)
     monkeypatch.setattr(sys, "platform", platform)
-    monkeypatch.setattr(sys, "prefix", prefix)
+    # A uv tool environment is known by the receipt uv leaves at its root.
+    if kind is updates.InstallKind.PYTHON_UV_TOOL:
+        prefix = tmp_path / "uv-tool-env"
+        prefix.mkdir()
+        (prefix / "uv-receipt.toml").write_text("[tool]\n")
+    monkeypatch.setattr(sys, "prefix", str(prefix))
     monkeypatch.delenv("APPIMAGE", raising=False)
     for key, value in environ.items():
         monkeypatch.setenv(key, value)

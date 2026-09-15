@@ -372,6 +372,18 @@ class _SemanticValidator:
                     f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
                     f"references missing array {array_name!r} in source {source_id!r}"
                 )
+        if kind == "timeSeries":
+            # The large-series cache buckets by sample position, and a calendar
+            # index has no fixed sample spacing to turn into an x coordinate.
+            source_id, _ = refs.parse_column_ref(artist["y"])
+            source = self.sources.get(source_id)
+            index = source.get("index") if source is not None else None
+            if isinstance(index, dict) and ("calendarStep" in index or "irregularCalendarCoordArray" in index):
+                raise LimelightError(
+                    f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} timeSeries artist {artist['id']!r} "
+                    f"references source {source_id!r}, whose calendar index a timeSeries artist cannot plot; "
+                    f"use an integer, time or irregular index"
+                )
         if kind == "timeSeries" and artist["transform"] != "identity":
             raise LimelightError(
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} timeSeries artist {artist['id']!r} "
