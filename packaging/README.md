@@ -24,7 +24,7 @@ The same tag push runs `.github/workflows/publish.yml`, which uploads the sdist
 and wheel to PyPI as `limelight-app` through Trusted Publishing.
 
 ```bash
-pip install -e . pyinstaller
+pip install -e ".[gui]" pyinstaller
 
 python packaging/make_icons.py         # regenerate icons (needed on macOS for the .icns)
 pyinstaller packaging/limelight.spec --noconfirm

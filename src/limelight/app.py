@@ -41,6 +41,14 @@ logger = logging.getLogger(__name__)
 timing_logger = logging.getLogger("limelight.timing")
 
 
+# The desktop app and the pdf command need Qt, which is the `gui` extra so
+# that a library-only install (a server building packages, say) stays small.
+GUI_MISSING_MESSAGE = (
+    "The Limelight desktop app and PDF export need PySide6, which is the `gui` extra: "
+    'install with `pip install "limelight-app[gui]"` (or `pip install -e ".[gui]"` from a checkout).'
+)
+
+
 def run_app(path: str | None = None, *, debug_timing: bool = False) -> None:
     log_path = configure_logging()
     logger.info("Starting Limelight app for %s; log file is %s", path, log_path)
@@ -48,10 +56,7 @@ def run_app(path: str | None = None, *, debug_timing: bool = False) -> None:
         from .qt_app import prompt_for_package_path, run_qt_app
     except ImportError as error:
         logger.exception("Could not import Limelight Qt application dependencies")
-        raise LimelightError(
-            "The Limelight app requires PySide6 and matplotlib. "
-            "Install the project in your virtual environment with `python -m pip install -e .`."
-        ) from error
+        raise LimelightError(GUI_MISSING_MESSAGE) from error
 
     if path is None:
         # Launching from a desktop shortcut passes no package, so ask for one.

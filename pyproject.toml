@@ -28,6 +28,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
+# What the library needs: writing and reading packages, the CLI's verify/
+# summary/json/meta, and the large-series cache. The desktop app and the pdf
+# command need Qt as well, which is the `gui` extra below, so a server that
+# only builds packages does not install ~0.5 GB of Qt to do it.
 dependencies = [
     "cryptography>=42.0",
     "h5py>=3.10",
@@ -38,8 +42,11 @@ dependencies = [
     "numpy>=1.26",
     "packaging>=23.0",
     "pillow>=10.0",
-    "PySide6>=6.6",
 ]
+
+[project.optional-dependencies]
+# `pip install "limelight-app[gui]"`: the desktop viewer and `LL pdf`.
+gui = ["PySide6>=6.6"]
 
 [dependency-groups]
 dev = ["pytest>=8.0"]

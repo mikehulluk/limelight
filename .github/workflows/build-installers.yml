@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e .
+          python -m pip install -e ".[gui]"
           python -m pip install pyinstaller
 
       # Qt's GUI library links libEGL and libGL even for offscreen rendering,

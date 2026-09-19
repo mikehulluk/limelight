@@ -233,12 +233,18 @@ def _run_pdf(paths: Sequence[str], *, rolling_build: bool = False) -> int:
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-    from PySide6.QtWidgets import QApplication
+    try:
+        from PySide6.QtWidgets import QApplication
 
-    # The same pipeline the app's File -> Export to PDF uses, so a story exported
-    # here and one exported from the app are the same document.
-    from .pdf_export import PdfExportError, build_story_pdf_html, printed_page, write_html_to_pdf
-    from .qt_app import story_pdf_renderers
+        # The same pipeline the app's File -> Export to PDF uses, so a story exported
+        # here and one exported from the app are the same document.
+        from .pdf_export import PdfExportError, build_story_pdf_html, printed_page, write_html_to_pdf
+        from .qt_app import story_pdf_renderers
+    except ImportError as error:
+        from .app import GUI_MISSING_MESSAGE
+
+        print(f"pdf: {GUI_MISSING_MESSAGE} ({error})", file=sys.stderr)
+        return 1
 
     QApplication.instance() or QApplication(sys.argv[:1])
 

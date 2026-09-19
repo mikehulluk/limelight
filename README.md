@@ -16,11 +16,15 @@ Packages are meant to be produced by libraries and tools rather than by hand;
 ## Installing
 
 ```bash
-pip install limelight-app
+pip install "limelight-app[gui]"    # the desktop app, the CLI and the library
+pip install limelight-app           # the library and CLI only: no Qt
 ```
 
 The distribution is `limelight-app` (PyPI would not allow plain `limelight`),
 but the package imports as `limelight` and the commands are named as below.
+The `gui` extra is Qt (PySide6), which only the desktop app and `LL pdf`
+need; a program that builds or reads packages with `limelight.writer` and
+`limelight.reader` leaves it out.
 
 A package's `project.dhall` manifest is read by a built-in evaluator, so
 nothing beyond the Python dependencies is needed. A hand-written manifest
@@ -56,6 +60,6 @@ written against; the writer copies them into every package it builds.
 ## Developing
 
 ```bash
-uv sync --all-groups
+uv sync --all-extras --all-groups
 uv run pytest
 ```

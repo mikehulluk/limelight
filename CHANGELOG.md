@@ -7,6 +7,44 @@ versions may break things.
 
 ## [Unreleased]
 
+### Changed
+
+- **Qt is now the `gui` extra.** `pip install "limelight-app[gui]"` installs
+  the desktop app and `LL pdf`; plain `pip install limelight-app` is the
+  library and the rest of the CLI, without PySide6. The app and `pdf` say
+  which extra to install when it is missing.
+- **A time index with an absolute UTC origin is drawn on a UTC axis**, in
+  matplotlib date numbers (days since 1970-01-01), the coordinate space the
+  UTC axis limits and decorators already used. A `regularTime` index used to
+  resolve to seconds (or its unit) since 1970 and `irregularIndexTime` to its
+  raw coordinates, so a series and its own limits sat on different axes and
+  neither got a calendar axis. A relative index still resolves to elapsed
+  time in its unit. Every `timeSeries` axis other than `monthOrdinal1970`
+  now gets the date formatter, and hover shows a UTC instant.
+- A relative time index on a `timeSeries` axis is refused by `verify` (it
+  would read as dates near 1970); use a `continuous` axis with the unit as
+  its label. `add_line_figure` with no `x_axis` infers a `timeSeries` axis
+  only from an absolute time index, a number line otherwise.
+- The large-series cache stores the file's own coordinates and is not
+  rebuilt when the axis they are drawn on changes (`SourceSpec` carries the
+  `x0`/`dx` mapping for irregular sources too). Level buckets are NaN-aware:
+  a NaN sample is a gap, and only a bucket with no samples at all is NaN.
+  Cache schema version 1 → 2; existing caches are rebuilt.
+- Negative tick labels use a hyphen-minus (`axes.unicode_minus` off), so they
+  no longer render as boxes where the story font lacks U+2212.
+- `limelight-v1-02-datasets.dhall`, an unused duplicate of the dataset
+  types, no longer ships in packages.
+
+### Added
+
+- An hdf array can bind **one column of a 2-D dataset** (`column = Some j`;
+  `hdf_array(..., column=j)`), so a file laid out rows × columns is
+  referenced as it stands. Each column gets its own cache.
+- `verify` (and `add_hdf_dataset`) check hdf bindings against the file: the
+  dataset exists, is 1-D or 2-D as bound, the column is in range, and every
+  array of a source is the same length.
+- `EpochOffset.from_unix_ns/us/s` and `from_datetime`, and `to_unix_ns`.
+
 ## [0.0.9] - 2026-09-16
 
 ### Added
