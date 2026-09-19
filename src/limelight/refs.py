@@ -50,6 +50,48 @@ def _epoch_offset_ns(epoch_offset: dict[str, Any]) -> int:
     )
 
 
+# A UTC axis is drawn in matplotlib date numbers: days since 1970-01-01 UTC.
+# That is the coordinate space the UTC AxisLimits and decorators already use
+# (see qt_app._time_limit_coordinate), so a time index with an absolute origin
+# resolves into it too, and everything on a timeSeries axis agrees.
+NS_PER_DAY = 86_400 * 1_000_000_000
+
+
+def time_index_origin(index: Any) -> Any | None:
+    """The TimeOrigin of a regularTime/irregularIndexTime index; None otherwise."""
+    if not isinstance(index, dict):
+        return None
+    if "timeStepNom" in index:
+        return index["timeOrigin"]
+    if "irregularTimeCoordArray" in index:
+        return index["irregularTimeOrigin"]
+    return None
+
+
+def time_index_is_absolute(index: Any) -> bool:
+    """True when the index's values are UTC instants (and so draw on a calendar axis)."""
+    origin = time_index_origin(index)
+    return origin is not None and origin != "relative"
+
+
+def time_axis_affine(index: Any) -> tuple[float, float]:
+    """(x0, dx) taking a time index's own values onto the axis it is drawn on.
+
+    Given `t`, the elapsed time in the index's own unit (`i * step` for
+    regularTime, the stored coordinate for irregularIndexTime), the axis
+    position is `x0 + t * dx`: days since the epoch for an absolute origin,
+    `t` unchanged for a relative one.
+    """
+    origin = time_index_origin(index)
+    if origin is None:
+        raise ValueError(f"Not a time index: {index!r}")
+    if origin == "relative":
+        return 0.0, 1.0
+    unit = index["timeStepUnit"] if "timeStepNom" in index else index["irregularTimeUnit"]
+    unit_ns = _UNIT_NS[unit]
+    return _epoch_offset_ns(origin) / NS_PER_DAY, unit_ns / NS_PER_DAY
+
+
 def resolve_index_x(
     index: Any,
     rows: list[dict[str, Any]] | None,
@@ -69,13 +111,8 @@ def resolve_index_x(
     if "timeStepNom" in index:
         nom = index["timeStepNom"]
         denom = index["timeStepDenom"]
-        time_origin = index["timeOrigin"]
-        step_unit = index["timeStepUnit"]
-        unit_ns = _UNIT_NS[step_unit]
-        offset = 0.0
-        if time_origin != "relative":
-            offset = _epoch_offset_ns(time_origin) / unit_ns
-        return [offset + i * nom / denom for i in range(row_count or 0)]
+        x0, dx = time_axis_affine(index)
+        return [x0 + (i * nom / denom) * dx for i in range(row_count or 0)]
 
     if "calendarStep" in index:
         start = index["startOrdinal"]
@@ -88,7 +125,11 @@ def resolve_index_x(
         ]
 
     if "irregularTimeCoordArray" in index:
-        return _lookup_coordinate_array(rows, index["irregularTimeCoordArray"])
+        x0, dx = time_axis_affine(index)
+        return [
+            None if value is None else x0 + float(value) * dx
+            for value in _lookup_coordinate_array(rows, index["irregularTimeCoordArray"])
+        ]
 
     if "irregularCalendarCoordArray" in index:
         unit = index["irregularCalendarUnit"]

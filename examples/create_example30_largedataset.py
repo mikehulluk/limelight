@@ -10,7 +10,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from limelight import Index, LimelightProject, PageGeometry, SourceProvenance, TimeSeriesArtist, hdf_array
+from limelight import AxisDataType, Index, LimelightProject, PageGeometry, SourceProvenance, TimeSeriesArtist, hdf_array
 
 
 POINT_COUNT = 50_000_000
@@ -65,6 +65,9 @@ def build_project(h5_path: Path) -> LimelightProject:
         x="time",
         y=[],
         time_series=[TimeSeriesArtist(data="bigseries", array="y", id="largedataset-envelope")],
+        # The index is relative (elapsed seconds), so this is a number line,
+        # not a calendar axis.
+        x_axis=AxisDataType.continuous(label="Time", unit="s"),
         caption=(
             f"A {POINT_COUNT:,}-point synthetic series backed by an HDF5 file. "
             "Rendered as a min/max envelope; pan and zoom to see it re-level."

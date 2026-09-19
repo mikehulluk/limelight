@@ -320,6 +320,11 @@ def _configure_figure_typography() -> None:
             "xtick.labelsize": "small",
             "ytick.labelsize": "small",
             "legend.fontsize": "small",
+            # matplotlib's default minus is U+2212, which the story font (Noto
+            # Sans on Linux) lacks, so negative tick labels came out as boxes
+            # (a "Glyph 8722 missing" warning per figure). A hyphen-minus is
+            # in every font and reads the same at tick size.
+            "axes.unicode_minus": False,
         }
     )
 
@@ -1280,19 +1285,23 @@ class _HoverPoint:
     x: Any
     y: Any
     x_categories: list[str] | None
-    x_is_calendar: bool
+    # "day": a date; "utc": a UTC instant (the axis is in matplotlib date
+    # numbers either way); None: a plain number.
+    x_time: str | None
 
 
 _HOVER_PIXEL_THRESHOLD_SQ = 15.0**2
 
 
-def _format_hover_x(x_value: float, x_categories: list[str] | None, x_is_calendar: bool) -> str:
+def _format_hover_x(x_value: float, x_categories: list[str] | None, x_time: str | None) -> str:
     if x_categories:
         index = round(x_value)
         if 0 <= index < len(x_categories):
             return x_categories[index]
-    if x_is_calendar:
+    if x_time == "day":
         return mdates.num2date(x_value).strftime("%Y-%m-%d")
+    if x_time == "utc":
+        return mdates.num2date(x_value).strftime("%Y-%m-%d %H:%M:%S UTC")
     return f"{x_value:.4g}"
 
 
@@ -1635,7 +1644,7 @@ def _draw_plot_contents(
                     x=np.asarray(x_values, dtype=float),
                     y=np.asarray(y_values, dtype=float),
                     x_categories=series.x_categories,
-                    x_is_calendar=_axis_calendar(x_axis_binding) == "CalendarDay",
+                    x_time=_hover_x_time(x_axis_binding),
                 )
             )
         runtime.timing.log(
@@ -2204,8 +2213,20 @@ def _format_axis(axes: Any, axis_binding: dict[str, Any], orientation: str) -> N
     calendar = _axis_calendar(axis_binding)
     if orientation == "x" and calendar == "monthOrdinal1970":
         _format_month_ordinal_axis(axes)
-    if orientation == "x" and calendar in {"CalendarDay", "matplotlibDateNumber"}:
+    if orientation == "x" and _axis_is_utc(axis_binding):
         _format_matplotlib_date_axis(axes)
+
+
+def _axis_is_utc(axis_binding: dict[str, Any]) -> bool:
+    """A timeSeries axis whose coordinates are matplotlib date numbers.
+
+    That is every timeSeries axis except the two that draw period ordinals
+    (CalendarDay, monthOrdinal1970): the UTC limits, an absolute time index
+    (refs.time_axis_affine) and a matplotlibDateNumber column all land in
+    days since the epoch, and CalendarDay's ordinals are converted to it
+    before drawing (_plot_x_values), so the date formatter fits them too.
+    """
+    return axis_data_type_kind(axis_binding) == "timeSeries" and _axis_calendar(axis_binding) != "monthOrdinal1970"
 
 
 def _month_ordinal_axis_step(axes: Any) -> None:
@@ -4851,7 +4872,7 @@ class InteractiveFigureViewPanel(QWidget):
 
         x_value = float(best_point.x[best_index])
         y_value = float(best_point.y[best_index])
-        x_display = _format_hover_x(x_value, best_point.x_categories, best_point.x_is_calendar)
+        x_display = _format_hover_x(x_value, best_point.x_categories, best_point.x_time)
         text = f"{best_point.label}\nx: {x_display}\ny: {y_value:.4g}"
         QToolTip.showText(QCursor.pos(), text, self.canvas)
 
@@ -5029,6 +5050,14 @@ def _plot_window(window: tuple[float, float], axis_binding: dict[str, Any]) -> t
             _calendar_day_to_matplotlib(window[1]),
         )
     return window
+
+
+def _hover_x_time(axis_binding: dict[str, Any]) -> str | None:
+    if _axis_calendar(axis_binding) == "CalendarDay":
+        return "day"
+    if _axis_is_utc(axis_binding):
+        return "utc"
+    return None
 
 
 def _axis_calendar(axis_binding: dict[str, Any]) -> str | None:

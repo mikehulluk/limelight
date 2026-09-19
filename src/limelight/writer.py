@@ -10,7 +10,7 @@ import re
 import shutil
 import zipfile
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Iterable, Mapping, Sequence
@@ -487,9 +487,44 @@ class ArraySpec:
 
 @dataclass(frozen=True)
 class EpochOffset:
+    """A UTC instant as (gigaseconds, seconds, nanoseconds) since 1970-01-01.
+
+    Split so a manifest can state any instant to the nanosecond in Naturals;
+    `from_unix_ns` and friends do the split for a caller holding one number.
+    """
+
     epoch_offset_gs: int
     epoch_offset_s: int
     epoch_offset_ns: int
+
+    @classmethod
+    def from_unix_ns(cls, ns: int) -> "EpochOffset":
+        if ns < 0:
+            raise ValueError("an EpochOffset is on or after 1970-01-01; negative nanoseconds cannot be represented")
+        seconds, nanoseconds = divmod(int(ns), 1_000_000_000)
+        gigaseconds, seconds = divmod(seconds, 1_000_000_000)
+        return cls(gigaseconds, seconds, nanoseconds)
+
+    @classmethod
+    def from_unix_us(cls, us: int) -> "EpochOffset":
+        return cls.from_unix_ns(int(us) * 1_000)
+
+    @classmethod
+    def from_unix_s(cls, s: int) -> "EpochOffset":
+        return cls.from_unix_ns(int(s) * 1_000_000_000)
+
+    @classmethod
+    def from_datetime(cls, value: datetime) -> "EpochOffset":
+        """A timezone-aware datetime; a naive one is taken as UTC."""
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        # Whole seconds and microseconds separately: a float timestamp loses
+        # the microseconds of any date this century.
+        whole = value.replace(microsecond=0)
+        return cls.from_unix_ns(int(whole.timestamp()) * 1_000_000_000 + value.microsecond * 1_000)
+
+    def to_unix_ns(self) -> int:
+        return (self.epoch_offset_gs * 1_000_000_000 + self.epoch_offset_s) * 1_000_000_000 + self.epoch_offset_ns
 
     def render(self) -> str:
         if self.epoch_offset_s >= 1_000_000_000:
@@ -541,6 +576,10 @@ def _time_origin(epoch_offset: EpochOffset | None) -> str:
 @dataclass(frozen=True)
 class Index:
     expr: str
+    # True for a time index with an absolute UTC origin: its values are
+    # instants, drawn on a calendar (timeSeries) axis. A relative time index,
+    # like every other kind, is plain numbers on a continuous axis.
+    absolute_time: bool = False
 
     @classmethod
     def no_index(cls) -> "Index":
@@ -567,7 +606,7 @@ class Index:
                 ("timeStepUnit", _step_unit(step_unit)),
             ]
         )
-        return cls(_constructor("Limelight.Index.regularTime", payload))
+        return cls(_constructor("Limelight.Index.regularTime", payload), absolute_time=epoch_offset is not None)
 
     @classmethod
     def regular_int(cls, origin: int, step: int, unit: str | None = None) -> "Index":
@@ -609,6 +648,8 @@ class Index:
         origin: EpochOffset | None,
         unit: str,
     ) -> "Index":
+        """A stored time coordinate: `coordinate_array` holds elapsed time in
+        `unit` from `origin` (None: relative), as regularTime's `i * step` would."""
         payload = _record(
             [
                 ("irregularTimeCoordArray", _quote(coordinate_array)),
@@ -616,7 +657,7 @@ class Index:
                 ("irregularTimeUnit", _step_unit(unit)),
             ]
         )
-        return cls(_constructor("Limelight.Index.irregularIndexTime", payload))
+        return cls(_constructor("Limelight.Index.irregularIndexTime", payload), absolute_time=origin is not None)
 
     @classmethod
     def irregular_index_calendar(
@@ -2371,7 +2412,10 @@ class LimelightProject:
     ) -> FigureSpec:
         lines = _to_lines(y)
         lines2 = _to_lines(y2)
-        inferred_x_axis = AxisDataType.time_series(label=x) if time_series else AxisDataType.continuous(label=x)
+        # With no x axis given, the source's index says what kind it is: an
+        # absolute time index is calendar time and gets a timeSeries axis;
+        # anything else (a relative time index included) is a number line.
+        inferred_x_axis = AxisDataType.time_series(label=x) if self._index_is_absolute_time(data) else AxisDataType.continuous(label=x)
         figure_spec = FigureSpec(
             id=id,
             title=title,
@@ -2398,6 +2442,12 @@ class LimelightProject:
         )
         self.figure_specs.append(figure_spec)
         return figure_spec
+
+    def _index_is_absolute_time(self, dataset_id: str) -> bool:
+        for dataset in [*self.datasets, *self.hdf_datasets]:
+            if dataset.id == dataset_id:
+                return dataset.index.absolute_time
+        return False
 
     def add_map_figure(
         self,

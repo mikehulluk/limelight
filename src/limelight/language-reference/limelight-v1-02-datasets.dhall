@@ -34,6 +34,12 @@ let StepUnit = < ns | us | s | Gs >
 
 let EpochOffset = { epochOffsetGs : Natural, epochOffsetS : Natural, epochOffsetNs : Natural }
 
+-- Where a time index's zero is. `relative` means the values are elapsed time
+-- in the index's StepUnit and are drawn as plain numbers in that unit;
+-- `absoluteUtc` means they are offsets from the given UTC instant, and the
+-- viewer draws them on a calendar (UTC) axis. The two are different axes,
+-- not different labels: an absolute index belongs on a timeSeries axis, a
+-- relative one on a continuous axis with the unit as its label.
 let TimeOrigin = < relative | absoluteUtc : EpochOffset >
 
 let Calendar = < prolepticGregorian >
@@ -64,8 +70,14 @@ let Index =
           { irregularArrayCoordArray : Text, irregularArrayUnit : Optional Text }
 
       -- Specialisations:
+      -- The coordinate array holds elapsed time in irregularTimeUnit from
+      -- irregularTimeOrigin, exactly as regularTime's `i * step` does; the
+      -- two differ only in whether the times are computed or stored.
       | irregularIndexTime :
-          { irregularTimeCoordArray : Text, irregularTimeOrigin : Optional TimeOrigin }
+          { irregularTimeCoordArray : Text
+          , irregularTimeOrigin : TimeOrigin
+          , irregularTimeUnit : StepUnit
+          }
       | irregularIndexCalendar :
           { irregularCalendarCoordArray : Text
           , irregularCalendar : Calendar

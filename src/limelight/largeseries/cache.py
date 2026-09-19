@@ -31,9 +31,15 @@ from .timing import TimingProbeLike
 class SourceSpec:
     """Describes where a raw series lives and how to interpret its x-axis.
 
-    Every field is stated: a series is either on a uniform grid, `x0 + i * dx`,
-    or has its x in a dataset of its own. `SourceSpec.uniform` and
-    `SourceSpec.irregular` say which without spelling out the other's fields.
+    Every field is stated: a series is either on a uniform grid or has its x
+    in a dataset of its own, and `x0`/`dx` map what the file holds onto the
+    axis it is drawn on: `x = x0 + i * dx` for a uniform grid (i the sample
+    index), `x = x0 + coord * dx` for an irregular one (coord the value read
+    from `x_dataset`). The cache only ever stores what the file holds, so the
+    mapping can change - a time axis shown in days rather than in the file's
+    microseconds - without the cache being rebuilt. `SourceSpec.uniform` and
+    `SourceSpec.irregular` say which kind without spelling out the other's
+    fields.
     """
 
     hdf5_path: Path
@@ -48,8 +54,8 @@ class SourceSpec:
             raise InvalidSourceSpecError("irregular_x=True requires an x_dataset")
         if not self.irregular_x and self.x_dataset is not None:
             raise InvalidSourceSpecError("x_dataset is only used when irregular_x=True")
-        if not self.irregular_x and not self.dx > 0:
-            raise InvalidSourceSpecError(f"dx must be positive on a uniform grid, got {self.dx}")
+        if not self.dx > 0:
+            raise InvalidSourceSpecError(f"dx must be positive, got {self.dx}")
 
     @classmethod
     def uniform(cls, hdf5_path: str | Path, y_dataset: str, *, x0: float, dx: float) -> "SourceSpec":
@@ -57,9 +63,22 @@ class SourceSpec:
         return cls(hdf5_path=Path(hdf5_path), y_dataset=y_dataset, x_dataset=None, irregular_x=False, x0=x0, dx=dx)
 
     @classmethod
-    def irregular(cls, hdf5_path: str | Path, y_dataset: str, x_dataset: str) -> "SourceSpec":
-        """A series whose x values are read from `x_dataset`, which must be sorted."""
-        return cls(hdf5_path=Path(hdf5_path), y_dataset=y_dataset, x_dataset=x_dataset, irregular_x=True, x0=0.0, dx=1.0)
+    def irregular(
+        cls, hdf5_path: str | Path, y_dataset: str, x_dataset: str, *, x0: float = 0.0, dx: float = 1.0
+    ) -> "SourceSpec":
+        """A series whose x values are read from `x_dataset`, which must be sorted.
+
+        `x0` and `dx` place those values on the axis: `x = x0 + coord * dx`.
+        """
+        return cls(hdf5_path=Path(hdf5_path), y_dataset=y_dataset, x_dataset=x_dataset, irregular_x=True, x0=x0, dx=dx)
+
+    def x_of_coord(self, coord: np.ndarray | float) -> np.ndarray | float:
+        """Axis position of a raw coordinate (irregular) or sample index (uniform)."""
+        return self.x0 + coord * self.dx
+
+    def coord_of_x(self, x: float) -> float:
+        """Inverse of `x_of_coord`: what the file's x holds at axis position `x`."""
+        return (x - self.x0) / self.dx
 
     def open_y(self) -> ArraySource:
         return HdfArraySource(self.hdf5_path, self.y_dataset)

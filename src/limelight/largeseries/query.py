@@ -71,10 +71,10 @@ def query_range(
             if handle.irregular_x:
                 x_min = np.asarray(group["x_min"][bucket_id0:bucket_id1])
                 x_max = np.asarray(group["x_max"][bucket_id0:bucket_id1])
-                x = (x_min + x_max) / 2.0
+                x = spec.x_of_coord((x_min.astype(np.float64) + x_max.astype(np.float64)) / 2.0)
             else:
                 centers = (np.arange(bucket_id0, bucket_id1, dtype=np.float64) + 0.5) * bucket_width
-                x = spec.x0 + centers * spec.dx
+                x = spec.x_of_coord(centers)
 
             result = QueryResult(
                 x=x, y_min=y_min, y_max=y_max, level=level, from_cache=True, sample_count=requested_samples
@@ -123,9 +123,9 @@ def _raw_fallback(
     sample_count = y_raw.shape[0]
 
     if x_raw is not None:
-        x = x_raw.astype(np.float64, copy=False)
+        x = spec.x_of_coord(x_raw.astype(np.float64, copy=False))
     else:
-        x = spec.x0 + (np.arange(i0, i1, dtype=np.float64)) * spec.dx
+        x = spec.x_of_coord(np.arange(i0, i1, dtype=np.float64))
 
     if sample_count <= target_buckets:
         y = y_raw.astype(MINMAX_DTYPE, copy=False)
@@ -137,11 +137,11 @@ def _raw_fallback(
     y_min, y_max, x_min, x_max = reduce_block_to_buckets(y_raw, x_raw, bucket_width)
 
     if x_raw is not None and x_min is not None and x_max is not None:
-        bucket_x = (x_min.astype(np.float64) + x_max.astype(np.float64)) / 2.0
+        bucket_x = spec.x_of_coord((x_min.astype(np.float64) + x_max.astype(np.float64)) / 2.0)
     else:
         n_buckets = y_min.shape[0]
         bucket_centers = (np.arange(n_buckets, dtype=np.float64) + 0.5) * bucket_width
-        bucket_x = spec.x0 + (i0 + bucket_centers) * spec.dx
+        bucket_x = spec.x_of_coord(i0 + bucket_centers)
 
     return QueryResult(
         x=bucket_x, y_min=y_min, y_max=y_max, level=-1, from_cache=False, sample_count=sample_count
@@ -153,15 +153,13 @@ def full_x_range(handle: CacheHandle, spec: SourceSpec) -> tuple[float, float]:
         return (0.0, 1.0)
 
     if not handle.irregular_x:
-        x_start = spec.x0
-        x_end = spec.x0 + (handle.source_length - 1) * spec.dx
-        return (x_start, x_end)
+        return (float(spec.x_of_coord(0)), float(spec.x_of_coord(handle.source_length - 1)))
 
     top_level = handle.n_levels - 1
     group = handle.level_group(top_level)
     x_min = np.asarray(group["x_min"])
     x_max = np.asarray(group["x_max"])
-    return (float(x_min[0]), float(x_max[-1]))
+    return (float(spec.x_of_coord(float(x_min[0]))), float(spec.x_of_coord(float(x_max[-1]))))
 
 
 def sample_index_range_for_x(
@@ -171,9 +169,14 @@ def sample_index_range_for_x(
     x_end: float,
 ) -> tuple[int, int]:
     if not handle.irregular_x:
-        i0 = math.floor((x_start - spec.x0) / spec.dx)
-        i1 = math.ceil((x_end - spec.x0) / spec.dx) + 1
+        i0 = math.floor(spec.coord_of_x(x_start))
+        i1 = math.ceil(spec.coord_of_x(x_end)) + 1
         return i0, i1
+
+    # The cache and the file hold raw coordinates; the axis range is mapped
+    # back onto them once here, and every search below is in raw terms.
+    x_start = spec.coord_of_x(x_start)
+    x_end = spec.coord_of_x(x_end)
 
     # Level 0's per-chunk x bounds locate the range to chunk precision; the
     # top level's buckets are far too coarse (a handful per series) to zoom

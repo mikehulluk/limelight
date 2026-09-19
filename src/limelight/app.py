@@ -202,6 +202,9 @@ def _regular_index_value_at(index: Any, row_index: int) -> Any:
     if "intOrigin" in index:
         return index["intOrigin"] + row_index * index["intStep"]
     if "timeStepNom" in index:
+        # Exported in the index's own unit, from its origin: elapsed time for a
+        # relative index, time since the epoch for an absolute one. (The axis
+        # the app draws is a different coordinate space - see refs.time_axis_affine.)
         nom = index["timeStepNom"]
         denom = index["timeStepDenom"]
         time_origin = index["timeOrigin"]

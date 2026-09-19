@@ -12,12 +12,6 @@ if TYPE_CHECKING:
     from .app import LimelightRuntime
 
 
-def _epoch_offset_in_unit(time_origin: Any, unit: str) -> float:
-    if time_origin == "relative":
-        return 0.0
-    return refs._epoch_offset_ns(time_origin) / refs._UNIT_NS[unit]
-
-
 def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> largeseries.SourceSpec:
     hdf5_path = package.package_path(source["path"])
     y_datasets = {entry["schema"]["name"]: entry["dataset"] for entry in source["yArrays"]}
@@ -35,9 +29,11 @@ def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_na
         )
 
     if "timeStepNom" in index:
-        dx = index["timeStepNom"] / index["timeStepDenom"]
-        x0 = _epoch_offset_in_unit(index["timeOrigin"], index["timeStepUnit"])
-        return largeseries.SourceSpec.uniform(hdf5_path, y_dataset, x0=x0, dx=dx)
+        # Sample i sits at i * step in the index's unit; time_axis_affine then
+        # puts that on the axis (days for an absolute origin).
+        step = index["timeStepNom"] / index["timeStepDenom"]
+        x0, dx = refs.time_axis_affine(index)
+        return largeseries.SourceSpec.uniform(hdf5_path, y_dataset, x0=x0, dx=step * dx)
 
     if "irregularArrayCoordArray" in index or "irregularTimeCoordArray" in index:
         coord_column = index.get("irregularArrayCoordArray") or index.get("irregularTimeCoordArray")
@@ -45,7 +41,8 @@ def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_na
             raise KeyError(
                 f"Index coordinate array {coord_column!r} is not declared in yArrays of source {source['id']!r}"
             )
-        return largeseries.SourceSpec.irregular(hdf5_path, y_dataset, y_datasets[coord_column])
+        x0, dx = refs.time_axis_affine(index) if "irregularTimeCoordArray" in index else (0.0, 1.0)
+        return largeseries.SourceSpec.irregular(hdf5_path, y_dataset, y_datasets[coord_column], x0=x0, dx=dx)
 
     if "calendarStep" in index or "irregularCalendarCoordArray" in index:
         raise NotImplementedError(

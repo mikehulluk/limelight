@@ -60,7 +60,9 @@ def test_writer_round_trip_produces_expected_hdf_source_and_artist_shape(tmp_pat
 
     [figure] = manifest["figures"]
     [axes_spec] = figure["axesSpecs"]
-    assert axes_spec["xAxis"]["dataType"] == {"calendar": ""}
+    # No x axis was given and the source has noIndex, so the axis is a number
+    # line; only an absolute time index infers a timeSeries (calendar) axis.
+    assert axes_spec["xAxis"]["dataType"] == {"unit": "", "scale": "Linear"}
     [artist] = axes_spec["actions"]
     assert artist["y"] == "bigseries['value']"
     assert artist["transform"] == "identity"

@@ -349,6 +349,19 @@ class _SemanticValidator:
             return
         raise LimelightError(f"AxesSpec {axes_spec['id']!r} has unknown AxesAction payload {action!r}")
 
+    def _require_absolute_time_on_time_axis(
+        self, figure_id: str, axes_spec: dict[str, Any], artist: dict[str, Any], source_id: str, index: Any
+    ) -> None:
+        # A timeSeries axis is calendar time, drawn in days since the epoch. A
+        # relative time index is elapsed time in its unit; put on that axis it
+        # would read as dates near 1970, so it is refused rather than drawn.
+        if refs.time_index_origin(index) == "relative":
+            raise LimelightError(
+                f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
+                f"draws against a timeSeries axis, but source {source_id!r} has a relative time index; "
+                f"give the index an absolute origin, or use a continuous axis with the time unit as its label"
+            )
+
     def _validate_plot_artist(self, figure_id: str, axes_spec: dict[str, Any], artist: dict[str, Any]) -> None:
         kind = refs.artist_kind(artist)
         if axis_data_type_kind(axes_spec["xAxis"]) == "discrete" and kind not in ("line", "scatter", "stem"):
@@ -367,6 +380,8 @@ class _SemanticValidator:
                     f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
                     f"draws against a time axis, but source {source_id!r} has no index to take its x values from"
                 )
+            if source is not None:
+                self._require_absolute_time_on_time_axis(figure_id, axes_spec, artist, source_id, source.get("index"))
         fields = ("x", "y") if kind in ("scatter", "stem") else ("y",)
         for field in fields:
             source_id, array_name = refs.parse_column_ref(artist[field])
@@ -404,6 +419,11 @@ class _SemanticValidator:
                     f"references source {source_id!r}, whose calendar index a timeSeries artist cannot plot; "
                     f"use an integer, time or irregular index"
                 )
+        if kind == "timeSeries" and axis_data_type_kind(axes_spec["xAxis"]) == "timeSeries":
+            source_id, _ = refs.parse_column_ref(artist["y"])
+            source = self.sources.get(source_id)
+            if source is not None:
+                self._require_absolute_time_on_time_axis(figure_id, axes_spec, artist, source_id, source.get("index"))
         if kind == "timeSeries" and artist["transform"] != "identity":
             raise LimelightError(
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} timeSeries artist {artist['id']!r} "
