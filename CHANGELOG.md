@@ -7,6 +7,16 @@ versions may break things.
 
 ## [Unreleased]
 
+### Fixed
+
+- The app no longer crashes opening a story whose page is about as tall as
+  the window. A figure's height follows the column's width, so with the
+  vertical scrollbar shown only as needed the column could be caught between
+  two states - bar shown, figure shorter, no bar needed; bar gone, figure
+  taller, bar needed - and Qt resolved each inside the other until the stack
+  overflowed (a segmentation fault). The story's vertical scrollbar is now
+  always shown, so the column's width does not depend on the page's height.
+
 ## [0.0.10] - 2026-09-19
 
 ### Changed

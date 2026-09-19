@@ -4315,6 +4315,15 @@ class StoryBlockPanel(QScrollArea):
         self.figure_pool.setMaxThreadCount(1)
         self._disposed = False
         self.setWidgetResizable(True)
+        # The vertical scrollbar is always there. A figure's height follows
+        # the column's width, so when the scrollbar came and went as needed,
+        # the column could be caught between two states: with the bar the
+        # column is narrower, its figures shorter, and the page short enough
+        # not to need the bar; without it the page is too tall again. Qt
+        # resolves each state inside the resize that caused the other, and
+        # the recursion overflows the stack. With the bar fixed, the column's
+        # width does not depend on the page's height.
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
 
         self.content = StoryPageCanvas()
         self.layout = QVBoxLayout(self.content)
