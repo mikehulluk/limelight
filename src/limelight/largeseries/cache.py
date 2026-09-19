@@ -48,6 +48,9 @@ class SourceSpec:
     irregular_x: bool
     x0: float
     dx: float
+    # Column of a 2-D dataset for y and x respectively; None for a 1-D one.
+    y_column: int | None = None
+    x_column: int | None = None
 
     def __post_init__(self) -> None:
         if self.irregular_x and self.x_dataset is None:
@@ -58,19 +61,40 @@ class SourceSpec:
             raise InvalidSourceSpecError(f"dx must be positive, got {self.dx}")
 
     @classmethod
-    def uniform(cls, hdf5_path: str | Path, y_dataset: str, *, x0: float, dx: float) -> "SourceSpec":
+    def uniform(
+        cls, hdf5_path: str | Path, y_dataset: str, *, x0: float, dx: float, y_column: int | None = None
+    ) -> "SourceSpec":
         """A series sampled at `x0 + i * dx`."""
-        return cls(hdf5_path=Path(hdf5_path), y_dataset=y_dataset, x_dataset=None, irregular_x=False, x0=x0, dx=dx)
+        return cls(
+            hdf5_path=Path(hdf5_path), y_dataset=y_dataset, x_dataset=None, irregular_x=False, x0=x0, dx=dx,
+            y_column=y_column,
+        )
 
     @classmethod
     def irregular(
-        cls, hdf5_path: str | Path, y_dataset: str, x_dataset: str, *, x0: float = 0.0, dx: float = 1.0
+        cls,
+        hdf5_path: str | Path,
+        y_dataset: str,
+        x_dataset: str,
+        *,
+        x0: float = 0.0,
+        dx: float = 1.0,
+        y_column: int | None = None,
+        x_column: int | None = None,
     ) -> "SourceSpec":
         """A series whose x values are read from `x_dataset`, which must be sorted.
 
         `x0` and `dx` place those values on the axis: `x = x0 + coord * dx`.
         """
-        return cls(hdf5_path=Path(hdf5_path), y_dataset=y_dataset, x_dataset=x_dataset, irregular_x=True, x0=x0, dx=dx)
+        return cls(
+            hdf5_path=Path(hdf5_path), y_dataset=y_dataset, x_dataset=x_dataset, irregular_x=True, x0=x0, dx=dx,
+            y_column=y_column, x_column=x_column,
+        )
+
+    @property
+    def y_selector(self) -> str:
+        """The y array as one string, for cache keys and messages: `/values[3]` or `/y`."""
+        return _selector(self.y_dataset, self.y_column)
 
     def x_of_coord(self, coord: np.ndarray | float) -> np.ndarray | float:
         """Axis position of a raw coordinate (irregular) or sample index (uniform)."""
@@ -81,12 +105,16 @@ class SourceSpec:
         return (x - self.x0) / self.dx
 
     def open_y(self) -> ArraySource:
-        return HdfArraySource(self.hdf5_path, self.y_dataset)
+        return HdfArraySource(self.hdf5_path, self.y_dataset, self.y_column)
 
     def open_x(self) -> ArraySource | None:
         if not self.irregular_x:
             return None
-        return HdfArraySource(self.hdf5_path, self.x_dataset)
+        return HdfArraySource(self.hdf5_path, self.x_dataset, self.x_column)
+
+
+def _selector(dataset: str, column: int | None) -> str:
+    return dataset if column is None else f"{dataset}[{column}]"
 
 
 @dataclass(frozen=True)
@@ -136,7 +164,7 @@ def build_or_get_cache(
     size = stat.st_size
 
     if not force:
-        entry = lookup_memo(resolved_cache_dir, source_path, spec.y_dataset, mtime_ns, size, chunk_size)
+        entry = lookup_memo(resolved_cache_dir, source_path, spec.y_selector, mtime_ns, size, chunk_size)
         if entry is not None:
             dest = resolved_cache_dir / f"{entry.content_hash}.h5"
             if dest.exists():
@@ -220,7 +248,7 @@ def build_or_get_cache(
     update_memo(
         resolved_cache_dir,
         source_path,
-        spec.y_dataset,
+        spec.y_selector,
         MemoEntry(
             mtime_ns=mtime_ns,
             size=size,
@@ -334,7 +362,7 @@ def _write_cache_file(
                 handle.attrs["x_dtype"] = str(x_dtype)
             handle.attrs["n_levels"] = len(levels)
             handle.attrs["source_path_hint"] = str(spec.hdf5_path)
-            handle.attrs["dataset_path_hint"] = spec.y_dataset
+            handle.attrs["dataset_path_hint"] = spec.y_selector
             handle.attrs["built_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             for level_index, level in enumerate(levels):

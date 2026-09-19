@@ -46,13 +46,19 @@ let IndexedTableFromCsv =
 -- `path` file is opened directly by the large-series LOD pyramid cache
 -- rather than loaded row-by-row like IndexedTableFromCsv. Each entry in
 -- `yArrays` names a value array (`schema.name`, matched against
--- `table['column']` bindings) and the HDF5 dataset backing it (`dataset`).
+-- `table['column']` bindings) and the HDF5 dataset backing it (`dataset`):
+-- a 1-D dataset as it stands, or, with `column = Some j`, column j of a 2-D
+-- dataset laid out rows x columns (row n of every column is sample n, so
+-- one such dataset can back many arrays sharing the source's index without
+-- being split up). Every array of a source has the same length.
+let HdfArrayBinding = { schema : ArraySchema, dataset : Text, column : Optional Natural }
+
 let IndexedTableFromHdf5 =
       { id : Core.Id
       , title : Optional Core.DisplayText
       , path : Text
       , fileFingerprints : List SourceFileFingerprint
-      , yArrays : List { schema : ArraySchema, dataset : Text }
+      , yArrays : List HdfArrayBinding
       , index : Index
       , largeSeriesChunkSize : Natural
       , provenance : Optional SourceProvenance
@@ -68,6 +74,7 @@ let IndexedTableFromHdf5 =
 let Source = < csv : IndexedTableFromCsv | hdf : IndexedTableFromHdf5 >
 
 in  { SourceFileFingerprint = SourceFileFingerprint
+    , HdfArrayBinding = HdfArrayBinding
     , SourceProvenance = SourceProvenance
     , IndexedTableFromCsv = IndexedTableFromCsv
     , IndexedTableFromHdf5 = IndexedTableFromHdf5

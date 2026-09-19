@@ -836,6 +836,8 @@ class HdfArraySpec:
     unit: str | None = None
     description: str | None = None
     nullable: bool = False
+    # Column of a 2-D (rows x columns) dataset; None for a 1-D dataset.
+    column: int | None = None
 
     def render(self) -> str:
         schema = _record(
@@ -848,10 +850,13 @@ class HdfArraySpec:
                 ("nullable", _dhall_bool(self.nullable)),
             ]
         )
+        if self.column is not None and self.column < 0:
+            raise ValueError(f"column must be a non-negative index, got {self.column}")
         return _record(
             [
                 ("schema", schema),
                 ("dataset", _quote(self.dataset)),
+                ("column", _optional_natural(self.column)),
             ]
         )
 
@@ -860,12 +865,15 @@ def hdf_array(
     name: str,
     dataset: str,
     *,
+    column: int | None = None,
     dtype: str = "double",
     label: str | None = None,
     unit: str | None = None,
     description: str | None = None,
     nullable: bool = False,
 ) -> HdfArraySpec:
+    """One array of an hdf source: `dataset` as it stands, or `column` of it
+    when the dataset is 2-D (rows x columns)."""
     return HdfArraySpec(
         name=name,
         dataset=dataset,
@@ -874,6 +882,7 @@ def hdf_array(
         unit=unit,
         description=description,
         nullable=nullable,
+        column=column,
     )
 
 
@@ -1090,7 +1099,7 @@ class HdfDataset:
                 )),
                 ("yArrays", _list(
                     [hdf_array_spec.render() for hdf_array_spec in self.y_arrays],
-                    "{ schema : Limelight.ArraySchema, dataset : Text }",
+                    "Limelight.HdfArrayBinding",
                 )),
                 ("index", self.index.expr),
                 ("largeSeriesChunkSize", str(self.chunk_size)),
@@ -2379,6 +2388,14 @@ class LimelightProject:
             index=index or Index.no_index(),
             chunk_size=chunk_size,
             provenance=provenance,
+        )
+        # Check the bindings against the file now, where the mistake is made.
+        from .hdf_sources import check_hdf_bindings
+
+        check_hdf_bindings(
+            dataset.hdf5_source_path,
+            [{"schema": {"name": a.name}, "dataset": a.dataset, "column": a.column} for a in dataset.y_arrays],
+            f"hdf dataset {id!r}",
         )
         dataset.signatures = _sign_all(dataset.hdf5_source_path.read_bytes(), signers) if signers else []
         self.hdf_datasets.append(dataset)

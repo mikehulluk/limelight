@@ -42,6 +42,13 @@ let StepUnit = < ns | us | ms | s | Gs >
 
 let EpochOffset = { epochOffsetGs : Natural, epochOffsetS : Natural, epochOffsetNs : Natural }
 
+-- Where a time index's zero is. `relative` means the values are elapsed time
+-- in the index's StepUnit and are drawn as plain numbers in that unit;
+-- `absoluteUtc` means they are offsets from the given UTC instant, and the
+-- viewer draws them on a calendar (UTC) axis, in the same coordinates as a
+-- UTC AxisLimit. The two are different axes, not different labels: an
+-- absolute index belongs on a timeSeries axis, a relative one on a
+-- continuous axis with the unit as its label.
 let TimeOrigin = < relative | absoluteUtc : EpochOffset >
 
 let Calendar = < prolepticGregorian >

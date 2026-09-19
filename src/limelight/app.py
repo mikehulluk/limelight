@@ -196,6 +196,14 @@ _HDF_EXPORT_BLOCK_SIZE = 1_000_000
 _CSV_SIZE_ESTIMATE_SAMPLE_ROWS = 200
 
 
+def _hdf_array_slice(dataset: Any, entry: dict[str, Any], start: int, end: int) -> Any:
+    """Rows start:end of a yArrays entry: the 1-D dataset, or its `column` of a 2-D one."""
+    column = entry.get("column")
+    if column is None:
+        return dataset[start:end]
+    return dataset[start:end, column]
+
+
 def _regular_index_value_at(index: Any, row_index: int) -> Any:
     if index == "noIndex":
         return row_index
@@ -759,7 +767,7 @@ class LimelightRuntime:
             for entry in entries:
                 dataset = handle[entry["dataset"]]
                 total_rows = max(total_rows, dataset.shape[0])
-                columns_data.append(dataset[:limit].tolist())
+                columns_data.append(_hdf_array_slice(dataset, entry, 0, limit).tolist())
 
         row_count = min(limit, total_rows)
         table_rows = [
@@ -840,7 +848,9 @@ class LimelightRuntime:
             total_rows = max((dataset.shape[0] for dataset in datasets), default=0)
             for start in range(0, total_rows, _HDF_EXPORT_BLOCK_SIZE):
                 end = min(start + _HDF_EXPORT_BLOCK_SIZE, total_rows)
-                block_columns = [dataset[start:end].tolist() for dataset in datasets]
+                block_columns = [
+                    _hdf_array_slice(dataset, entry, start, end).tolist() for dataset, entry in zip(datasets, entries)
+                ]
                 for offset in range(end - start):
                     row = [column_values[offset] for column_values in block_columns]
                     if include_index:

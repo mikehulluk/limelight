@@ -14,18 +14,19 @@ if TYPE_CHECKING:
 
 def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> largeseries.SourceSpec:
     hdf5_path = package.package_path(source["path"])
-    y_datasets = {entry["schema"]["name"]: entry["dataset"] for entry in source["yArrays"]}
+    # name -> (dataset, column): a 1-D dataset, or column j of a 2-D one.
+    y_datasets = {entry["schema"]["name"]: (entry["dataset"], entry.get("column")) for entry in source["yArrays"]}
     if column_name not in y_datasets:
         raise KeyError(f"Unknown yArrays column {column_name!r} in source {source['id']!r}")
-    y_dataset = y_datasets[column_name]
+    y_dataset, y_column = y_datasets[column_name]
 
     index = source["index"]
     if index == "noIndex":
-        return largeseries.SourceSpec.uniform(hdf5_path, y_dataset, x0=0.0, dx=1.0)
+        return largeseries.SourceSpec.uniform(hdf5_path, y_dataset, x0=0.0, dx=1.0, y_column=y_column)
 
     if "intOrigin" in index:
         return largeseries.SourceSpec.uniform(
-            hdf5_path, y_dataset, x0=float(index["intOrigin"]), dx=float(index["intStep"])
+            hdf5_path, y_dataset, x0=float(index["intOrigin"]), dx=float(index["intStep"]), y_column=y_column
         )
 
     if "timeStepNom" in index:
@@ -33,16 +34,19 @@ def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_na
         # puts that on the axis (days for an absolute origin).
         step = index["timeStepNom"] / index["timeStepDenom"]
         x0, dx = refs.time_axis_affine(index)
-        return largeseries.SourceSpec.uniform(hdf5_path, y_dataset, x0=x0, dx=step * dx)
+        return largeseries.SourceSpec.uniform(hdf5_path, y_dataset, x0=x0, dx=step * dx, y_column=y_column)
 
     if "irregularArrayCoordArray" in index or "irregularTimeCoordArray" in index:
-        coord_column = index.get("irregularArrayCoordArray") or index.get("irregularTimeCoordArray")
-        if coord_column not in y_datasets:
+        coord_name = index.get("irregularArrayCoordArray") or index.get("irregularTimeCoordArray")
+        if coord_name not in y_datasets:
             raise KeyError(
-                f"Index coordinate array {coord_column!r} is not declared in yArrays of source {source['id']!r}"
+                f"Index coordinate array {coord_name!r} is not declared in yArrays of source {source['id']!r}"
             )
+        x_dataset, x_column = y_datasets[coord_name]
         x0, dx = refs.time_axis_affine(index) if "irregularTimeCoordArray" in index else (0.0, 1.0)
-        return largeseries.SourceSpec.irregular(hdf5_path, y_dataset, y_datasets[coord_column], x0=x0, dx=dx)
+        return largeseries.SourceSpec.irregular(
+            hdf5_path, y_dataset, x_dataset, x0=x0, dx=dx, y_column=y_column, x_column=x_column
+        )
 
     if "calendarStep" in index or "irregularCalendarCoordArray" in index:
         raise NotImplementedError(
