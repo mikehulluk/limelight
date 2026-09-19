@@ -1,10 +1,30 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
 
 from .constants import MINMAX_DTYPE
+
+
+# A NaN in the source is a missing sample, not a value: a bucket's envelope is
+# the min/max of the samples it does have, and only a bucket with no samples at
+# all is NaN (which matplotlib draws as a gap). numpy's plain min/max would
+# instead make the whole bucket NaN, and then every level above it, so one bad
+# reading in a chunk of 4096 blanked the chunk at every zoom. nanmin/nanmax warn
+# on an all-NaN slice; that case is the intended result here, so the warning is
+# silenced rather than the caller having to.
+def _nan_min(values: np.ndarray, axis: int | None = None) -> np.ndarray:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        return np.nanmin(values, axis=axis)
+
+
+def _nan_max(values: np.ndarray, axis: int | None = None) -> np.ndarray:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        return np.nanmax(values, axis=axis)
 
 
 @dataclass(frozen=True)
@@ -39,8 +59,8 @@ def reduce_block_to_buckets(
     if n_full > 0:
         full_len = n_full * chunk_size
         y_full = y_block[:full_len].reshape(n_full, chunk_size)
-        y_min_parts.append(y_full.min(axis=1))
-        y_max_parts.append(y_full.max(axis=1))
+        y_min_parts.append(_nan_min(y_full, axis=1))
+        y_max_parts.append(_nan_max(y_full, axis=1))
         if x_block is not None:
             x_full = x_block[:full_len].reshape(n_full, chunk_size)
             x_min_parts.append(x_full.min(axis=1))
@@ -48,8 +68,8 @@ def reduce_block_to_buckets(
 
     if remainder > 0:
         y_tail = y_block[n_full * chunk_size :]
-        y_min_parts.append(np.array([y_tail.min()], dtype=MINMAX_DTYPE))
-        y_max_parts.append(np.array([y_tail.max()], dtype=MINMAX_DTYPE))
+        y_min_parts.append(np.array([_nan_min(y_tail)], dtype=MINMAX_DTYPE))
+        y_max_parts.append(np.array([_nan_max(y_tail)], dtype=MINMAX_DTYPE))
         if x_block is not None:
             x_tail = x_block[n_full * chunk_size :]
             x_min_parts.append(np.array([x_tail.min()], dtype=x_block.dtype))
@@ -141,8 +161,8 @@ def cascade_levels(level0: LevelArrays, min_level_buckets: int) -> list[LevelArr
         has_remainder = n % 2 == 1
         paired_len = 2 * n_pairs
 
-        y_min = np.minimum(current.y_min[0:paired_len:2], current.y_min[1:paired_len:2])
-        y_max = np.maximum(current.y_max[0:paired_len:2], current.y_max[1:paired_len:2])
+        y_min = np.fmin(current.y_min[0:paired_len:2], current.y_min[1:paired_len:2])
+        y_max = np.fmax(current.y_max[0:paired_len:2], current.y_max[1:paired_len:2])
         if has_remainder:
             y_min = np.concatenate([y_min, current.y_min[-1:]])
             y_max = np.concatenate([y_max, current.y_max[-1:]])

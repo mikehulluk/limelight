@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from limelight.largeseries.pyramid import (
+    LevelArrays,
     LevelZeroBuilder,
     cascade_levels,
     reduce_block_to_buckets,
@@ -97,3 +98,28 @@ def test_cascade_top_level_matches_global_min_max() -> None:
 
     assert top.y_min.min() == values.min()
     assert top.y_max.max() == values.max()
+
+
+def test_reduce_block_nan_sample_does_not_blank_its_bucket() -> None:
+    # A NaN is a missing sample: the bucket's envelope is that of the samples
+    # it does have. Only a bucket with no samples at all comes out NaN.
+    y = np.array([3.0, np.nan, 4.0, 1.0, np.nan, np.nan, np.nan, np.nan, 7.0], dtype=np.float64)
+    y_min, y_max, _, _ = reduce_block_to_buckets(y, None, chunk_size=4)
+
+    np.testing.assert_array_equal(y_min, [1.0, np.nan, 7.0])
+    np.testing.assert_array_equal(y_max, [4.0, np.nan, 7.0])
+
+
+def test_cascade_levels_nan_bucket_is_ignored_when_paired() -> None:
+    level0 = LevelArrays(
+        y_min=np.array([1.0, np.nan, np.nan, np.nan, 5.0, 2.0], dtype=np.float64),
+        y_max=np.array([3.0, np.nan, np.nan, np.nan, 6.0, 9.0], dtype=np.float64),
+        x_min=None,
+        x_max=None,
+    )
+    levels = cascade_levels(level0, min_level_buckets=1)
+
+    np.testing.assert_array_equal(levels[1].y_min, [1.0, np.nan, 2.0])
+    np.testing.assert_array_equal(levels[1].y_max, [3.0, np.nan, 9.0])
+    # The top level is the global envelope of the samples that exist.
+    assert levels[-1].y_min[0] == 1.0 and levels[-1].y_max[0] == 9.0

@@ -4,7 +4,9 @@ import numpy as np
 
 DEFAULT_CHUNK_SIZE: int = 4096
 MIN_LEVEL_BUCKETS: int = 8
-SCHEMA_VERSION: int = 1
+# 2: level buckets are NaN-aware (a NaN sample no longer blanks its bucket), so
+#    a cache built by version 1 over data with NaNs draws differently and is rebuilt.
+SCHEMA_VERSION: int = 2
 HASH_STREAM_BLOCK: int = 1 << 20
 MINMAX_DTYPE = np.float64
 CONTENT_HASH_DIGEST_SIZE: int = 16
