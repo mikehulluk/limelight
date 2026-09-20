@@ -7,6 +7,8 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-09-20
+
 ### Fixed
 
 - The app no longer crashes opening a story whose page is about as tall as
@@ -233,7 +235,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.10...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.11...HEAD
+[0.0.11]: https://github.com/mikehulluk/limelight/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/mikehulluk/limelight/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/mikehulluk/limelight/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/mikehulluk/limelight/compare/v0.0.7...v0.0.8
