@@ -2711,7 +2711,6 @@ class LimelightWindow(QMainWindow):
         self._busy_cursor_active = False
         self.tabs: QTabWidget | None = None
         self.story_tree: QTreeWidget | None = None
-        self.story_title: QLabel | None = None
         self.story_blocks: StoryBlockPanel | None = None
         self.figure_view_tree: QTreeWidget | None = None
         self.figure_view_title: QLabel | None = None
@@ -2751,7 +2750,6 @@ class LimelightWindow(QMainWindow):
         # against the new runtime - which is how opening a second package used
         # to fail before it had drawn anything.
         self.story_tree = None
-        self.story_title = None
         self.figure_view_tree = None
         self.figure_view_title = None
         self.figure_view_caption = None
@@ -3379,11 +3377,6 @@ class LimelightWindow(QMainWindow):
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        self.story_title = QLabel()
-        self.story_title.setStyleSheet("font-weight: 600; font-size: 14px;")
-        self.story_title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        layout.addWidget(self.story_title)
-
         self.story_blocks = StoryBlockPanel(
             self.runtime,
             on_parameter_changed=self._on_parameter_changed,
@@ -3734,13 +3727,12 @@ class LimelightWindow(QMainWindow):
         )
 
     def _show_story_document(self) -> None:
-        if self.story_title is None or self.story_blocks is None:
+        if self.story_blocks is None:
             return
 
         start_time = self.runtime.timing.start()
         self._begin_wait_state("Rendering story...")
         try:
-            self.story_title.setText(self.runtime.project_title)
             blocks = self.runtime.story_blocks
             self.story_blocks.show_blocks(blocks, self.runtime.story_sections)
             self._apply_story_state_to_figures_tab()
