@@ -150,8 +150,15 @@ let TextStyle =
 -- own face, at the size of the text around it. The application's own
 -- controls - toolbars, the sidebar, dialogs - are not the document's and
 -- keep the platform's font.
+--
+-- Two of the figures' distances are set here, in points, since they are set
+-- with the text they space: `axisLabelPadPt` between an axis's tick labels
+-- and its label, `figureTitlePadPt` between the top of the axes and the
+-- title. matplotlib's own are 4 and 6.
 let Typography =
       { lineHeight : Double
+      , axisLabelPadPt : Double
+      , figureTitlePadPt : Double
       , body : TextStyle
       , heading1 : TextStyle
       , heading2 : TextStyle

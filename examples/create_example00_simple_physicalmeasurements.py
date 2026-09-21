@@ -298,14 +298,14 @@ in    { limelightVersion = "1.0"
           , headingGapBefore = 5.0
           , headingGapAfter = 2.0
           }
-        -- Every kind of text, set in full: the stack of fonts, the size in
-        -- points, the weight and the slant. These are the defaults the
-        -- writer would emit; a manifest written by hand says them itself.
         -- Every kind of text, set in full: the stack of fonts tried in order,
-        -- the size in points, the weight and the slant. These are the defaults
-        -- the writer would emit; a manifest written by hand says them itself.
+        -- the size in points, the weight and the slant, plus the figures'
+        -- own distances in points. These are the defaults the writer would
+        -- emit; a manifest written by hand says them itself.
         , typography =
           { lineHeight = 1.5
+          , axisLabelPadPt = 4.0
+          , figureTitlePadPt = 6.0
           , body = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 10.5, weight = 400, italic = False }
           , heading1 = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 17.85, weight = 700, italic = False }
           , heading2 = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 13.86, weight = 700, italic = False }

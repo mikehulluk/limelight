@@ -79,6 +79,8 @@ def test_a_custom_typography_round_trips(tmp_path: Path) -> None:
     typography = replace(
         Typography(),
         line_height=1.35,
+        axis_label_pad_pt=9.0,
+        figure_title_pad_pt=12.0,
         heading1=TextStyle(fonts=("noto-sans",), size_pt=24.0, weight=800, italic=True),
         code=TextStyle(fonts=("dejavu-sans-mono",), size_pt=9.0),
     )
@@ -98,6 +100,15 @@ def test_a_package_written_before_typography_existed_reads_as_the_defaults() -> 
     fonts = resolve_fonts({"story": story}, None)
     assert set(fonts) == {"ubuntu", "noto-sans", "ubuntu-mono", "dejavu-sans-mono"}
     assert all(font.source == "builtin" for font in fonts.values())
+
+
+def test_a_typography_block_written_before_the_pads_reads_them_as_matplotlib_has_them(tmp_path: Path) -> None:
+    package = _written(tmp_path, _project())
+    with open_limelight(package) as opened:
+        block = opened.manifest_json()["story"]["typography"]
+    del block["axisLabelPadPt"], block["figureTitlePadPt"]
+    read = typography_from_story({"typography": block})
+    assert (read.axis_label_pad_pt, read.figure_title_pad_pt) == (4.0, 6.0)
 
 
 # --- System and bundled fonts ---------------------------------------------
@@ -203,6 +214,21 @@ def test_the_caption_label_is_its_own_style() -> None:
     assert figure_caption_markup(3, "a < b") == '<span class="limelight-caption-label">Figure 3.</span> a &lt; b'
     inline = figure_caption_markup(3, "x", label_style='font-weight: 700; font-family: "Ubuntu";')
     assert 'style="font-weight: 700; font-family: &quot;Ubuntu&quot;;"' in inline
+
+
+def test_figure_text_sets_labels_and_titles_the_pads_apart() -> None:
+    from matplotlib.figure import Figure
+
+    fonts = resolve_fonts({"story": {}}, None)
+    text = FigureText.from_typography(replace(Typography(), axis_label_pad_pt=11.0, figure_title_pad_pt=13.0), fonts)
+    axes = Figure().add_subplot(111)
+    text.set_title(axes, "T")
+    text.set_xlabel(axes, "x")
+    text.set_ylabel(axes, "y")
+    assert axes.xaxis.labelpad == 11.0 and axes.yaxis.labelpad == 11.0
+    assert axes.title.get_fontproperties().get_weight() == BOLD
+    # matplotlib keeps the title pad only as an offset in inches.
+    assert axes.titleOffsetTrans._t[1] * 72 == pytest.approx(13.0)  # noqa: SLF001
 
 
 def test_figure_text_carries_the_styles_to_matplotlib() -> None:

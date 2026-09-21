@@ -57,6 +57,28 @@ def test_y2_renders_two_stacked_panels_sharing_x(tmp_path: Path) -> None:
     assert bottom.get_xlabel() == "f"
 
 
+def test_stacked_panels_line_their_y_labels_up(tmp_path: Path) -> None:
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    project = LimelightProject(title="Wide and narrow", authors=["Test"])
+    # The top panel's tick labels are far wider than the bottom's, which is
+    # what pushes one y label further from its axis than the other.
+    project.add_csv_dataset(
+        id="src",
+        arrays={"f": [1.0, 2.0, 3.0], "wide": [-123456.0, 0.0, 123456.0], "narrow": [0.0, 1.0, 2.0]},
+    )
+    project.add_line_figure(id="fig", title="Fig", data="src", x="f", y=["wide"], y2=["narrow"])
+    folder = tmp_path / "pkg"
+    project.write_folder(folder)
+
+    figure, _ = _render(folder, "fig")
+    FigureCanvasAgg(figure).draw()
+    top, bottom = figure.axes
+    top_x = top.yaxis.label.get_window_extent().x0
+    bottom_x = bottom.yaxis.label.get_window_extent().x0
+    assert abs(top_x - bottom_x) < 0.5
+
+
 def _three_panel_package(tmp_path: Path) -> Path:
     from limelight.writer import AxisDataType, Panel
 

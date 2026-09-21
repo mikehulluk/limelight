@@ -39,6 +39,11 @@ FONTS_DIR = Path(__file__).resolve().parent / "fonts"
 DEFAULT_BODY_SIZE_PT = 10.5
 DEFAULT_LINE_HEIGHT = 1.5
 
+# The figure renderer's own spacing, in points: from an axis to its label,
+# and from the top of the axes to the title. matplotlib's defaults.
+DEFAULT_AXIS_LABEL_PAD_PT = 4.0
+DEFAULT_FIGURE_TITLE_PAD_PT = 6.0
+
 # Weights are CSS weights, 100 to 900.
 MIN_WEIGHT = 100
 MAX_WEIGHT = 900
@@ -213,9 +218,15 @@ class Typography:
     captions and table text at 0.86, axis and tick labels, legends and
     annotations at matplotlib's "small" (0.833), the badge at its "x-small"
     (0.694).
+
+    Two of the figures' distances are set here too, in points, since they
+    are set with the text they space: ``axis_label_pad_pt`` between an axis
+    and its label, ``figure_title_pad_pt`` between the axes and the title.
     """
 
     line_height: float = DEFAULT_LINE_HEIGHT
+    axis_label_pad_pt: float = DEFAULT_AXIS_LABEL_PAD_PT
+    figure_title_pad_pt: float = DEFAULT_FIGURE_TITLE_PAD_PT
     body: TextStyle = _style(DEFAULT_TEXT_FONTS, 1.0)
     heading1: TextStyle = _style(DEFAULT_TEXT_FONTS, 1.7, BOLD)
     heading2: TextStyle = _style(DEFAULT_TEXT_FONTS, 1.32, BOLD)
@@ -240,7 +251,7 @@ class Typography:
         return {
             _manifest_name(field.name): getattr(self, field.name)
             for field in fields(self)
-            if field.name != "line_height"
+            if isinstance(getattr(self, field.name), TextStyle)
         }
 
     def font_ids(self) -> list[str]:
@@ -306,11 +317,19 @@ def typography_from_story(story: dict[str, Any]) -> Typography:
     line_height = float(block["lineHeight"])
     if line_height <= 0:
         raise LimelightError(f"Typography lineHeight {line_height!r} must be positive")
+    # The pads came after the block did; a document without them has matplotlib's.
+    axis_label_pad_pt = float(block.get("axisLabelPadPt", DEFAULT_AXIS_LABEL_PAD_PT))
+    figure_title_pad_pt = float(block.get("figureTitlePadPt", DEFAULT_FIGURE_TITLE_PAD_PT))
     styles = {
         _field_name(name): text_style_from_manifest(block[name], f"Typography {name}")
         for name in STYLE_NAMES
     }
-    return Typography(line_height=line_height, **styles)
+    return Typography(
+        line_height=line_height,
+        axis_label_pad_pt=axis_label_pad_pt,
+        figure_title_pad_pt=figure_title_pad_pt,
+        **styles,
+    )
 
 
 def default_manifest_fonts() -> list[dict[str, Any]]:
@@ -587,10 +606,14 @@ class FigureText:
     body: "FontProperties"
     tick_families: tuple[str, ...]
     tick_size_pt: float
+    axis_label_pad_pt: float
+    title_pad_pt: float
 
     @classmethod
     def from_typography(cls, typography: Typography, fonts: Mapping[str, ResolvedFont]) -> "FigureText":
         return cls(
+            axis_label_pad_pt=typography.axis_label_pad_pt,
+            title_pad_pt=typography.figure_title_pad_pt,
             title=typography.figure_title.font_properties(fonts),
             axis_label=typography.axis_label.font_properties(fonts),
             tick_label=typography.tick_label.font_properties(fonts),
@@ -609,6 +632,15 @@ class FigureText:
 
     def add_legend(self, axes: Any, *args: Any, **kwargs: Any) -> Any:
         return axes.legend(*args, prop=self.legend, title_fontproperties=self.legend, **kwargs)
+
+    def set_title(self, axes: Any, title: str) -> None:
+        axes.set_title(title, fontproperties=self.title, pad=self.title_pad_pt)
+
+    def set_xlabel(self, axes: Any, label: str) -> None:
+        axes.set_xlabel(label, fontproperties=self.axis_label, labelpad=self.axis_label_pad_pt)
+
+    def set_ylabel(self, axes: Any, label: str) -> None:
+        axes.set_ylabel(label, fontproperties=self.axis_label, labelpad=self.axis_label_pad_pt)
 
 
 # --- What is really in use -----------------------------------------------

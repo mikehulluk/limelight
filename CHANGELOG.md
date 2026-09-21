@@ -7,6 +7,23 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- **Document Information** has a Typography tab - every declared font,
+  whether this machine has it on screen and in figures, and every text
+  style with the family and file it really gets, marked when a whole stack
+  is missing and a renderer substituted its own default - and a Spacing tab
+  with the page and the column's rhythm.
+- The `typography` block sets two of the figures' distances, in points:
+  `axisLabelPadPt` between an axis and its label, `figureTitlePadPt`
+  between the axes and the title. Both default to matplotlib's (4 and 6),
+  and a document written before them reads as having those.
+
+### Fixed
+
+- The y labels of stacked panels line up: the label of a panel with wide
+  tick labels used to sit further out than its neighbours'.
+
 ## [0.0.14] - 2026-09-21
 
 ### Added

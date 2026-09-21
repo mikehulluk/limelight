@@ -63,8 +63,12 @@ A document says how every kind of its text is set - body, headings, code,
 captions, figure titles, axis and tick labels, legends, annotations, table
 text - in the `typography` block of its story: a stack of fonts, a size in
 points, a weight and a slant for each, so the document reads the same on
-every machine, on screen and in its PDF. The writer fills the block in;
-`Typography` and `TextStyle` change it.
+every machine, on screen and in its PDF. The block also sets two of the
+figures' distances, in points: `axisLabelPadPt` between an axis and its
+label and `figureTitlePadPt` between the axes and the title. The writer
+fills the block in; `Typography` and `TextStyle` change it. File › Document
+Information shows what a document is set in, and which face each style
+really gets on this machine.
 
 Fonts are declared in the manifest's `fonts` list. Limelight ships Ubuntu,
 Ubuntu Mono, Noto Sans, and matplotlib's DejaVu Sans and DejaVu Sans Mono,

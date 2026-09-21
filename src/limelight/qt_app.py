@@ -1458,6 +1458,9 @@ def _render_figure_view_to_matplotlib_figure(
             show_x_axis=index in labels_x,
             hover_sink=hover_sink,
         )
+    # Stacked panels' y labels sit at one x whatever width their tick labels
+    # take, so the column reads as one. A placed panel is where its frame put it.
+    figure.align_ylabels([axes for axes in panels if axes.get_subplotspec() is not None])
 
 
 def _add_panels(figure: MatplotlibFigure, axes_specs: Sequence[dict[str, Any]]) -> list[Any]:
@@ -1549,7 +1552,7 @@ def _draw_scatter_artist(
             zorder=3,
         )
         colorbar = axes.figure.colorbar(collection, ax=axes)
-        colorbar.set_label(series.color_label, fontproperties=text.axis_label)
+        colorbar.set_label(series.color_label, fontproperties=text.axis_label, labelpad=text.axis_label_pad_pt)
         text.style_ticks(colorbar.ax)
     elif series.color_kind == "categorical":
         palette = matplotlib.colormaps["tab10"].colors
@@ -1732,13 +1735,13 @@ def _draw_plot_contents(
         axes.set_ylim(*y_window)
 
     _apply_axes_action_decorators(axes, axes_spec, axes_actions, text)
-    axes.set_ylabel(axis_label(y_axis_binding), fontproperties=text.axis_label)
+    text.set_ylabel(axes, axis_label(y_axis_binding))
     axes.grid(True, color="#dddddd", linewidth=0.8)
     text.style_ticks(axes)
     if show_title:
-        axes.set_title(runtime.figure_specs[figure_id]["title"], fontproperties=text.title)
+        text.set_title(axes, runtime.figure_specs[figure_id]["title"])
     if show_x_axis:
-        axes.set_xlabel(axis_label(x_axis_binding), fontproperties=text.axis_label)
+        text.set_xlabel(axes, axis_label(x_axis_binding))
         _format_axis(axes, x_axis_binding, "x")
     else:
         axes.tick_params(axis="x", labelbottom=False)
@@ -1782,9 +1785,9 @@ def _draw_map_contents(
         axes.set_xlim(*longitude_window)
     if latitude_window is not None:
         axes.set_ylim(*latitude_window)
-    axes.set_title(runtime.figure_specs[figure_id]["title"], fontproperties=text.title)
-    axes.set_xlabel("Longitude", fontproperties=text.axis_label)
-    axes.set_ylabel("Latitude", fontproperties=text.axis_label)
+    text.set_title(axes, runtime.figure_specs[figure_id]["title"])
+    text.set_xlabel(axes, "Longitude")
+    text.set_ylabel(axes, "Latitude")
     text.style_ticks(axes)
     axes.set_aspect("equal", adjustable="box")
     axes.grid(True, color="#dddddd", linewidth=0.6)
@@ -1840,7 +1843,7 @@ def _draw_map_scatter(axes: Any, scatter: dict[str, Any], series: "MapScatterSer
             zorder=4,
         )
         colorbar = axes.figure.colorbar(collection, ax=axes)
-        colorbar.set_label(series.color_label, fontproperties=text.axis_label)
+        colorbar.set_label(series.color_label, fontproperties=text.axis_label, labelpad=text.axis_label_pad_pt)
         text.style_ticks(colorbar.ax)
     elif series.color_kind == "categorical":
         palette = matplotlib.colormaps["tab10"].colors
@@ -3958,7 +3961,9 @@ def _typography_page(runtime: LimelightRuntime) -> QWidget:
         ])
 
     summary = QLabel(
-        f"Line height: {typography.line_height:g} × the body size.\n"
+        f"Line height: {typography.line_height:g} × the body size. "
+        f"Axis labels sit {typography.axis_label_pad_pt:g}pt from the axis, "
+        f"figure titles {typography.figure_title_pad_pt:g}pt above the axes.\n"
         f"In use on screen: {', '.join(screen_families)}.\n"
         f"In use in figures: {', '.join(figure_families)}."
     )
