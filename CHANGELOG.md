@@ -7,6 +7,35 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- A missing sample (a NaN cell) is marked with a small red cross at its x,
+  at the height of the last good sample before it, once the view is zoomed
+  to raw samples; zoomed out, a bucket's good samples draw and there is
+  nothing to mark. Line artists mark their NaN cells the same way. A new
+  `missingMarker` on line and timeSeries artists (`cross`, the default, or
+  `none`) turns it off per artist.
+- **Debug mode** (View ▸ Debug Mode, Ctrl+Shift+D, or the Debug button on a
+  figure's toolbar): one flag every view reads. With it on, each
+  large-series plot carries its badge (raw samples, or ~N samples per
+  bucket) and each static figure in the story shows what its last render
+  cost; with it off the document reads as a document.
+- The story's status bar counts a render burst ("Rendering figures: 3 of
+  12") and says how long it took once it lands. Under a figure, "Rendering…"
+  shows while its render is out. Static renders log their worker time and
+  total time to the timing probe (`--debug-timing`).
+
+### Changed
+
+- A UTC axis labels every tick on two lines, the full time over the date,
+  instead of a bare "30" between "16:02" and "16:03" with the day in the
+  corner. A view of a few seconds shows milliseconds; a view of whole days
+  keeps only the date.
+- A story figure re-renders only when the column's width changes, and not
+  for a change under 8 px; a height-only resize (its own, after each
+  render) no longer schedules the next render.
+- Axis labels are a step smaller, level with the tick numbers.
+
 ## [0.0.11] - 2026-09-20
 
 ### Fixed

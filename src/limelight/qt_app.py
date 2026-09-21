@@ -13,6 +13,7 @@ from datetime import date, datetime
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import perf_counter
 from typing import Any, Callable, Mapping, Sequence
 
 import matplotlib
@@ -316,7 +317,10 @@ def _configure_figure_typography() -> None:
             "font.sans-serif": [story_font_family(), "Segoe UI", "DejaVu Sans"],
             "axes.titlesize": "medium",
             "axes.titleweight": "bold",
-            "axes.labelsize": "medium",
+            # Axis labels a step under the body, like the tick numbers: the
+            # plot's text sits inside a figure, under the story's own heading
+            # and caption, and should not compete with them.
+            "axes.labelsize": "small",
             "xtick.labelsize": "small",
             "ytick.labelsize": "small",
             "legend.fontsize": "small",
@@ -1171,6 +1175,8 @@ class StaticFigureViewRenderResult:
     height: int
     png_bytes: bytes
     error: str | None = None
+    # Wall time of the render itself on the worker, excluding queueing.
+    render_ms: float = 0.0
 
 
 class StaticFigureViewRenderSignals(QObject):
@@ -1206,6 +1212,7 @@ class StaticFigureViewRenderTask(QRunnable):
         self.signals = StaticFigureViewRenderSignals()
 
     def run(self) -> None:
+        render_start = self.runtime.timing.start()
         try:
             png_bytes = _render_static_figure_view_png_bytes(
                 self.runtime,
@@ -1217,6 +1224,12 @@ class StaticFigureViewRenderTask(QRunnable):
                 height=self.height,
                 layout_dpi=self.layout_dpi,
             )
+            render_ms = (self.runtime.timing.start() - render_start) * 1000.0
+            self.runtime.timing.log(
+                "story.static_figure_view.worker_render",
+                render_start,
+                [("figure", self.figure_id), ("size", f"{self.width}x{self.height}")],
+            )
             result = StaticFigureViewRenderResult(
                 request_id=self.request_id,
                 key=self.key,
@@ -1224,6 +1237,7 @@ class StaticFigureViewRenderTask(QRunnable):
                 width=self.width,
                 height=self.height,
                 png_bytes=png_bytes,
+                render_ms=render_ms,
             )
         except Exception as error:
             logger.exception("Static figure view render worker failed for %s", self.figure_id)
@@ -1245,12 +1259,14 @@ class StaticFigureViewRenderTask(QRunnable):
 
 
 def _parameter_signature(runtime: LimelightRuntime) -> tuple[tuple[str, str], ...]:
+    # Debug mode draws extra onto the figure, so a cached render is only good
+    # for the mode it was made in; it rides along in the signature.
     return tuple(
         sorted(
             (str(parameter_id), str(value))
             for parameter_id, value in runtime.control_parameter_values.items()
         )
-    )
+    ) + ((" debug", str(runtime.debug_ui)),)
 
 
 def _static_figure_view_key(
@@ -2576,6 +2592,62 @@ class CacheProgressIndicator(QWidget):
             self.hide()
 
 
+class RenderProgressIndicator(QWidget):
+    """A status-bar widget: how many of the story's figures are being redrawn.
+
+    A burst starts when the first figure's render goes out to the worker and
+    ends when the last one lands; the label counts them ("Rendering figures:
+    3 of 12") and the bar fills with them. Once the burst is over it says
+    how long it took, lingers a moment, and hides.
+    """
+
+    LINGER_MS = 1500
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.label = QLabel()
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        self.bar.setTextVisible(False)
+        self.bar.setFixedWidth(120)
+        self.bar.setFixedHeight(12)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self.label)
+        layout.addWidget(self.bar)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._hide_if_idle)
+        self._burst_started: float | None = None
+        self._idle = True
+        self.hide()
+
+    def report(self, done: int, total: int) -> None:
+        pending = total - done
+        if pending > 0:
+            if self._idle:
+                self._burst_started = perf_counter()
+                self._idle = False
+            self._hide_timer.stop()
+            self.bar.setValue(int(1000 * done / total) if total else 0)
+            self.label.setText(f"Rendering figures: {done + 1} of {total}")
+            self.show()
+            return
+        if self._idle:
+            return
+        self._idle = True
+        elapsed = perf_counter() - self._burst_started if self._burst_started is not None else 0.0
+        self.bar.setValue(1000)
+        noun = "figure" if total == 1 else "figures"
+        self.label.setText(f"Rendered {total} {noun} in {elapsed:.1f} s")
+        self._hide_timer.start(self.LINGER_MS)
+
+    def _hide_if_idle(self) -> None:
+        if self._idle:
+            self.hide()
+
+
 class LimelightWindow(QMainWindow):
     def __init__(self, package: LimelightPackage, manifest: dict[str, Any], *, debug_timing: bool = False) -> None:
         super().__init__()
@@ -2596,6 +2668,8 @@ class LimelightWindow(QMainWindow):
         self.figure_view_caption: QLabel | None = None
         self._cache_progress = CacheProgressIndicator()
         self.statusBar().addPermanentWidget(self._cache_progress)
+        self._render_progress = RenderProgressIndicator()
+        self.statusBar().addPermanentWidget(self._render_progress)
         self._cache_progress_signals = CacheProgressSignals()
         self._cache_progress_signals.progress.connect(self._on_cache_progress)
         self._update_window_title()
@@ -2875,7 +2949,29 @@ class LimelightWindow(QMainWindow):
         restore_action.triggered.connect(self._restore_declared_page)
         view_menu.addAction(restore_action)
 
+        view_menu.addSeparator()
+
+        self.debug_ui_action = QAction("&Debug Mode", self)
+        self.debug_ui_action.setCheckable(True)
+        self.debug_ui_action.setShortcut(QKeySequence("Ctrl+Shift+D"))
+        self.debug_ui_action.setStatusTip(
+            "Show what the app is doing: samples per bucket on each plot, render times under each figure"
+        )
+        self.debug_ui_action.toggled.connect(self.set_debug_ui)
+        view_menu.addAction(self.debug_ui_action)
+
         self._sync_view_menu()
+
+    def set_debug_ui(self, enabled: bool) -> None:
+        """Turn debug mode on or off everywhere: the story's figures, the
+        Figures tab and every open figure window draw from the one flag."""
+
+        if self.runtime.debug_ui == bool(enabled):
+            self._sync_view_menu()
+            return
+        self.runtime.debug_ui = bool(enabled)
+        self._sync_view_menu()
+        self._on_parameter_changed()
 
     def _zoom_story(self, direction: int) -> None:
         if self.story_blocks is None:
@@ -2900,6 +2996,8 @@ class LimelightWindow(QMainWindow):
         else:
             self.page_width_custom_action.setText("&Custom Width...")
         self.continuous_page_action.setChecked(geometry.height_mm is None)
+        if self.debug_ui_action.isChecked() != self.runtime.debug_ui:
+            self.debug_ui_action.setChecked(self.runtime.debug_ui)
 
     def _show_page_geometry(self, geometry: PageGeometry) -> None:
         self.runtime.page_geometry = geometry
@@ -3230,6 +3328,7 @@ class LimelightWindow(QMainWindow):
         # The wheel and the keyboard zoom the story directly, so the menu hears
         # about it from the story rather than from whatever asked for it.
         self.story_blocks.zoomChanged.connect(lambda _: self._sync_view_menu())
+        self.story_blocks.renderProgress.connect(self._render_progress.report)
         layout.addWidget(self.story_blocks, stretch=1)
         splitter.addWidget(content)
         splitter.setStretchFactor(1, 1)
@@ -3688,6 +3787,8 @@ class LimelightWindow(QMainWindow):
         if self.figure_view_panel is not None:
             self.figure_view_panel.redraw()
         self._redraw_open_figure_view_windows()
+        # A figure toolbar may have toggled debug mode; the menu follows the flag.
+        self._sync_view_menu()
 
     def _apply_story_state_to_figures_tab(self) -> None:
         if self.figure_view_tree is None or self.figure_view_panel is None:
@@ -3912,6 +4013,11 @@ class FigureViewWindow(QMainWindow):
         self.figure_view_panel.redraw()
 
 
+# A width change smaller than this, since the last render, keeps that render
+# scaled rather than starting another (see StoryFigureViewPanel.resizeEvent).
+_RERENDER_WIDTH_THRESHOLD_PX = 8
+
+
 class StoryFigureViewPanel(QWidget):
     def __init__(
         self,
@@ -3925,6 +4031,7 @@ class StoryFigureViewPanel(QWidget):
             None,
         ]
         | None = None,
+        on_render_state: "Callable[[StoryFigureViewPanel, bool], None] | None" = None,
     ) -> None:
         super().__init__()
         self.runtime = runtime
@@ -3932,6 +4039,7 @@ class StoryFigureViewPanel(QWidget):
         self.worker_pool = worker_pool
         self.on_parameter_changed = on_parameter_changed
         self.on_popout_requested = on_popout_requested
+        self.on_render_state = on_render_state
         self.figure_id: str | None = None
         self.figure_view_index: int | None = None
         self.figure_view_actions: tuple[dict[str, Any], ...] = ()
@@ -3975,6 +4083,16 @@ class StoryFigureViewPanel(QWidget):
         self.caption.setStyleSheet("color: #3c4043; background: #ffffff;")
         self.caption.hide()
         layout.addWidget(self.caption)
+        # Render status, under the figure: "Rendering…" while a render is
+        # out, and in debug mode what the last one cost and where it came
+        # from. Hidden otherwise, so the story reads as a document.
+        self.render_status = QLabel()
+        self.render_status.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.render_status.setStyleSheet("color: #9aa0a6; background: #ffffff;")
+        self.render_status.hide()
+        layout.addWidget(self.render_status)
+        self._render_started_at: float | None = None
+        self._rendered_width: int | None = None
         self._apply_caption_zoom()
         self.plot_panel: InteractiveFigureViewPanel | None = None
 
@@ -4036,6 +4154,9 @@ class StoryFigureViewPanel(QWidget):
         caption_font.setPixelSize(max(1, round(12 * self._zoom)))
         self.caption.setFont(caption_font)
         self.caption.setContentsMargins(0, round(5 * self._zoom), 0, 0)
+        status_font = self.render_status.font()
+        status_font.setPixelSize(max(1, round(10 * self._zoom)))
+        self.render_status.setFont(status_font)
         heading_font = self.heading.font()
         heading_font.setPixelSize(max(1, round(13 * self._zoom)))
         heading_font.setBold(True)
@@ -4066,6 +4187,7 @@ class StoryFigureViewPanel(QWidget):
         self._active = False
         self._render_request_id += 1
         self.render_timer.stop()
+        self._report_render_state(False)
         if self.plot_panel is not None:
             self.plot_panel.dispose()
             self.plot_panel.deleteLater()
@@ -4076,9 +4198,23 @@ class StoryFigureViewPanel(QWidget):
 
     def resizeEvent(self, event: Any) -> None:
         super().resizeEvent(event)
-        if self.mode == "static" and self.figure_id is not None:
-            self._fit_placeholder()
-            self._schedule_static_render(200)
+        if self.mode != "static" or self.figure_id is None:
+            return
+        # Only a change of WIDTH calls for a new render: the figure's size
+        # follows the column's width alone. A height-only resize is what our
+        # own setFixedHeight after each render produces, and re-rendering on
+        # it made every render schedule the next. And a width that has moved
+        # by only a few pixels since the last render (the scrollbar settling,
+        # a rounding of the page's margins) keeps that render, scaled, rather
+        # than re-rendering at a size the layout may move away from again.
+        old_width = event.oldSize().width()
+        new_width = event.size().width()
+        if new_width == old_width and old_width >= 0:
+            return
+        self._fit_placeholder()
+        if self._rendered_width is not None and abs(self._static_size()[0] - self._rendered_width) < _RERENDER_WIDTH_THRESHOLD_PX:
+            return
+        self._schedule_static_render(200)
 
     def _static_size(self) -> tuple[int, int]:
         """The pixels a static render of this figure fills, at the current width."""
@@ -4243,14 +4379,18 @@ class StoryFigureViewPanel(QWidget):
                 [("figure", self.figure_id)],
             )
             self._apply_static_pixmap(pixmap)
+            self._show_render_status(f"Cached render {pixmap.width()}×{pixmap.height()}")
             return
 
         cache_start_time = self.runtime.timing.start()
         self._render_request_id += 1
         self._pending_key = key
+        self._render_started_at = cache_start_time
         current_pixmap = self.image_label.pixmap()
         if current_pixmap is None or current_pixmap.isNull():
             self.image_label.setText("Rendering figure...")
+        self._show_render_status("Rendering…")
+        self._report_render_state(True)
         task = StaticFigureViewRenderTask(
             request_id=self._render_request_id,
             key=key,
@@ -4271,18 +4411,25 @@ class StoryFigureViewPanel(QWidget):
             [("figure", self.figure_id)],
         )
 
+    def _report_render_state(self, rendering: bool) -> None:
+        if self.on_render_state is not None:
+            self.on_render_state(self, rendering)
+
     def _apply_static_render_result(self, result: object) -> None:
         if not isinstance(result, StaticFigureViewRenderResult):
             return
-        if not self._active or self.mode != "static":
-            return
         if result.request_id != self._render_request_id:
+            # Superseded by a later request, which reports for itself.
+            return
+        self._report_render_state(False)
+        if not self._active or self.mode != "static":
             return
         if result.key != self._pending_key:
             return
         if result.error is not None:
             self.image_label.setText(f"Could not render figure: {result.error}")
             self.image_label.setFixedHeight(280)
+            self._show_render_status(f"Render failed: {result.error}", force=True)
             return
 
         pixmap = QPixmap()
@@ -4290,15 +4437,43 @@ class StoryFigureViewPanel(QWidget):
         if pixmap.isNull():
             self.image_label.setText("Could not render figure image")
             self.image_label.setFixedHeight(280)
+            self._show_render_status("Render produced no image", force=True)
             return
 
         self.image_cache[result.key] = pixmap
         self._apply_static_pixmap(pixmap)
+        total_ms = (
+            (self.runtime.timing.start() - self._render_started_at) * 1000.0
+            if self._render_started_at is not None
+            else 0.0
+        )
+        self.runtime.timing.log(
+            "story.static_figure_view.rendered",
+            self._render_started_at if self._render_started_at is not None else self.runtime.timing.start(),
+            [("figure", self.figure_id), ("size", f"{result.width}x{result.height}"),
+             ("render_ms", f"{result.render_ms:.1f}")],
+        )
+        self._show_render_status(
+            f"Rendered {result.width}×{result.height} in {result.render_ms:.0f} ms "
+            f"({total_ms:.0f} ms with queueing)"
+        )
 
     def _apply_static_pixmap(self, pixmap: QPixmap) -> None:
         self.image_label.setPixmap(pixmap)
         self.image_label.setFixedHeight(pixmap.height())
+        self._rendered_width = pixmap.width()
         self.updateGeometry()
+
+    def _show_render_status(self, text: str, *, force: bool = False) -> None:
+        """The status line under the figure: while rendering always, and the
+        result only in debug mode (or when it is an error)."""
+
+        pending = text.startswith("Rendering")
+        if pending or force or self.runtime.debug_ui:
+            self.render_status.setText(text)
+            self.render_status.show()
+        else:
+            self.render_status.hide()
 
 
 class StoryPageCanvas(QWidget):
@@ -4332,6 +4507,9 @@ class StoryPageCanvas(QWidget):
 
 class StoryBlockPanel(QScrollArea):
     zoomChanged = Signal(float)
+    # (done, total) of the figures in the current render burst; total == done
+    # once the burst is over.
+    renderProgress = Signal(int, int)
 
     def __init__(
         self,
@@ -4354,6 +4532,8 @@ class StoryBlockPanel(QScrollArea):
         self.figure_pool = QThreadPool(self)
         self.figure_pool.setMaxThreadCount(1)
         self._disposed = False
+        self._rendering_panels: set[int] = set()
+        self._render_burst_total = 0
         self.setWidgetResizable(True)
         # The vertical scrollbar is always there. A figure's height follows
         # the column's width, so when the scrollbar came and went as needed,
@@ -4440,6 +4620,7 @@ class StoryBlockPanel(QScrollArea):
                         StoryFigureViewPanel(
                             self.runtime,
                             image_cache=self.image_cache,
+                            on_render_state=self._on_panel_render_state,
                             worker_pool=self.figure_pool,
                             on_parameter_changed=self.on_parameter_changed,
                             on_popout_requested=self.on_popout_requested,
@@ -4474,6 +4655,23 @@ class StoryBlockPanel(QScrollArea):
                     ("rendered", rendered_any),
                 ],
             )
+
+    def _on_panel_render_state(self, panel: "StoryFigureViewPanel", rendering: bool) -> None:
+        """A figure panel's render went out (True) or came back (False)."""
+
+        if self._disposed:
+            return
+        key = id(panel)
+        if rendering:
+            if not self._rendering_panels:
+                self._render_burst_total = 0
+            if key not in self._rendering_panels:
+                self._rendering_panels.add(key)
+                self._render_burst_total += 1
+        else:
+            self._rendering_panels.discard(key)
+        total = self._render_burst_total
+        self.renderProgress.emit(total - len(self._rendering_panels), total)
 
     def redraw_figures(self) -> None:
         if self._disposed:
@@ -4790,6 +4988,14 @@ class InteractiveFigureViewPanel(QWidget):
         self.canvas.mpl_connect("motion_notify_event", self._on_hover)
         self.canvas.mpl_connect("figure_leave_event", lambda _event: QToolTip.hideText())
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
+        # The same debug mode as View > Debug Mode, reachable from the plot.
+        self.toolbar.addSeparator()
+        self.debug_action = QAction("Debug", self)
+        self.debug_action.setCheckable(True)
+        self.debug_action.setToolTip("Debug mode: show samples per bucket and render times")
+        self.debug_action.setChecked(runtime.debug_ui)
+        self.debug_action.toggled.connect(self._toggle_debug_ui)
+        self.toolbar.addAction(self.debug_action)
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas, stretch=1)
         self.table = QTableWidget()
@@ -4817,9 +5023,22 @@ class InteractiveFigureViewPanel(QWidget):
         self.figure_view_actions = next_figure_view_actions
         self.redraw()
 
+    def _toggle_debug_ui(self, enabled: bool) -> None:
+        if self.runtime.debug_ui == bool(enabled):
+            return
+        self.runtime.debug_ui = bool(enabled)
+        # Every view redraws from the flag; the document window, if there is
+        # one, hears of it through on_parameter_changed like a control change.
+        if self.on_parameter_changed is not None:
+            self.on_parameter_changed()
+        else:
+            self.redraw()
+
     def redraw(self) -> None:
         start_time = self.runtime.timing.start()
         self.parameter_signature = self._parameter_signature()
+        if self.debug_action.isChecked() != self.runtime.debug_ui:
+            self.debug_action.setChecked(self.runtime.debug_ui)
         update_states = [
             (self, self.updatesEnabled()),
             (self.controls_container, self.controls_container.updatesEnabled()),
@@ -5180,6 +5399,7 @@ def _install_timeseries_artist(runtime: LimelightRuntime, axes: Any, artist: dic
         fill_color=artist.get("fillColor"),
         fill_alpha=artist.get("fillAlpha"),
         missing_marker=artist.get("missingMarker"),
+        indicator=runtime.debug_ui,
         timing=runtime.timing,
     )
 

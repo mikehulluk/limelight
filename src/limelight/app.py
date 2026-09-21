@@ -491,6 +491,12 @@ class LimelightRuntime:
         self.package = package
         self.manifest = manifest
         self.timing = TimingProbe(debug_timing)
+        # Debug mode: the app shows what it is doing on top of the document -
+        # the large-series badge (raw samples or ~N samples/bucket) on each
+        # axes, and each static figure's render time under it. Toggled from
+        # View > Debug Mode and from a figure window's toolbar; one flag, so
+        # every window agrees.
+        self.debug_ui = False
         self.control_parameters = {item["id"]: item for item in manifest["controlParameters"]}
         self.control_parameter_values = {
             control_parameter_id: self._default_control_parameter_value(control_parameter)
