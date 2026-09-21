@@ -7,6 +7,8 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-09-21
+
 ### Added
 
 - **A document sets its own type.** The story's `typography` block says how
@@ -321,7 +323,10 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.11...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.14...HEAD
+[0.0.14]: https://github.com/mikehulluk/limelight/compare/v0.0.13...v0.0.14
+[0.0.13]: https://github.com/mikehulluk/limelight/compare/v0.0.12...v0.0.13
+[0.0.12]: https://github.com/mikehulluk/limelight/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/mikehulluk/limelight/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/mikehulluk/limelight/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/mikehulluk/limelight/compare/v0.0.8...v0.0.9
