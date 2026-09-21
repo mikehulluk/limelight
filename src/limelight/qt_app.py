@@ -2325,11 +2325,12 @@ def _format_month_ordinal_axis(axes: Any) -> None:
 def _format_matplotlib_date_axis(axes: Any) -> None:
     """A UTC axis: each tick labelled on two lines, the time above the date.
 
-    Every tick carries the full time (HH:MM:SS, with milliseconds once the
-    view is narrower than a few seconds) and its date, so a label reads on its
-    own wherever the view is scrolled to, rather than relying on the corner
-    offset text and a first tick that happens to say the day. When every tick
-    falls on midnight (a view of days or more) the time line is dropped.
+    Every tick carries its time and its date, so a label reads on its own
+    wherever the view is scrolled to, rather than relying on the corner
+    offset text and a first tick that happens to say the day. The time is as
+    long as the ticks need: HH:MM when every tick is on a whole minute,
+    HH:MM:SS when one is not, milliseconds when one is off a whole second;
+    and when every tick falls on midnight the time line is dropped.
     """
     locator = mdates.AutoDateLocator(minticks=5, maxticks=9)
     axes.xaxis.set_major_locator(locator)
@@ -2341,17 +2342,20 @@ def _utc_tick_label(value: float, axes: Any) -> str:
     when = mdates.num2date(value)
     lower, upper = axes.get_xlim()
     span_seconds = abs(upper - lower) * 86_400.0
-    ticks = axes.xaxis.get_majorticklocs()
-    all_midnight = len(ticks) > 0 and all(
-        _is_midnight(mdates.num2date(tick)) for tick in ticks
-    )
+    # The precision is the ticks', not this value's: every label on the axis
+    # is the same length, and none carries a ":00" no tick needs.
+    ticks = [mdates.num2date(tick) for tick in axes.xaxis.get_majorticklocs()]
+    if not ticks:
+        ticks = [when]
     date = when.strftime("%Y-%m-%d")
-    if all_midnight and span_seconds >= 86_400.0:
+    if all(_is_midnight(tick) for tick in ticks) and span_seconds >= 86_400.0:
         return date
-    if span_seconds < 5.0:
+    if any(tick.microsecond for tick in ticks):
         time = when.strftime("%H:%M:%S.%f")[:-3]
-    else:
+    elif any(tick.second for tick in ticks):
         time = when.strftime("%H:%M:%S")
+    else:
+        time = when.strftime("%H:%M")
     return f"{time}\n{date}"
 
 

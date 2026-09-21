@@ -47,6 +47,10 @@ versions may break things.
   story's own tables already were.
 - The caption's "Figure 3." is a `<span class="limelight-caption-label">`
   rather than `<b>`, set by `captionLabel`.
+- A UTC tick label's time is as long as the ticks need: `HH:MM` while every
+  tick is on a whole minute, seconds once one is not, milliseconds once one
+  is off a whole second. Ticks a few hours apart read `12:00` rather than
+  `12:00:00`.
 
 ## [0.0.13] - 2026-09-21
 

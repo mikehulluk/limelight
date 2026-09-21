@@ -1,6 +1,7 @@
 """A UTC axis labels every tick on two lines - the full time over the date -
-so a label reads on its own wherever the view is; a view of whole days keeps
-only the date, and a view of a few seconds shows milliseconds."""
+so a label reads on its own wherever the view is. The time is as long as the
+ticks need: no seconds while every tick is on a whole minute, milliseconds
+once one is off a whole second; a view of whole days keeps only the date."""
 
 from __future__ import annotations
 
@@ -33,6 +34,9 @@ def _axes_over(start: datetime, end: datetime):
         # Seconds: milliseconds shown.
         (datetime(2026, 9, 20, 16, 2, 30, tzinfo=timezone.utc), datetime(2026, 9, 20, 16, 2, 32, tzinfo=timezone.utc),
          datetime(2026, 9, 20, 16, 2, 30, 250000, tzinfo=timezone.utc), "16:02:30.250\n2026-09-20"),
+        # Hours: ticks on whole minutes, so no seconds.
+        (datetime(2026, 8, 1, tzinfo=timezone.utc), datetime(2026, 8, 4, tzinfo=timezone.utc),
+         datetime(2026, 8, 2, 12, tzinfo=timezone.utc), "12:00\n2026-08-02"),
         # Weeks: every tick is a midnight, so the date alone.
         (datetime(2026, 9, 1, tzinfo=timezone.utc), datetime(2026, 9, 30, tzinfo=timezone.utc),
          datetime(2026, 9, 14, tzinfo=timezone.utc), "2026-09-14"),
