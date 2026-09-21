@@ -7,6 +7,8 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-09-21
+
 ### Added
 
 - **Document Information** has a Typography tab - every declared font,
@@ -340,7 +342,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.14...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.15...HEAD
+[0.0.15]: https://github.com/mikehulluk/limelight/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/mikehulluk/limelight/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/mikehulluk/limelight/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/mikehulluk/limelight/compare/v0.0.11...v0.0.12
