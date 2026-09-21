@@ -7,6 +7,19 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-09-22
+
+### Fixed
+
+- The large-series cache is safe to share between processes. Two Limelights
+  on one machine - two windows on a package, or the app and `LL` at once -
+  used to write the cache's index over each other, losing entries, and both
+  build the same pyramid; on Windows the second could fail replacing a file
+  the first had open. A build now takes a lock named for its series (a file
+  under the cache's `locks/`), so the second process waits, showing the wait
+  in the status bar, and then finds the cache ready; index updates and font
+  instancing take a lock the same way. Adds a dependency on `filelock`.
+
 ## [0.0.16] - 2026-09-22
 
 ### Changed
@@ -349,7 +362,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.16...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.17...HEAD
+[0.0.17]: https://github.com/mikehulluk/limelight/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/mikehulluk/limelight/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/mikehulluk/limelight/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/mikehulluk/limelight/compare/v0.0.13...v0.0.14
