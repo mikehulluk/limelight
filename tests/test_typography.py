@@ -235,3 +235,23 @@ def test_the_runtime_reads_typography_and_resolves_fonts(tmp_path: Path) -> None
         assert runtime.typography == Typography()
         assert runtime.fonts["ubuntu"].faces[0].path.is_file()
         assert "Ubuntu" in runtime.figure_view_caption_markup(next(iter(runtime.figure_specs)), index=1) if runtime.figure_specs else True
+
+
+def test_the_face_in_use_is_the_first_of_the_stack_this_machine_has() -> None:
+    from limelight.typography import ResolvedFont, figure_face_in_use, figure_font_file
+
+    fonts = resolve_fonts({"story": {}}, None)
+    fonts["absent"] = ResolvedFont("absent", "No Such Family", "system", ())
+    register_fonts_with_matplotlib(fonts, Typography())
+
+    # The system font is not here, so the stack falls through to the builtin behind it.
+    face = figure_face_in_use(TextStyle(fonts=("absent", "ubuntu"), size_pt=10.5, weight=BOLD), fonts)
+    assert face.family == "Ubuntu" and face.path is not None and face.path.name == "Ubuntu-Bold.ttf"
+    assert not face.substitute
+    assert figure_font_file(fonts["absent"]) is None
+    assert figure_font_file(fonts["ubuntu"]).name == "Ubuntu-Regular.ttf"
+
+    # A stack with nothing on this machine is drawn in matplotlib's own default, and says so.
+    face = figure_face_in_use(TextStyle(fonts=("absent",), size_pt=10.5), fonts)
+    assert face.substitute and face.family not in ("No Such Family",)
+    assert face.describe().endswith("- substitute")

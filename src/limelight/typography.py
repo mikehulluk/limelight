@@ -609,3 +609,59 @@ class FigureText:
 
     def add_legend(self, axes: Any, *args: Any, **kwargs: Any) -> Any:
         return axes.legend(*args, prop=self.legend, title_fontproperties=self.legend, **kwargs)
+
+
+# --- What is really in use -----------------------------------------------
+
+
+@dataclass(frozen=True)
+class FaceInUse:
+    """The face a renderer really sets a style in, once its stack has been looked up on this machine.
+
+    ``family`` is the one the lookup landed on; ``substitute`` says it is
+    not one the style asked for, so the whole stack was missing and the
+    renderer fell back to its own default. ``path`` is the file, where the
+    renderer knows it.
+    """
+
+    family: str
+    substitute: bool = False
+    path: Path | None = None
+
+    def describe(self) -> str:
+        text = self.family
+        if self.path is not None:
+            text += f" ({self.path.name})"
+        if self.substitute:
+            text += " - substitute"
+        return text
+
+
+def figure_face_in_use(style: TextStyle, fonts: Mapping[str, ResolvedFont]) -> FaceInUse:
+    """The file matplotlib draws this style from, after `register_fonts_with_matplotlib`."""
+
+    from matplotlib import font_manager
+
+    properties = style.font_properties(fonts)
+    substitute = False
+    try:
+        path = Path(font_manager.findfont(properties, fallback_to_default=False))
+    except ValueError:
+        path = Path(font_manager.findfont(properties))
+        substitute = True
+    family = next(
+        (entry.name for entry in font_manager.fontManager.ttflist if Path(entry.fname) == path),
+        path.stem,
+    )
+    return FaceInUse(family=family, substitute=substitute, path=path)
+
+
+def figure_font_file(font: ResolvedFont) -> Path | None:
+    """The file matplotlib has for a font's regular face, or None when it has no such family."""
+
+    from matplotlib import font_manager
+
+    try:
+        return Path(font_manager.findfont(font_manager.FontProperties(family=font.family), fallback_to_default=False))
+    except ValueError:
+        return None

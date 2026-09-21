@@ -56,6 +56,8 @@ from PySide6.QtGui import (
     QCursor,
     QDesktopServices,
     QFont,
+    QFontDatabase,
+    QFontInfo,
     QGuiApplication,
     QColor,
     QIcon,
@@ -133,6 +135,8 @@ from .typography import (
     ResolvedFont,
     TextStyle,
     Typography,
+    figure_face_in_use,
+    figure_font_file,
     register_fonts_with_matplotlib,
     register_fonts_with_qt,
     resolve_fonts,
@@ -3144,6 +3148,24 @@ class LimelightWindow(QMainWindow):
         UpdateDialog(self, release=release, current=current, kind=updates.install_kind()).exec()
 
     def _show_document_information(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Document Information")
+        layout = QVBoxLayout(dialog)
+
+        tabs = QTabWidget()
+        tabs.addTab(self._document_information_page(), "Document")
+        tabs.addTab(_typography_page(self.runtime), "Typography")
+        tabs.addTab(_spacing_page(self.runtime), "Spacing")
+        layout.addWidget(tabs, stretch=1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+
+        dialog.resize(780, 640)
+        dialog.exec()
+
+    def _document_information_page(self) -> QWidget:
         project = self.runtime.manifest["project"]
         authors = project.get("authors") or []
         lines = [
@@ -3168,11 +3190,11 @@ class LimelightWindow(QMainWindow):
             lines.append("Metadata:")
             lines.extend(f"  {entry['name']} ({entry['type']}): {entry['value']}" for entry in metadata)
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Document Information")
-        layout = QVBoxLayout(dialog)
+        page = QWidget()
+        layout = QVBoxLayout(page)
 
         info_label = QLabel("\n".join(lines))
+        info_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(info_label)
 
         sources = self.runtime.manifest.get("sources") or []
@@ -3191,9 +3213,7 @@ class LimelightWindow(QMainWindow):
             )
 
         if provenance_rows:
-            sources_label = QLabel("Data sources")
-            sources_label.setStyleSheet("font-weight: 600;")
-            layout.addWidget(sources_label)
+            layout.addWidget(_section_label("Data sources"))
 
             table = QTableWidget(len(provenance_rows), 4)
             table.setHorizontalHeaderLabels(["Source", "Origin", "Release date", "URL"])
@@ -3210,13 +3230,9 @@ class LimelightWindow(QMainWindow):
                     table.setItem(row_index, 3, QTableWidgetItem(""))
             table.resizeColumnsToContents()
             layout.addWidget(table, stretch=1)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
-        buttons.accepted.connect(dialog.accept)
-        layout.addWidget(buttons)
-
-        dialog.resize(560, 360 if provenance_rows else 200)
-        dialog.exec()
+        else:
+            layout.addStretch(1)
+        return page
 
     def _export_story_to_pdf(self) -> None:
         selected, _ = QFileDialog.getSaveFileName(
@@ -3871,6 +3887,127 @@ def _qfont_for(style: TextStyle, fonts: Mapping[str, ResolvedFont], zoom: float 
     font.setWeight(QFont.Weight(style.weight))
     font.setItalic(style.italic)
     return font
+
+
+def _section_label(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setStyleSheet("font-weight: 600;")
+    return label
+
+
+def _read_only_table(headers: list[str], rows: list[list[str]], *, fit_rows: bool = False) -> QTableWidget:
+    """A table of text; ``fit_rows`` makes it exactly as tall as its rows, for one that should not scroll."""
+
+    table = QTableWidget(len(rows), len(headers))
+    table.setHorizontalHeaderLabels(headers)
+    table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().setStretchLastSection(True)
+    for row_index, row in enumerate(rows):
+        for column_index, text in enumerate(row):
+            table.setItem(row_index, column_index, QTableWidgetItem(text))
+    table.resizeColumnsToContents()
+    if fit_rows:
+        height = table.horizontalHeader().height() + 2 * table.frameWidth()
+        height += sum(table.rowHeight(row_index) for row_index in range(len(rows)))
+        table.setFixedHeight(height)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    return table
+
+
+def _screen_face_in_use(style: TextStyle, fonts: Mapping[str, ResolvedFont]) -> str:
+    """The family Qt sets a style in on this machine, marked when it is none the style asked for."""
+
+    info = QFontInfo(_qfont_for(style, fonts))
+    family = info.family()
+    if family in style.families(fonts):
+        return family
+    return f"{family} - substitute"
+
+
+def _typography_page(runtime: LimelightRuntime) -> QWidget:
+    """The document's fonts and text styles, with the face each really gets here.
+
+    A stack names fonts in order of preference; which one a reader sees
+    depends on their machine. "On screen" is the family Qt lands on, which
+    the widgets use and the story's web view matches from the same files;
+    "In figures" is the file matplotlib draws from.
+    """
+
+    typography = runtime.typography
+    fonts = runtime.fonts
+    page = QWidget()
+    layout = QVBoxLayout(page)
+
+    style_rows: list[list[str]] = []
+    screen_families: dict[str, None] = {}
+    figure_families: dict[str, None] = {}
+    for name, style in typography.styles().items():
+        screen = _screen_face_in_use(style, fonts)
+        figure = figure_face_in_use(style, fonts)
+        screen_families.setdefault(screen, None)
+        figure_families.setdefault(figure.family, None)
+        weight = str(style.weight) + (" italic" if style.italic else "")
+        style_rows.append([
+            name,
+            ", ".join(style.fonts),
+            f"{style.size_pt:g}pt ({round(style.size_px, 2):g}px)",
+            weight,
+            screen,
+            figure.describe(),
+        ])
+
+    summary = QLabel(
+        f"Line height: {typography.line_height:g} × the body size.\n"
+        f"In use on screen: {', '.join(screen_families)}.\n"
+        f"In use in figures: {', '.join(figure_families)}."
+    )
+    summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    layout.addWidget(summary)
+
+    layout.addWidget(_section_label("Fonts"))
+    font_rows: list[list[str]] = []
+    for font in fonts.values():
+        on_screen = "Available" if QFontDatabase.hasFamily(font.family) else "Not installed"
+        figure_file = figure_font_file(font)
+        in_figures = figure_file.name if figure_file is not None else "Not found"
+        font_rows.append([font.id, font.family, font.source, on_screen, in_figures])
+    layout.addWidget(_read_only_table(["Id", "Family", "Source", "On screen", "In figures"], font_rows, fit_rows=True))
+
+    layout.addWidget(_section_label("Text styles"))
+    layout.addWidget(
+        _read_only_table(["Style", "Fonts", "Size", "Weight", "On screen", "In figures"], style_rows),
+        stretch=1,
+    )
+    return page
+
+
+def _spacing_page(runtime: LimelightRuntime) -> QWidget:
+    """The page the story is laid out on and the vertical rhythm of its column, as declared."""
+
+    page_geometry = runtime.declared_page_geometry
+    spacing = runtime.story_spacing
+    page = QWidget()
+    layout = QVBoxLayout(page)
+
+    def millimetres(value: float | None, absent: str) -> str:
+        return absent if value is None else f"{value:g} mm"
+
+    form = QFormLayout()
+    form.addRow(_section_label("Page"))
+    form.addRow("Width:", QLabel(millimetres(page_geometry.width_mm, "Fills the window")))
+    form.addRow("Height:", QLabel(millimetres(page_geometry.height_mm, "Continuous")))
+    form.addRow("Side margins:", QLabel(millimetres(page_geometry.margin_lr_mm, "")))
+    form.addRow("Top and bottom margins:", QLabel(millimetres(page_geometry.margin_tb_mm, "")))
+    form.addRow("Text column:", QLabel(millimetres(page_geometry.content_width_mm, "Fills the window")))
+    form.addRow(_section_label("Spacing"))
+    form.addRow("Between blocks:", QLabel(millimetres(spacing.block_gap_mm, "")))
+    form.addRow("Around figures:", QLabel(millimetres(spacing.figure_gap_mm, "")))
+    form.addRow("Before a heading:", QLabel(millimetres(spacing.heading_gap_before_mm, "")))
+    form.addRow("After a heading:", QLabel(millimetres(spacing.heading_gap_after_mm, "")))
+    layout.addLayout(form)
+    layout.addStretch(1)
+    return page
 
 
 def _qt_font(styles: set[str], base: QFont | None = None) -> QFont:
