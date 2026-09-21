@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 from matplotlib.axes import Axes
@@ -157,9 +157,14 @@ def indicator_label(result: QueryResult) -> str:
     return f"min/max · ~{per_bucket:,.0f} samples/bucket"
 
 
-def add_indicator(ax: Axes, color: str) -> Text:
-    """Adds a small corner badge to the axes, stacked below any earlier badges."""
+def add_indicator(ax: Axes, color: str, font: Any | None = None) -> Text:
+    """Adds a small corner badge to the axes, stacked below any earlier badges.
+
+    ``font`` is a matplotlib FontProperties; without one the badge is drawn
+    at rcParams' "x-small".
+    """
     existing = sum(1 for text in ax.texts if text.get_gid() == INDICATOR_GID)
+    font_kwargs: dict[str, Any] = {"fontproperties": font} if font is not None else {"fontsize": "x-small"}
     return ax.text(
         0.99,
         0.98 - 0.08 * existing,
@@ -167,8 +172,8 @@ def add_indicator(ax: Axes, color: str) -> Text:
         transform=ax.transAxes,
         ha="right",
         va="top",
-        fontsize="x-small",
         color=color,
+        **font_kwargs,
         gid=INDICATOR_GID,
         bbox={"boxstyle": "round,pad=0.3", "facecolor": "white", "edgecolor": color, "alpha": 0.8},
         zorder=10,
@@ -195,6 +200,8 @@ class ZoomSync:
     # Show a corner badge saying whether the axes currently shows raw samples
     # or a min/max envelope, so a viewer can tell how far they have zoomed in.
     indicator: bool = True
+    # The badge's type, a matplotlib FontProperties; None is rcParams' "x-small".
+    indicator_font: Any | None = None
     # "cross" marks each missing sample in the raw view; "none" leaves the gap.
     missing_marker: str = DEFAULT_MISSING_MARKER
 
@@ -220,7 +227,7 @@ class ZoomSync:
             missing_marker=self.missing_marker,
         )
         if self.indicator:
-            self._indicator = add_indicator(self.ax, self._line_min.get_color())
+            self._indicator = add_indicator(self.ax, self._line_min.get_color(), self.indicator_font)
             self._indicator.set_text(indicator_label(result))
         self.ax.relim()
         self.ax.autoscale_view(scalex=False, scaley=True)

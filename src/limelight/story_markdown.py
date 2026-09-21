@@ -476,16 +476,26 @@ class StoryMarkdownRenderer:
         return figcaption_html(number, caption) + "</figure>"
 
 
-def figure_caption_markup(number: int | None, text: str) -> str:
-    """What is written under a figure: ``<b>Figure 3.</b> text``.
+CAPTION_LABEL_CLASS = "limelight-caption-label"
 
-    The number is bold and the text plain, whichever kind of figure it is -
-    a plot, a table, or an image in the story - so a reader can find "Figure
-    3" by eye and read on. Either part can be missing; the result is empty
-    when both are.
+
+def figure_caption_markup(number: int | None, text: str, *, label_style: str = "") -> str:
+    """What is written under a figure: ``<span class="limelight-caption-label">Figure 3.</span> text``.
+
+    The number is set in the typography's `captionLabel` style - bold by
+    default - and the text in `caption`, whichever kind of figure it is: a
+    plot, a table, or an image in the story, so a reader can find "Figure
+    3" by eye and read on. The stylesheet reaches the label by its class;
+    a widget that has no stylesheet passes the style inline as
+    ``label_style``. Either part can be missing; the result is empty when
+    both are.
     """
 
-    label = f"<b>Figure {number}.</b>" if number is not None else ""
+    if number is None:
+        label = ""
+    else:
+        style = f' style="{html.escape(label_style, quote=True)}"' if label_style else ""
+        label = f'<span class="{CAPTION_LABEL_CLASS}"{style}>Figure {number}.</span>'
     return " ".join(part for part in (label, html.escape(text)) if part)
 
 

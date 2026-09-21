@@ -9,6 +9,7 @@ from matplotlib.colors import is_color_like
 from . import refs
 from .metadata import METADATA_TYPES, MetadataError, parse_metadata_value
 from .reader import LimelightError
+from .typography import validate_fonts_and_typography
 
 _VALID_MARKERS = ("o", "s", "^", "v", "D", "x", "+", "*", "p", "h", "<", ">")
 _VALID_LINESTYLES = ("-", "--", "-.", ":")
@@ -140,6 +141,7 @@ class _SemanticValidator:
         self._validate_figure_views()
         self._validate_assets()
         self._validate_story()
+        validate_fonts_and_typography(self.manifest)
 
     def _validate_metadata(self) -> None:
         seen: set[str] = set()

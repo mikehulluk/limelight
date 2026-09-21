@@ -13,6 +13,7 @@ from .signing import (
     verify_manifest_signatures,
 )
 
+from .typography import TextStyle, Typography
 from .writer import (
     ArraySpec,
     AxisDataType,
@@ -43,6 +44,8 @@ from .writer import (
     SourceProvenance,
     StemArtist,
     StorySpacing,
+    BundledFontFace,
+    Font,
     TableViewSpec,
     TextOption,
     TextControlParameterMatch,
@@ -98,6 +101,10 @@ __all__ = [
     "SourceProvenance",
     "StemArtist",
     "StorySpacing",
+    "BundledFontFace",
+    "Font",
+    "TextStyle",
+    "Typography",
     "TableViewSpec",
     "TextOption",
     "TextControlParameterMatch",

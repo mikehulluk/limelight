@@ -26,6 +26,7 @@ from PyInstaller.utils.hooks import copy_metadata
 datas = [
     (str(SOURCE_ROOT / "limelight" / "assets"), "limelight/assets"),
     (str(SOURCE_ROOT / "limelight" / "language-reference"), "limelight/language-reference"),
+    (str(SOURCE_ROOT / "limelight" / "fonts"), "limelight/fonts"),
     # The app reads its own version from the distribution's metadata, for
     # the About box and to know whether a release is newer than itself.
     *copy_metadata("limelight-app"),

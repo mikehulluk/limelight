@@ -57,6 +57,27 @@ The scripts in `examples/` build sample packages into `_build/examples/`, and
 `src/limelight/language-reference/` holds the Dhall types a manifest is
 written against; the writer copies them into every package it builds.
 
+## Type
+
+A document says how every kind of its text is set - body, headings, code,
+captions, figure titles, axis and tick labels, legends, annotations, table
+text - in the `typography` block of its story: a stack of fonts, a size in
+points, a weight and a slant for each, so the document reads the same on
+every machine, on screen and in its PDF. The writer fills the block in;
+`Typography` and `TextStyle` change it.
+
+Fonts are declared in the manifest's `fonts` list. Limelight ships Ubuntu,
+Ubuntu Mono, Noto Sans, and matplotlib's DejaVu Sans and DejaVu Sans Mono,
+so a document that names only those (the default: Ubuntu, falling back to
+Noto Sans) needs nothing installed. A `system` font is used where the
+reader's machine has it and skipped where it does not, so it goes first in a
+stack, never last. A `bundled` font travels in the package, one static file
+per weight with its licence beside it (`Project.add_bundled_font`); most
+open licences allow this and ask for exactly that, while a font that came
+with an operating system usually may not be redistributed. The fonts
+Limelight ships are under the Ubuntu Font Licence and the SIL Open Font
+Licence, in `src/limelight/fonts/` with their licence texts.
+
 ## Developing
 
 ```bash

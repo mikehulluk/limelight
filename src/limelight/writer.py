@@ -34,6 +34,14 @@ from .largeseries import DEFAULT_CHUNK_SIZE
 from .metadata import METADATA_TYPES, MetadataError, parse_metadata_value
 from .reader import PACKAGE_SUFFIXES
 from .signing import DocumentSignature, sign_document
+from .typography import (
+    BOLD,
+    REGULAR,
+    TextStyle,
+    Typography,
+    builtin_fonts,
+    is_variable_font,
+)
 from .story_markdown import (
     ImageWidthError,
     numbered_story_items,
@@ -328,6 +336,101 @@ class StorySpacing:
                 ("headingGapAfter", _dhall_float(self.heading_gap_after_mm)),
             ]
         )
+
+
+@dataclass(frozen=True)
+class BundledFontFace:
+    """One static file of a font the package carries: one weight, upright or italic."""
+
+    source_path: Path
+    weight: int = REGULAR
+    italic: bool = False
+
+
+@dataclass
+class Font:
+    """A font the document's text can be set in, referenced by ``id`` from a TextStyle.
+
+    Made through ``Project.add_builtin_font``, ``add_system_font`` or
+    ``add_bundled_font`` rather than directly; the defaults a project starts
+    with are the builtin faces the default typography names.
+    """
+
+    id: str
+    family: str
+    source: str
+    faces: list[BundledFontFace] = field(default_factory=list)
+    licence_path: Path | None = None
+    package_prefix: str = "assets/fonts"
+
+    def _face_package_path(self, face: BundledFontFace) -> str:
+        return f"{self.package_prefix}/{self.id}/{face.source_path.name}"
+
+    def _licence_package_path(self) -> str:
+        assert self.licence_path is not None
+        return f"{self.package_prefix}/{self.id}/{self.licence_path.name}"
+
+    def write_files(self, package_root: Path) -> None:
+        if self.source != "bundled":
+            return
+        for face in self.faces:
+            target = package_root / self._face_package_path(face)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(face.source_path, target)
+        assert self.licence_path is not None
+        target = package_root / self._licence_package_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self.licence_path, target)
+
+    def render(self) -> str:
+        if self.source == "bundled":
+            faces = [
+                _record(
+                    [
+                        ("path", _quote(self._face_package_path(face))),
+                        ("sha256Prefix8", _quote(hashlib.sha256(face.source_path.read_bytes()).hexdigest()[:8])),
+                        ("weight", str(face.weight)),
+                        ("italic", _dhall_bool(face.italic)),
+                    ]
+                )
+                for face in self.faces
+            ]
+            payload = _record(
+                [
+                    ("faces", _list(faces, "Limelight.FontFace")),
+                    ("licence", _quote(self._licence_package_path())),
+                ]
+            )
+            source = _constructor("Limelight.FontSource.bundled", payload)
+        else:
+            source = f"Limelight.FontSource.{self.source}"
+        return _record(
+            [
+                ("id", _quote(self.id)),
+                ("family", _quote(self.family)),
+                ("source", source),
+            ]
+        )
+
+
+def _render_text_style(style: TextStyle) -> str:
+    return _record(
+        [
+            ("fonts", _list([_quote(font_id) for font_id in style.fonts], "Text")),
+            ("sizePt", _dhall_float(style.size_pt)),
+            ("weight", str(style.weight)),
+            ("italic", _dhall_bool(style.italic)),
+        ]
+    )
+
+
+def _render_typography(typography: Typography) -> str:
+    return _record(
+        [
+            ("lineHeight", _dhall_float(typography.line_height)),
+            *[(name, _render_text_style(style)) for name, style in typography.styles().items()],
+        ]
+    )
 
 
 @dataclass(frozen=True)
@@ -2102,9 +2205,18 @@ class LimelightProject:
         document_version: str | None = None,
         page: PageGeometry | None = None,
         spacing: StorySpacing | None = None,
+        typography: Typography | None = None,
     ) -> None:
         self.page = page if page is not None else PageGeometry()
         self.spacing = spacing if spacing is not None else StorySpacing()
+        # The typography names fonts by id; the builtin ones it names are
+        # declared for it, so a project that says nothing gets a complete
+        # `fonts` list, and one that adds its own extends it.
+        self.typography = typography if typography is not None else Typography()
+        self.fonts: list[Font] = []
+        for font_id in self.typography.font_ids():
+            if font_id in builtin_fonts():
+                self.add_builtin_font(font_id)
         self.title = title
         self.authors = list(authors)
         self.subtitle = subtitle
@@ -2313,6 +2425,76 @@ class LimelightProject:
         self._declared_images.append(declared)
         self._resolved_story = None
         return str(source_path)
+
+    def add_builtin_font(self, font_id: str) -> Font:
+        """Declare one of the faces Limelight ships: `ubuntu`, `ubuntu-mono`, `noto-sans`, `dejavu-sans`, `dejavu-sans-mono`."""
+
+        builtin = builtin_fonts().get(font_id)
+        if builtin is None:
+            raise ValueError(f"no builtin font {font_id!r}; there are {', '.join(sorted(builtin_fonts()))}")
+        self._require_new_font_id(font_id)
+        font = Font(id=font_id, family=builtin.family, source="builtin")
+        self.fonts.append(font)
+        return font
+
+    def add_system_font(self, font_id: str, family: str) -> Font:
+        """Name a font by the family the reader's operating system may have it under.
+
+        It is used where it is installed and skipped where it is not, so it
+        goes first in a stack, never last: the last font must be builtin or
+        bundled.
+        """
+
+        self._require_new_font_id(font_id)
+        font = Font(id=font_id, family=family, source="system")
+        self.fonts.append(font)
+        return font
+
+    def add_bundled_font(
+        self,
+        font_id: str,
+        family: str,
+        faces: Sequence[BundledFontFace | tuple[str | Path, int, bool]],
+        *,
+        licence: str | Path,
+    ) -> Font:
+        """Carry a font's files in the package, with the licence they are distributed under.
+
+        Each face is a static file at one weight, upright or italic, given as
+        a ``BundledFontFace`` or a ``(path, weight, italic)`` tuple; a
+        variable font is refused, since the figure renderer cannot select a
+        weight from one. ``family`` is the name the files declare, which is
+        what the stylesheets look the font up by. Most open licences allow
+        bundling and ask for the licence text to travel with the files; a
+        font that came with an operating system usually does not, and is
+        named with ``add_system_font`` instead.
+        """
+
+        self._require_new_font_id(font_id)
+        resolved_faces: list[BundledFontFace] = []
+        for face in faces:
+            if not isinstance(face, BundledFontFace):
+                path, weight, italic = face
+                face = BundledFontFace(Path(path), int(weight), bool(italic))
+            if not face.source_path.is_file():
+                raise FileNotFoundError(face.source_path)
+            if is_variable_font(face.source_path):
+                raise ValueError(
+                    f"{face.source_path} is a variable font; bundle static instances, one file per weight"
+                )
+            resolved_faces.append(face)
+        if not resolved_faces:
+            raise ValueError(f"font {font_id!r} bundles no faces")
+        licence_path = Path(licence)
+        if not licence_path.is_file():
+            raise FileNotFoundError(licence_path)
+        font = Font(id=font_id, family=family, source="bundled", faces=resolved_faces, licence_path=licence_path)
+        self.fonts.append(font)
+        return font
+
+    def _require_new_font_id(self, font_id: str) -> None:
+        if any(font.id == font_id for font in self.fonts):
+            raise ValueError(f"font {font_id!r} is already declared")
 
     def add_metadata(
         self,
@@ -2534,6 +2716,7 @@ class LimelightProject:
                 ("format", "Limelight.StoryFormat.markdown"),
                 ("page", self.page.render()),
                 ("spacing", self.spacing.render()),
+                ("typography", _render_typography(self.typography)),
                 ("signatures", _render_signatures(resolved.signatures)),
             ]
         )
@@ -2557,6 +2740,7 @@ class LimelightProject:
                 ("figures", _list([figure.render() for figure in self.figure_specs], "Limelight.FigureSpec")),
                 ("figureViews", _list([figure_view.render() for figure_view in figure_views], "Limelight.FigureView")),
                 ("assets", _list([asset.render() for asset in resolved.assets], "Limelight.ImageAsset")),
+                ("fonts", _list([font.render() for font in self.fonts], "Limelight.Font")),
                 ("story", story),
             ]
         )
@@ -2758,6 +2942,8 @@ class LimelightProject:
         resolved = self.resolve_story()
         for asset in resolved.assets:
             asset.write_asset_file(package_root)
+        for font in self.fonts:
+            font.write_files(package_root)
         story_path = package_root / "story" / "index.md"
         story_path.parent.mkdir(parents=True, exist_ok=True)
         story_path.write_text(resolved.markdown, encoding="utf-8", newline="\n")

@@ -75,11 +75,108 @@ let StorySpacing =
       , headingGapAfter : Double
       }
 
+-- One face of a bundled font: a static file, at one weight, upright or italic.
+--
+-- `path` is where the file sits in the package and `sha256Prefix8` the first
+-- eight hex digits of its SHA-256, the same fingerprint a Source carries, so
+-- `verify` can tell a swapped file from the one the manifest was written
+-- against. `weight` is the CSS weight the file is (400 regular, 700 bold);
+-- a document asking for a weight the font has no face for gets the nearest.
+-- Variable fonts are refused: the figure renderer cannot select a weight
+-- from one, so a bundled font is static instances, one file per face.
+let FontFace =
+      { path : Text
+      , sha256Prefix8 : Text
+      , weight : Natural
+      , italic : Bool
+      }
+
+-- Where a font's files come from.
+--
+-- `builtin` is a face Limelight ships and can therefore promise on every
+-- machine: `ubuntu`, `ubuntu-mono`, `noto-sans` and `dejavu-sans`,
+-- `dejavu-sans-mono`, named by the Font's `family` in its display form
+-- ("Ubuntu", "Noto Sans"). `system` is whatever the reader's operating
+-- system has under that family name, and nothing if it has none, so it
+-- belongs first in a stack rather than last. `bundled` carries the files in
+-- the package, with the licence they were distributed under beside them;
+-- most open licences (OFL, UFL, Apache) allow this and ask for exactly that,
+-- while a font that came with an operating system usually may not be
+-- redistributed and should be named as `system` instead.
+let FontSource =
+      < builtin
+      | system
+      | bundled : { faces : List FontFace, licence : Text }
+      >
+
+-- A font the document's text can be set in, referenced by `id` from a
+-- TextStyle. `family` is the face's name as its files declare it, which is
+-- what the stylesheets and the figure renderer look it up by.
+let Font =
+      { id : Text
+      , family : Text
+      , source : FontSource
+      }
+
+-- How one kind of text is set.
+--
+-- `fonts` is a stack of Font ids tried in order: the first is used where it
+-- can be, and the rest fill in - for a whole face the reader's machine lacks
+-- (a `system` font not installed there) and for single characters the face
+-- has no glyph for. The last entry must be a `builtin` or `bundled` font, so
+-- the stack always bottoms out in a face that is known to be there and a
+-- document never depends on what the reader happens to have installed.
+-- `sizePt` is in points: the page is physical, and 10.5pt is 14 CSS pixels
+-- on screen. `weight` is a CSS weight, 100 to 900.
+let TextStyle =
+      { fonts : List Text
+      , sizePt : Double
+      , weight : Natural
+      , italic : Bool
+      }
+
+-- Every kind of text in the document, each set in full.
+--
+-- The prose: `body` (paragraphs, lists, block quotes; `lineHeight` is its
+-- line spacing as a multiple of the size), `heading1` to `heading3` (deeper
+-- headings use `heading3`), `code` (inline code and code blocks, a monospace
+-- face), `caption` (under figure views and story images) and `captionLabel`
+-- (the "Figure 3." that opens a caption). The figures: `figureTitle`,
+-- `axisLabel`, `tickLabel`, `legend` (entries and title), `annotation`
+-- (decorator labels, point and arrow annotations) and `badge` (the
+-- large-series corner mark). Tables: `tableHeading` (a table figure's
+-- title above it), `tableHeader` (column headers), `tableCell`, `tableNote`
+-- (notes and notices under a table). Mathematics is set by MathJax in its
+-- own face, at the size of the text around it. The application's own
+-- controls - toolbars, the sidebar, dialogs - are not the document's and
+-- keep the platform's font.
+let Typography =
+      { lineHeight : Double
+      , body : TextStyle
+      , heading1 : TextStyle
+      , heading2 : TextStyle
+      , heading3 : TextStyle
+      , code : TextStyle
+      , caption : TextStyle
+      , captionLabel : TextStyle
+      , figureTitle : TextStyle
+      , axisLabel : TextStyle
+      , tickLabel : TextStyle
+      , legend : TextStyle
+      , annotation : TextStyle
+      , badge : TextStyle
+      , tableHeading : TextStyle
+      , tableHeader : TextStyle
+      , tableCell : TextStyle
+      , tableNote : TextStyle
+      }
+
 let Story =
       { documentPath : Text
       , format : StoryFormat
       , page : PageGeometry
       , spacing : StorySpacing
+      , typography : Typography
       , signatures : List Core.DocumentSignature
       }
 
@@ -91,5 +188,10 @@ in  { Project = Project
     , PageHeight = PageHeight
     , PageGeometry = PageGeometry
     , StorySpacing = StorySpacing
+    , FontFace = FontFace
+    , FontSource = FontSource
+    , Font = Font
+    , TextStyle = TextStyle
+    , Typography = Typography
     , Story = Story
     }

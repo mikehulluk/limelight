@@ -6,6 +6,7 @@ from typing import Any, Sequence
 import pytest
 
 from limelight.app import PageGeometry, StorySpacing, TablePreview
+from limelight.typography import Typography, resolve_fonts
 from limelight.pdf_export import (
     PdfExportError,
     StoryPdfRenderers,
@@ -44,6 +45,8 @@ class FakeRuntime:
             block_gap_mm=3.0, figure_gap_mm=4.5, heading_gap_before_mm=5.0, heading_gap_after_mm=2.0
         )
         self.control_parameter_values: dict[str, Any] = {}
+        self.typography = Typography()
+        self.fonts = resolve_fonts({"story": {}}, None)
         self._table_preview = table_preview
 
     def figure_view_heading(self, figure_spec_id: str, *, index: int | None = None) -> str:
@@ -138,7 +141,7 @@ def test_figures_are_embedded_as_images_with_their_caption():
 
     assert 'src="data:image/png;base64,' in document
     # The number is written under the figure, bold, then the caption.
-    assert "<figcaption><b>Figure 1.</b> Prey lags predator.</figcaption>" in document
+    assert '<figcaption><span class=\"limelight-caption-label\">Figure 1.</span> Prey lags predator.</figcaption>' in document
     # The title is drawn into the image itself, so it must not repeat here.
     assert "limelight-figure-heading" not in document.split("</style>")[1]
 
@@ -166,7 +169,7 @@ def test_figure_without_a_caption_is_captioned_with_its_title():
 
     document = build_story_pdf_html(runtime, make_renderers())
 
-    assert "<figcaption><b>Figure 1.</b> Populations over time</figcaption>" in document
+    assert '<figcaption><span class=\"limelight-caption-label\">Figure 1.</span> Populations over time</figcaption>' in document
 
 
 def test_table_view_figures_render_as_html_tables():
@@ -207,7 +210,7 @@ def test_table_view_figures_render_as_html_tables():
     # Tables have no drawn-in title, so they do get a heading; the number
     # stays under the figure with the caption, as for every other kind.
     assert '<p class="limelight-figure-heading">Prey summary</p>' in document
-    assert "<figcaption><b>Figure 1.</b> Computed at build time.</figcaption>" in document
+    assert '<figcaption><span class=\"limelight-caption-label\">Figure 1.</span> Computed at build time.</figcaption>' in document
 
 
 def test_unknown_figure_becomes_a_notice_instead_of_raising():

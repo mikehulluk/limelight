@@ -20,8 +20,6 @@ from urllib.parse import unquote_to_bytes
 
 from PySide6.QtCore import QEventLoop, QMarginsF, QObject, QSizeF, Qt, QTimer, QUrl
 from PySide6.QtGui import (
-    QFontInfo,
-    QGuiApplication,
     QImage,
     QPageLayout,
     QPageSize,
@@ -36,15 +34,14 @@ from .app import (
     DEFAULT_PAGE_WIDTH_MM,
     MM_PER_INCH,
     STORY_FIGURE_CSS,
-    STORY_FONT_PT,
     STORY_IMAGE_CSS,
-    STORY_LINE_HEIGHT,
     LimelightRuntime,
     StorySpacing,
     figure_aspect,
     figure_width_px,
     figure_view_caption_markup,
     story_rhythm_css,
+    story_typography_css,
     table_view_cell_styles,
     table_view_column_alignment,
     table_view_column_formats,
@@ -168,6 +165,7 @@ def build_story_pdf_html(
         title=runtime.project_title,
         page=page,
         spacing=runtime.story_spacing,
+        typography_css=story_typography_css(runtime.typography, runtime.fonts),
     )
 
 
@@ -346,22 +344,9 @@ def printed_page(runtime: LimelightRuntime) -> PrintedPage:
     )
 
 
-def story_font_family() -> str:
-    """The face the story is set in: what the application's own text uses.
-
-    Named outright in the stylesheets and handed to matplotlib, so prose,
-    captions and plot labels share one face rather than each asking the
-    platform for "the system font" and getting three answers.
-    """
-
-    application = QGuiApplication.instance()
-    if application is None:
-        return "system-ui"
-    return QFontInfo(application.font()).family()
-
-
-def _pdf_document_html(body: str, *, title: str, page: PrintedPage, spacing: StorySpacing) -> str:
-    font_family = story_font_family()
+def _pdf_document_html(
+    body: str, *, title: str, page: PrintedPage, spacing: StorySpacing, typography_css: str
+) -> str:
     return f"""<!doctype html>
 <html>
 <head>
@@ -396,20 +381,11 @@ body {{
   margin: 0;
   color: #202124;
   background: #ffffff;
-  font: {STORY_FONT_PT}pt/{STORY_LINE_HEIGHT} "{font_family}", system-ui, sans-serif;
 }}
+{typography_css}
 h1, h2, h3, h4 {{
   break-after: avoid;
   page-break-after: avoid;
-}}
-h1 {{
-  font-size: 1.7em;
-}}
-h2 {{
-  font-size: 1.32em;
-}}
-h3 {{
-  font-size: 1.12em;
 }}
 p {{
   orphans: 3;
@@ -419,7 +395,6 @@ code {{
   background: #f3f4f6;
   border-radius: 4px;
   padding: 0.1rem 0.25rem;
-  font-size: 0.92em;
 }}
 pre {{
   background: #f3f4f6;
@@ -443,14 +418,11 @@ span.limelight-missing-image {{
 }}
 p.limelight-figure-heading {{
   margin: 0 0 0.35em;
-  font-size: 0.95em;
-  font-weight: 600;
   text-align: center;
 }}
 table.limelight-table {{
   border-collapse: collapse;
   width: 100%;
-  font-size: 0.86em;
 }}
 table.limelight-table th, table.limelight-table td {{
   border: 1px solid #d0d3d6;
@@ -470,7 +442,6 @@ table.limelight-table tr {{
   font-style: italic;
 }}
 .limelight-table-note, .limelight-notice {{
-  font-size: 0.85em;
   color: #5f6368;
 }}
 {story_rhythm_css(spacing)}

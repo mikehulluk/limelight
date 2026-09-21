@@ -103,7 +103,7 @@ def test_a_figure_renders_with_its_caption_and_number() -> None:
     rendered = renderer.render("![Bench setup](rig.png)\n")
 
     assert '<figure class="limelight-story-figure">' in rendered
-    assert "<figcaption><b>Figure 3.</b> Bench setup</figcaption>" in rendered
+    assert '<figcaption><span class=\"limelight-caption-label\">Figure 3.</span> Bench setup</figcaption>' in rendered
 
 
 def test_an_unnumbered_image_renders_without_a_prefix() -> None:
@@ -194,6 +194,18 @@ def test_a_figure_image_carries_its_anchor() -> None:
     assert '<figure class="limelight-story-figure" id="bench-rig">' in rendered
 
 
+class _story_runtime:
+    """The slice of a runtime the story stylesheet reads."""
+
+    def __init__(self) -> None:
+        from limelight.app import StorySpacing
+        from limelight.typography import Typography, resolve_fonts
+
+        self.story_spacing = StorySpacing(3.0, 4.5, 5.0, 2.0)
+        self.typography = Typography()
+        self.fonts = resolve_fonts({"story": {}}, None)
+
+
 def test_both_renderers_constrain_a_story_image_to_its_column() -> None:
     """The panel stylesheet was missing this, so images overflowed and clipped.
 
@@ -202,12 +214,11 @@ def test_both_renderers_constrain_a_story_image_to_its_column() -> None:
     column in both.
     """
 
-    from limelight.app import StorySpacing
     from limelight.pdf_export import STORY_IMAGE_CSS
     from limelight.qt_app import _story_html
 
     assert "max-width: 100%" in STORY_IMAGE_CSS
-    panel_document = _story_html("<p>body</p>", StorySpacing(3.0, 4.5, 5.0, 2.0))
+    panel_document = _story_html("<p>body</p>", _story_runtime())
     assert "img.limelight-story-image" in panel_document
     assert "max-width: 100%" in panel_document
 
@@ -223,7 +234,7 @@ def test_the_story_body_does_not_let_child_margins_escape() -> None:
     from limelight.app import StorySpacing
     from limelight.qt_app import _story_html
 
-    assert "display: flow-root" in _story_html("<p>body</p>", StorySpacing(3.0, 4.5, 5.0, 2.0))
+    assert "display: flow-root" in _story_html("<p>body</p>", _story_runtime())
 
 
 def test_a_width_written_at_the_reference_is_applied() -> None:
@@ -288,12 +299,12 @@ def test_a_numbered_image_with_no_caption_still_shows_its_number() -> None:
 
     rendered = renderer.render("![](rig.png)\n")
 
-    assert "<figcaption><b>Figure 3.</b></figcaption>" in rendered
+    assert '<figcaption><span class=\"limelight-caption-label\">Figure 3.</span></figcaption>' in rendered
 
 
 def test_the_caption_markup_escapes_the_text_but_not_the_label() -> None:
     from limelight.story_markdown import figure_caption_markup
 
-    assert figure_caption_markup(2, "a < b") == "<b>Figure 2.</b> a &lt; b"
+    assert figure_caption_markup(2, "a < b") == '<span class=\"limelight-caption-label\">Figure 2.</span> a &lt; b'
     assert figure_caption_markup(None, "plain") == "plain"
     assert figure_caption_markup(None, "") == ""

@@ -30,6 +30,7 @@ let Assets     = ./limelight-v1-06-assets.dhall
 -- 7. Validate story document references and the assets they name.
 -- 8. Validate shared control parameter declarations and references.
 -- 9. Validate source file fingerprints.
+-- 10. Validate fonts and the typography that names them.
 let Manifest =
       { limelightVersion : Core.Version
       , project : Document.Project
@@ -39,6 +40,7 @@ let Manifest =
       , figures : List Figure.FigureSpec
       , figureViews : List Figure.FigureView
       , assets : List Assets.ImageAsset
+      , fonts : List Document.Font
       , story : Document.Story
       }
 

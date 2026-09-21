@@ -273,6 +273,16 @@ in    { limelightVersion = "1.0"
           }
         ]
       , assets = [] : List Limelight.ImageAsset
+      -- The faces the text below names. `builtin` fonts ship with Limelight,
+      -- so a reader has them whatever their machine has installed; the
+      -- typography's stacks fall back from Ubuntu to Noto Sans where a glyph
+      -- is missing.
+      , fonts =
+        [ { id = "ubuntu", family = "Ubuntu", source = Limelight.FontSource.builtin }
+        , { id = "noto-sans", family = "Noto Sans", source = Limelight.FontSource.builtin }
+        , { id = "ubuntu-mono", family = "Ubuntu Mono", source = Limelight.FontSource.builtin }
+        , { id = "dejavu-sans-mono", family = "DejaVu Sans Mono", source = Limelight.FontSource.builtin }
+        ]
       , story =
         { documentPath = "story/index.md"
         , format = Limelight.StoryFormat.markdown
@@ -287,6 +297,32 @@ in    { limelightVersion = "1.0"
           , figureGap = 4.5
           , headingGapBefore = 5.0
           , headingGapAfter = 2.0
+          }
+        -- Every kind of text, set in full: the stack of fonts, the size in
+        -- points, the weight and the slant. These are the defaults the
+        -- writer would emit; a manifest written by hand says them itself.
+        -- Every kind of text, set in full: the stack of fonts tried in order,
+        -- the size in points, the weight and the slant. These are the defaults
+        -- the writer would emit; a manifest written by hand says them itself.
+        , typography =
+          { lineHeight = 1.5
+          , body = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 10.5, weight = 400, italic = False }
+          , heading1 = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 17.85, weight = 700, italic = False }
+          , heading2 = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 13.86, weight = 700, italic = False }
+          , heading3 = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 11.76, weight = 700, italic = False }
+          , code = { fonts = [ "ubuntu-mono", "dejavu-sans-mono" ], sizePt = 9.66, weight = 400, italic = False }
+          , caption = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 9.03, weight = 400, italic = False }
+          , captionLabel = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 9.03, weight = 700, italic = False }
+          , figureTitle = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 10.5, weight = 700, italic = False }
+          , axisLabel = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 8.75, weight = 400, italic = False }
+          , tickLabel = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 8.75, weight = 400, italic = False }
+          , legend = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 8.75, weight = 400, italic = False }
+          , annotation = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 8.75, weight = 400, italic = False }
+          , badge = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 7.29, weight = 400, italic = False }
+          , tableHeading = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 9.75, weight = 700, italic = False }
+          , tableHeader = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 9.03, weight = 700, italic = False }
+          , tableCell = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 9.03, weight = 400, italic = False }
+          , tableNote = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 8.93, weight = 400, italic = False }
           }
         , signatures = [] : List Limelight.DocumentSignature
         }

@@ -37,6 +37,10 @@ dependencies = [
     "h5py>=3.10",
     "linkify-it-py>=2.0",
     "markdown-it-py[linkify]>=4.0",
+    # fonttools is what matplotlib already brings; named here because
+    # typography.py uses it directly, to tell a variable font from a static
+    # one and to instance a weight from a system font that is variable.
+    "fonttools>=4.40",
     "matplotlib>=3.8",
     "mdit-py-plugins>=0.6",
     "numpy>=1.26",
@@ -82,4 +86,4 @@ where = ["src"]
 include-package-data = false
 
 [tool.setuptools.package-data]
-limelight = ["assets/*.svg", "language-reference/*.dhall"]
+limelight = ["assets/*.svg", "language-reference/*.dhall", "fonts/*/*.ttf", "fonts/*/*.txt"]

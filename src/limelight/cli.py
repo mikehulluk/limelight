@@ -15,6 +15,7 @@ if __package__ in {None, ""}:
     from limelight.metadata import metadata_entries
     from limelight.reader import LimelightError, LimelightPackage, open_limelight
     from limelight.hdf_sources import verify_hdf_sources
+    from limelight.typography import verify_fonts
     from limelight.semantic import validate_manifest_semantics
     from limelight.settings import load_settings
 else:
@@ -23,6 +24,7 @@ else:
     from .metadata import metadata_entries
     from .reader import LimelightError, LimelightPackage, open_limelight
     from .hdf_sources import verify_hdf_sources
+    from .typography import verify_fonts
     from .semantic import validate_manifest_semantics
     from .settings import load_settings
     from .signing import verify_manifest_signatures
@@ -170,6 +172,7 @@ def _run_verify(paths: Sequence[str]) -> int:
                 manifest = package.manifest_json()
                 validate_manifest_semantics(manifest)
                 verify_hdf_sources(package, manifest)
+                verify_fonts(package, manifest)
                 signature_checks = verify_manifest_signatures(package, manifest)
             for line in _signature_check_lines(signature_checks):
                 print(line)

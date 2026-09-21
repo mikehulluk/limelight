@@ -7,6 +7,47 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- **A document sets its own type.** The story's `typography` block says how
+  every kind of text is set - `body`, `heading1`-`heading3`, `code`,
+  `caption` and `captionLabel` (the "Figure 3."), `figureTitle`,
+  `axisLabel`, `tickLabel`, `legend`, `annotation`, `badge`, `tableHeading`,
+  `tableHeader`, `tableCell`, `tableNote` - each a stack of fonts, a size in
+  points, a weight and a slant, plus the body's `lineHeight`. The story
+  panel, the PDF and the figures all draw from it, so a document reads the
+  same on every machine. The writer emits the full block; `Typography` and
+  `TextStyle` (`limelight.typography`) change it.
+- **Fonts travel with the document.** The manifest's `fonts` list declares
+  each font as `builtin` (shipped with Limelight: Ubuntu, Ubuntu Mono, Noto
+  Sans, DejaVu Sans, DejaVu Sans Mono), `system` (the reader's, by family
+  name; used where present and skipped where not) or `bundled` (static
+  files in the package with their licence, fingerprinted like a source's
+  files). A text style's stack is tried in order, for a whole face the
+  machine lacks and for single glyphs a face has not got, and its last font
+  must be builtin or bundled. `Project.add_builtin_font`, `add_system_font`
+  and `add_bundled_font` declare them.
+- `verify` checks the typography names declared fonts, every stack ends in
+  a guaranteed one, and a bundled font's files are present, match their
+  fingerprints, are static (not variable) and come with their licence.
+
+### Changed
+
+- The default face is Ubuntu, falling back to Noto Sans, for prose, captions
+  and figures alike, and Ubuntu Mono for code; it used to be whatever the
+  desktop's UI font was (Segoe UI on Windows, Noto Sans headless), so the
+  same package rendered and printed differently by machine. The shipped
+  fonts add about 4 MB to the package.
+- Figure text is set per figure from the document's typography rather than
+  through matplotlib's process-wide rcParams, so two documents open in tabs
+  keep their own type. Bold in figures now works with a variable system
+  font: the weights a document asks for are instanced from it, once, into
+  the cache directory.
+- A table view's column headers are bold by default (`tableHeader`), as the
+  story's own tables already were.
+- The caption's "Figure 3." is a `<span class="limelight-caption-label">`
+  rather than `<b>`, set by `captionLabel`.
+
 ## [0.0.13] - 2026-09-21
 
 ### Fixed

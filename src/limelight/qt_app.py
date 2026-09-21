@@ -56,6 +56,7 @@ from PySide6.QtGui import (
     QCursor,
     QDesktopServices,
     QFont,
+    QGuiApplication,
     QColor,
     QIcon,
     QPainter,
@@ -106,10 +107,7 @@ from .app import (
     DEFAULT_PAGE_WIDTH_MM,
     MM_PER_INCH,
     STORY_FIGURE_CSS,
-    STORY_FONT_PT,
-    STORY_FONT_PX,
     STORY_IMAGE_CSS,
-    STORY_LINE_HEIGHT,
     LimelightRuntime,
     PageGeometry,
     StorySection,
@@ -128,6 +126,16 @@ from .app import (
     table_view_header_styles,
     story_rhythm_css,
     story_run_edge_css,
+    story_typography_css,
+)
+from .typography import (
+    FigureText,
+    ResolvedFont,
+    TextStyle,
+    Typography,
+    register_fonts_with_matplotlib,
+    register_fonts_with_qt,
+    resolve_fonts,
 )
 from .semantic import (
     control_parameter_data_type_kind,
@@ -136,7 +144,6 @@ from .semantic import (
 )
 from .logging_config import configure_logging, log_file_path
 from .pdf_export import (
-    story_font_family,
     PdfExportError,
     StoryPdfRenderers,
     build_story_pdf_html,
@@ -293,44 +300,53 @@ _figure_typography_configured = False
 
 
 def _configure_figure_typography() -> None:
-    """Set matplotlib to draw text the way the story does.
+    """The matplotlib baseline under a document's typography.
 
-    Labels are the story's size in the story's face, so a plot's axes read
-    as part of the page; the size is in points, and a figure is laid out at
-    CSS_PIXELS_PER_INCH so those points come out as the story's pixels.
-    Within a figure, axis labels are that size and tick numbers and the
-    legend a step smaller, so the labels lead; a title is the body size in
-    bold, since the figure sits under its caption and the story's headings
-    rather than above them. Every size is relative to font.size, so the one
-    number carries through. Done once, for the process: rcParams are global,
-    and figures are drawn from worker threads as well as the main one.
+    Each kind of figure text is set from the document's typography block
+    where it is drawn (see FigureText), not through rcParams, which are
+    process-wide. What is set here is the floor for anything a drawing
+    function does not reach - the default face is the default typography's
+    stack, registered from the files Limelight ships - and it is done once,
+    for the process.
     """
 
     global _figure_typography_configured
     if _figure_typography_configured:
         return
     _figure_typography_configured = True
+    default_typography = Typography()
+    default_fonts = resolve_fonts({"story": {}}, None)
+    register_fonts_with_matplotlib(default_fonts, default_typography)
     matplotlib.rcParams.update(
         {
-            "font.size": STORY_FONT_PT,
+            "font.size": default_typography.body.size_pt,
             "font.family": "sans-serif",
-            "font.sans-serif": [story_font_family(), "Segoe UI", "DejaVu Sans"],
+            "font.sans-serif": [*default_typography.body.families(default_fonts), "DejaVu Sans"],
             "axes.titlesize": "medium",
             "axes.titleweight": "bold",
-            # Axis labels a step under the body, like the tick numbers: the
-            # plot's text sits inside a figure, under the story's own heading
-            # and caption, and should not compete with them.
             "axes.labelsize": "small",
             "xtick.labelsize": "small",
             "ytick.labelsize": "small",
             "legend.fontsize": "small",
-            # matplotlib's default minus is U+2212, which the story font (Noto
-            # Sans on Linux) lacks, so negative tick labels came out as boxes
-            # (a "Glyph 8722 missing" warning per figure). A hyphen-minus is
-            # in every font and reads the same at tick size.
+            # matplotlib's default minus is U+2212, which some faces lack, so
+            # negative tick labels came out as boxes (a "Glyph 8722 missing"
+            # warning per figure). A hyphen-minus is in every font and reads
+            # the same at tick size.
             "axes.unicode_minus": False,
         }
     )
+
+
+def register_document_fonts(runtime: LimelightRuntime) -> None:
+    """Make a document's fonts known to matplotlib and Qt before anything of it is drawn.
+
+    Called wherever a runtime is made for the app. The story's web view
+    needs nothing here: its stylesheet names the files itself.
+    """
+
+    _configure_figure_typography()
+    register_fonts_with_matplotlib(runtime.fonts, runtime.typography)
+    register_fonts_with_qt(runtime.fonts)
 
 
 class StartupPackageDialog(QDialog):
@@ -407,6 +423,14 @@ def story_pdf_renderers(runtime: LimelightRuntime) -> StoryPdfRenderers:
     Shared by the app's File -> Export to PDF and by ``limelight-cli pdf`` so the
     two produce the same document.
     """
+
+    # `limelight-cli pdf` reaches here with no window having registered the
+    # document's fonts; the figures need them, and so does the fallback PDF
+    # writer, which draws from Qt's font database rather than the stylesheet.
+    _configure_figure_typography()
+    register_fonts_with_matplotlib(runtime.fonts, runtime.typography)
+    if QGuiApplication.instance() is not None:
+        register_fonts_with_qt(runtime.fonts)
 
     if StoryMarkdownRenderer is None:
         render_markdown_html: Callable[[str], str] = _plain_text_html
@@ -712,7 +736,7 @@ class StoryTextPanel(QWidget):
             html_start_time = self.timing.start()
             self.setFixedHeight(STORY_TEXT_MIN_HEIGHT)
             self.web_view.setFixedHeight(STORY_TEXT_MIN_HEIGHT)
-            self._load_story_html(_story_html(result.html_body, self.runtime.story_spacing))
+            self._load_story_html(_story_html(result.html_body, self.runtime))
             self.timing.log(
                 "story.markdown.set_html",
                 html_start_time,
@@ -982,7 +1006,8 @@ def _story_text_block_key(block: Any) -> str:
     return str(block)
 
 
-def _story_html(body: str, spacing: StorySpacing) -> str:
+def _story_html(body: str, runtime: LimelightRuntime) -> str:
+    spacing = runtime.story_spacing
     return f"""<!doctype html>
 <html>
 <head>
@@ -1002,6 +1027,7 @@ window.MathJax = {{
 html {{
   color-scheme: light;
 }}
+{story_typography_css(runtime.typography, runtime.fonts)}
 body {{
   box-sizing: border-box;
   display: flow-root;
@@ -1009,7 +1035,6 @@ body {{
   padding: 0;
   color: #202124;
   background: #ffffff;
-  font: {STORY_FONT_PX}px/{STORY_LINE_HEIGHT} "{story_font_family()}", system-ui, sans-serif;
 }}
 code {{
   background: #f3f4f6;
@@ -1343,6 +1368,8 @@ def _render_static_figure_view_png_bytes(
 
     start_time = runtime.timing.start()
     _configure_figure_typography()
+    # The PDF renders without the app having registered the document's fonts.
+    register_fonts_with_matplotlib(runtime.fonts, runtime.typography)
     output_dpi = layout_dpi if dpi is None else dpi
     figure = MatplotlibFigure(
         figsize=(max(width, 1) / layout_dpi, max(height, 1) / layout_dpi),
@@ -1387,16 +1414,17 @@ def _render_figure_view_to_matplotlib_figure(
 ) -> None:
     figure.clear()
 
+    text = runtime.figure_text()
     if figure_id is None:
         axes = figure.add_subplot(111)
-        axes.text(0.5, 0.5, "No figure selected", ha="center", va="center")
+        axes.text(0.5, 0.5, "No figure selected", ha="center", va="center", fontproperties=text.body)
         axes.set_axis_off()
         return
 
     figure_spec = runtime.figure_specs.get(figure_id)
     if figure_spec is None:
         axes = figure.add_subplot(111)
-        axes.text(0.5, 0.5, f"Unknown figure: {figure_id}", ha="center", va="center")
+        axes.text(0.5, 0.5, f"Unknown figure: {figure_id}", ha="center", va="center", fontproperties=text.body)
         axes.set_axis_off()
         return
 
@@ -1497,6 +1525,7 @@ def _draw_scatter_artist(
     label: str,
     line_colors: dict[str, str],
     y_name: str,
+    text: FigureText,
 ) -> None:
     marker = artist.get("marker") or "o"
     alpha_value = 1.0 if alpha is None else alpha
@@ -1515,7 +1544,9 @@ def _draw_scatter_artist(
             alpha=alpha_value,
             zorder=3,
         )
-        axes.figure.colorbar(collection, ax=axes, label=series.color_label)
+        colorbar = axes.figure.colorbar(collection, ax=axes)
+        colorbar.set_label(series.color_label, fontproperties=text.axis_label)
+        text.style_ticks(colorbar.ax)
     elif series.color_kind == "categorical":
         palette = matplotlib.colormaps["tab10"].colors
         categories: list[str] = []
@@ -1554,7 +1585,7 @@ def _draw_scatter_artist(
         )
     if collection is not None and artist.get("sizeBy") is not None:
         handles, size_labels = collection.legend_elements(prop="sizes", num=4)
-        size_legend = axes.legend(handles, size_labels, title=series.size_label, loc="lower right")
+        size_legend = text.add_legend(axes, handles, size_labels, title=series.size_label, loc="lower right")
         axes.add_artist(size_legend)
 
 
@@ -1573,6 +1604,7 @@ def _draw_plot_contents(
     hover_sink: list[_HoverPoint] | None = None,
 ) -> tuple[list[Any], list[str]]:
     active_parameter_values = runtime.control_parameter_values if parameter_values is None else parameter_values
+    text = runtime.figure_text()
     x_axis_binding = axes_spec["xAxis"]
     y_axis_binding = axes_spec["yAxis"]
     if axis_scale(x_axis_binding) == "Log":
@@ -1617,7 +1649,7 @@ def _draw_plot_contents(
         y_name = artist.get("y") or ""
         if _is_scatter_artist(artist):
             label = artist.get("label") or "_nolegend_"
-            _draw_scatter_artist(axes, artist, series, x_values, y_values, alpha, label, line_colors, y_name)
+            _draw_scatter_artist(axes, artist, series, x_values, y_values, alpha, label, line_colors, y_name, text)
             artist_kind = "scatter"
             hover_label = label
         elif _is_stem_artist(artist):
@@ -1686,7 +1718,7 @@ def _draw_plot_contents(
         has_data = True
 
     if not has_data:
-        axes.text(0.5, 0.5, "No plottable data", ha="center", va="center")
+        axes.text(0.5, 0.5, "No plottable data", ha="center", va="center", fontproperties=text.body)
         axes.set_axis_off()
         return [], []
 
@@ -1695,19 +1727,20 @@ def _draw_plot_contents(
     if y_window is not None:
         axes.set_ylim(*y_window)
 
-    _apply_axes_action_decorators(axes, axes_spec, axes_actions)
-    axes.set_ylabel(axis_label(y_axis_binding))
+    _apply_axes_action_decorators(axes, axes_spec, axes_actions, text)
+    axes.set_ylabel(axis_label(y_axis_binding), fontproperties=text.axis_label)
     axes.grid(True, color="#dddddd", linewidth=0.8)
+    text.style_ticks(axes)
     if show_title:
-        axes.set_title(runtime.figure_specs[figure_id]["title"])
+        axes.set_title(runtime.figure_specs[figure_id]["title"], fontproperties=text.title)
     if show_x_axis:
-        axes.set_xlabel(axis_label(x_axis_binding))
+        axes.set_xlabel(axis_label(x_axis_binding), fontproperties=text.axis_label)
         _format_axis(axes, x_axis_binding, "x")
     else:
         axes.tick_params(axis="x", labelbottom=False)
     handles, labels = axes.get_legend_handles_labels()
     if handles:
-        axes.legend(handles, labels, loc="best")
+        text.add_legend(axes, handles, labels, loc="best")
     return list(handles), list(labels)
 
 
@@ -1720,6 +1753,7 @@ def _draw_map_contents(
     figure_view_index: int | None = None,
 ) -> None:
     has_data = False
+    text = runtime.figure_text()
     longitude_window, latitude_window = _map_action_windows(map_spec["actions"])
     for action in map_spec["actions"]:
         geojson_layer = _map_action_geojson_layer(action)
@@ -1732,11 +1766,11 @@ def _draw_map_contents(
             map_series = _map_scatter_points(runtime, scatter)
             if not map_series.points:
                 continue
-            _draw_map_scatter(axes, scatter, map_series)
+            _draw_map_scatter(axes, scatter, map_series, text)
             has_data = True
 
     if not has_data:
-        axes.text(0.5, 0.5, "No plottable map data", ha="center", va="center")
+        axes.text(0.5, 0.5, "No plottable map data", ha="center", va="center", fontproperties=text.body)
         axes.set_axis_off()
         return
 
@@ -1744,12 +1778,13 @@ def _draw_map_contents(
         axes.set_xlim(*longitude_window)
     if latitude_window is not None:
         axes.set_ylim(*latitude_window)
-    axes.set_title(runtime.figure_specs[figure_id]["title"])
-    axes.set_xlabel("Longitude")
-    axes.set_ylabel("Latitude")
+    axes.set_title(runtime.figure_specs[figure_id]["title"], fontproperties=text.title)
+    axes.set_xlabel("Longitude", fontproperties=text.axis_label)
+    axes.set_ylabel("Latitude", fontproperties=text.axis_label)
+    text.style_ticks(axes)
     axes.set_aspect("equal", adjustable="box")
     axes.grid(True, color="#dddddd", linewidth=0.6)
-    axes.legend(loc="best")
+    text.add_legend(axes, loc="best")
 
 
 def _map_action_windows(actions: Sequence[dict[str, Any]]) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
@@ -1784,7 +1819,7 @@ def _map_action_dataset_scatter(action: dict[str, Any]) -> dict[str, Any] | None
     return None
 
 
-def _draw_map_scatter(axes: Any, scatter: dict[str, Any], series: "MapScatterSeries") -> None:
+def _draw_map_scatter(axes: Any, scatter: dict[str, Any], series: "MapScatterSeries", text: FigureText) -> None:
     longitudes = [longitude for longitude, _ in series.points]
     latitudes = [latitude for _, latitude in series.points]
     label = scatter.get("label") or "_nolegend_"
@@ -1800,7 +1835,9 @@ def _draw_map_scatter(axes: Any, scatter: dict[str, Any], series: "MapScatterSer
             linewidths=0.5,
             zorder=4,
         )
-        axes.figure.colorbar(collection, ax=axes, label=series.color_label)
+        colorbar = axes.figure.colorbar(collection, ax=axes)
+        colorbar.set_label(series.color_label, fontproperties=text.axis_label)
+        text.style_ticks(colorbar.ax)
     elif series.color_kind == "categorical":
         palette = matplotlib.colormaps["tab10"].colors
         categories: list[str] = []
@@ -2068,6 +2105,7 @@ def _apply_axes_action_decorators(
     axes: Any,
     axes_spec: dict[str, Any],
     axes_actions: Sequence[dict[str, Any]],
+    text: FigureText,
 ) -> None:
     for action in axes_actions:
         decorator = action.get("AxesActionAddDecorator")
@@ -2079,14 +2117,14 @@ def _apply_axes_action_decorators(
         if annotation is None and "arrow" in decorator:
             annotation = decorator
         if annotation is not None:
-            _apply_arrow_annotation(axes, annotation)
+            _apply_arrow_annotation(axes, annotation, text)
             continue
 
         rect = decorator.get("AxesDecoratorRect")
         if rect is None and "yLimit" in decorator:
             rect = decorator
         if rect is not None:
-            _apply_rect_decorator(axes, axes_spec, rect)
+            _apply_rect_decorator(axes, axes_spec, rect, text)
             continue
 
         vspan = decorator.get("AxesDecoratorVSpan")
@@ -2119,7 +2157,7 @@ def _apply_axes_action_decorators(
                     rotation=90,
                     transform=axes.get_xaxis_transform(),
                     color=color,
-                    fontsize="small",
+                    fontproperties=text.annotation,
                 )
             continue
         limit_axis, raw_window = _axis_limit_window(vspan["xLimit"], axes_spec["xAxis"], axes_spec["yAxis"])
@@ -2137,10 +2175,11 @@ def _apply_axes_action_decorators(
                     ha="center",
                     va="top",
                     transform=axes.get_xaxis_transform(),
+                    fontproperties=text.annotation,
                 )
 
 
-def _apply_rect_decorator(axes: Any, axes_spec: dict[str, Any], rect: dict[str, Any]) -> None:
+def _apply_rect_decorator(axes: Any, axes_spec: dict[str, Any], rect: dict[str, Any], text: FigureText) -> None:
     """Shade the box between the rect's x and y limits, without moving the axes.
 
     The box is added as a plain artist rather than a patch so that it does not
@@ -2180,13 +2219,13 @@ def _apply_rect_decorator(axes: Any, axes_spec: dict[str, Any], rect: dict[str, 
             label,
             ha="center",
             va="bottom",
-            fontsize="small",
+            fontproperties=text.annotation,
             color=_DEFAULT_DECORATOR_COLOR,
             clip_on=True,
         )
 
 
-def _apply_arrow_annotation(axes: Any, annotation: dict[str, Any]) -> None:
+def _apply_arrow_annotation(axes: Any, annotation: dict[str, Any], text: FigureText) -> None:
     arrow = annotation.get("arrow")
     if arrow is None:
         return
@@ -2214,7 +2253,7 @@ def _apply_arrow_annotation(axes: Any, annotation: dict[str, Any]) -> None:
                 xytext=_point_label_offset(annotation),
                 textcoords="offset points",
                 color=color,
-                fontsize="small",
+                fontproperties=text.annotation,
                 ha="left",
                 va="center",
                 annotation_clip=True,
@@ -2228,7 +2267,7 @@ def _apply_arrow_annotation(axes: Any, annotation: dict[str, Any]) -> None:
         textcoords="data",
         arrowprops={"arrowstyle": "->", "color": color, "linewidth": 1.8},
         color=color,
-        fontsize="small",
+        fontproperties=text.annotation,
         ha="center",
         va="center",
         annotation_clip=True,
@@ -2653,6 +2692,7 @@ class LimelightWindow(QMainWindow):
         super().__init__()
         self.debug_timing = debug_timing
         self.runtime = LimelightRuntime(package, manifest, debug_timing=debug_timing)
+        register_document_fonts(self.runtime)
         self.setWindowIcon(_application_icon())
         self.figure_view_windows: dict[tuple[str, int | None], FigureViewWindow] = {}
         self.table_view_windows: dict[tuple[str, str | None], "TableViewWindow"] = {}
@@ -2831,6 +2871,7 @@ class LimelightWindow(QMainWindow):
         new_runtime: LimelightRuntime | None = None
         try:
             new_runtime = LimelightRuntime(package, manifest, debug_timing=self.debug_timing)
+            register_document_fonts(new_runtime)
             self.runtime = new_runtime
             self._update_window_title()
             self._build_central_tabs()
@@ -3817,8 +3858,19 @@ _QT_ALIGNMENT = {
 }
 
 
-def _qt_font(styles: set[str]) -> QFont:
+def _qfont_for(style: TextStyle, fonts: Mapping[str, ResolvedFont], zoom: float = 1.0) -> QFont:
+    """A TextStyle as a widget font: the stack, the size in the story's pixels, the weight, the slant."""
+
     font = QFont()
+    font.setFamilies(style.families(fonts))
+    font.setPixelSize(max(1, round(style.size_px * zoom)))
+    font.setWeight(QFont.Weight(style.weight))
+    font.setItalic(style.italic)
+    return font
+
+
+def _qt_font(styles: set[str], base: QFont | None = None) -> QFont:
+    font = QFont(base) if base is not None else QFont()
     if "Bold" in styles:
         font.setBold(True)
     if "Italic" in styles:
@@ -3827,17 +3879,32 @@ def _qt_font(styles: set[str]) -> QFont:
 
 
 def _populate_table_widget(
-    table: QTableWidget, preview: TablePreview, table_view_spec: dict[str, Any] | None = None
+    table: QTableWidget,
+    preview: TablePreview,
+    table_view_spec: dict[str, Any] | None = None,
+    *,
+    runtime: LimelightRuntime | None = None,
+    zoom: float = 1.0,
 ) -> None:
+    """Fill a table widget; with a ``runtime`` its type is the document's table typography."""
+
     table.clear()
     table.setRowCount(len(preview.rows))
     table.setColumnCount(len(preview.columns))
     table.setHorizontalHeaderLabels(preview.columns)
     table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
+    header_base = cell_base = None
+    if runtime is not None:
+        header_base = _qfont_for(runtime.typography.table_header, runtime.fonts, zoom)
+        cell_base = _qfont_for(runtime.typography.table_cell, runtime.fonts, zoom)
+        table.setFont(cell_base)
+        table.horizontalHeader().setFont(header_base)
+        table.verticalHeader().setFont(cell_base)
+
     header_styles = table_view_header_styles(table_view_spec)
-    if header_styles:
-        header_font = _qt_font(header_styles)
+    if header_styles or header_base is not None:
+        header_font = _qt_font(header_styles, header_base)
         for column_index in range(len(preview.columns)):
             header_item = table.horizontalHeaderItem(column_index)
             if header_item is not None:
@@ -3849,8 +3916,8 @@ def _populate_table_widget(
             alignment = table_view_column_alignment(table_view_spec, preview, column_index)
             item.setTextAlignment(_QT_ALIGNMENT[alignment])
             cell_styles = table_view_cell_styles(table_view_spec, row_index, column_index)
-            if cell_styles:
-                item.setFont(_qt_font(cell_styles))
+            if cell_styles or cell_base is not None:
+                item.setFont(_qt_font(cell_styles, cell_base))
             table.setItem(row_index, column_index, item)
 
 
@@ -4150,17 +4217,16 @@ class StoryFigureViewPanel(QWidget):
         # The stylesheet's caption: 0.86 of the 14px story text, 0.4em above.
         # The plot itself is rendered to the zoomed column, so it follows on
         # its own.
-        caption_font = self.caption.font()
-        caption_font.setPixelSize(max(1, round(12 * self._zoom)))
-        self.caption.setFont(caption_font)
+        typography = self.runtime.typography
+        fonts = self.runtime.fonts
+        self.caption.setFont(_qfont_for(typography.caption, fonts, self._zoom))
         self.caption.setContentsMargins(0, round(5 * self._zoom), 0, 0)
-        status_font = self.render_status.font()
-        status_font.setPixelSize(max(1, round(10 * self._zoom)))
-        self.render_status.setFont(status_font)
-        heading_font = self.heading.font()
-        heading_font.setPixelSize(max(1, round(13 * self._zoom)))
-        heading_font.setBold(True)
-        self.heading.setFont(heading_font)
+        self.render_status.setFont(_qfont_for(typography.table_note, fonts, self._zoom))
+        self.heading.setFont(_qfont_for(typography.table_heading, fonts, self._zoom))
+        if self.mode == "table" and self.figure_id is not None:
+            figure_spec = self.runtime.figure_specs.get(self.figure_id)
+            if figure_spec is not None:
+                self._show_table(figure_spec)
         self.heading.setContentsMargins(0, 0, 0, round(5 * self._zoom))
 
     def set_gap_padding(self, pixels: int) -> None:
@@ -4347,7 +4413,7 @@ class StoryFigureViewPanel(QWidget):
             table_view_spec.get("columns"),
             column_formats=table_view_column_formats(table_view_spec),
         )
-        _populate_table_widget(self.table, preview, table_view_spec)
+        _populate_table_widget(self.table, preview, table_view_spec, runtime=self.runtime, zoom=self._zoom)
         self.table.show()
 
     def _schedule_static_render(self, delay_ms: int) -> None:
@@ -5081,7 +5147,7 @@ class InteractiveFigureViewPanel(QWidget):
                 table_view_spec.get("columns"),
                 column_formats=table_view_column_formats(table_view_spec),
             )
-            _populate_table_widget(self.table, preview, table_view_spec)
+            _populate_table_widget(self.table, preview, table_view_spec, runtime=self.runtime)
             self.table.show()
             return
 
@@ -5400,6 +5466,7 @@ def _install_timeseries_artist(runtime: LimelightRuntime, axes: Any, artist: dic
         fill_alpha=artist.get("fillAlpha"),
         missing_marker=artist.get("missingMarker"),
         indicator=runtime.debug_ui,
+        indicator_font=runtime.figure_text().badge,
         timing=runtime.timing,
     )
 

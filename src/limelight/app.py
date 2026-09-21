@@ -35,7 +35,8 @@ from .semantic import (
     optional_field,
     validate_manifest_semantics,
 )
-from .story_markdown import figure_caption_markup, story_image_references
+from .story_markdown import CAPTION_LABEL_CLASS, figure_caption_markup, story_image_references
+from .typography import FigureText, ResolvedFont, TextStyle, Typography, font_face_css, resolve_fonts, typography_from_story
 
 logger = logging.getLogger(__name__)
 timing_logger = logging.getLogger("limelight.timing")
@@ -231,15 +232,12 @@ def _regular_index_value_at(index: Any, row_index: int) -> Any:
 
 
 
-# The story's type. 14 CSS pixels on screen is 10.5 points, and the page
-# prints at the same 10.5 points, so screen and paper set the same text; a
-# figure's labels are drawn at the same size, so a plot reads as part of the
-# story rather than as something pasted into it. CSS_PIXELS_PER_INCH is what
-# makes a point 4/3 of a pixel: it is the resolution a figure is laid out at
-# so that its points come out as the story's pixels.
-STORY_FONT_PX = 14
-STORY_FONT_PT = 10.5
-STORY_LINE_HEIGHT = 1.5
+# The story's type is the document's `typography` block (see typography.py):
+# sizes are in points, the page prints at those points, and on screen a
+# point is 4/3 of a CSS pixel. CSS_PIXELS_PER_INCH is what makes it so: it is
+# the resolution a figure is laid out at, so that a label drawn at the body's
+# points comes out as the story's pixels and a plot reads as part of the page
+# rather than as something pasted into it.
 CSS_PIXELS_PER_INCH = 96.0
 
 
@@ -352,14 +350,14 @@ def _story_spacing_from_story(story: dict[str, Any]) -> StorySpacing:
     )
 
 
-def figure_view_caption_markup(figure_spec: dict[str, Any], number: int | None) -> str:
-    """The caption under a figure view: its number in bold, then its caption.
+def figure_view_caption_markup(figure_spec: dict[str, Any], number: int | None, *, label_style: str = "") -> str:
+    """The caption under a figure view: its number, then its caption.
 
     A view with no caption is captioned with its title instead, so the number
     a cross-reference points at is always printed somewhere a reader can see.
     """
 
-    return figure_caption_markup(number, figure_spec.get("caption") or figure_spec["title"])
+    return figure_caption_markup(number, figure_spec.get("caption") or figure_spec["title"], label_style=label_style)
 
 
 # Story images are sized to fit rather than filled to the column: a small
@@ -397,7 +395,6 @@ figure.limelight-story-figure > figcaption {
 }
 figcaption {
   margin-top: 0.4em;
-  font-size: 0.86em;
   color: #3c4043;
 }"""
 
@@ -406,6 +403,40 @@ figcaption {
 _PROSE_BLOCK_SELECTOR = "p, ul, ol, pre, blockquote, table, hr, .math-display"
 _HEADING_SELECTOR = "h1, h2, h3, h4, h5, h6"
 _FIGURE_SELECTOR = "figure.limelight-figure, figure.limelight-story-figure"
+
+
+def story_typography_css(typography: Typography, fonts: dict[str, ResolvedFont]) -> str:
+    """The stylesheet rules that set a story's text, shared by the story panel and the PDF.
+
+    Each kind of text is a rule of its own, so nothing is left to inherit
+    from the platform: every face is named, every size is in points. The
+    ``@font-face`` rules first, so the names resolve to the document's own
+    files rather than to whatever the reader's machine has under them.
+    """
+
+    styles = typography.styles()
+
+    def rule(selector: str, style: TextStyle, **extra: Any) -> str:
+        line_height = extra.pop("line_height", None)
+        declarations = style.css(fonts, line_height=line_height)
+        return f"{selector} {{\n  {declarations}\n}}"
+
+    return "\n".join(
+        [
+            font_face_css(fonts),
+            rule("body", styles["body"], line_height=typography.line_height),
+            rule("h1", styles["heading1"]),
+            rule("h2", styles["heading2"]),
+            rule("h3, h4, h5, h6", styles["heading3"]),
+            rule("code, pre", styles["code"]),
+            rule("figcaption", styles["caption"]),
+            rule(f".{CAPTION_LABEL_CLASS}", styles["captionLabel"]),
+            rule("p.limelight-figure-heading", styles["tableHeading"]),
+            rule("table.limelight-table", styles["tableCell"]),
+            rule("table.limelight-table thead th", styles["tableHeader"]),
+            rule(".limelight-table-note, .limelight-notice", styles["tableNote"]),
+        ]
+    )
 
 
 def story_rhythm_css(spacing: StorySpacing) -> str:
@@ -530,6 +561,9 @@ class LimelightRuntime:
         self.declared_page_geometry = _page_geometry_from_story(story)
         self.page_geometry = self.declared_page_geometry
         self.story_spacing = _story_spacing_from_story(story)
+        self.typography = typography_from_story(story)
+        self.fonts: dict[str, ResolvedFont] = resolve_fonts(manifest, package)
+        self._figure_text: FigureText | None = None
         self.story_markdown = package.read_text(self.story_path)
         self.story_blocks, self.story_sections = parse_story_markdown(self.story_markdown)
         self.story_figure_view_ids = [
@@ -1071,10 +1105,25 @@ class LimelightRuntime:
     def figure_heading(self, figure_id: str) -> str:
         return self.figure_view_heading(figure_id)
 
-    def figure_view_caption_markup(self, figure_spec_id: str, *, index: int | None = None) -> str:
-        """What is written under one figure view, as ``figure_view_caption_markup`` makes it."""
+    def figure_text(self) -> FigureText:
+        """The document's typography as the figure renderer takes it, made once."""
 
-        return figure_view_caption_markup(self.figure_specs[figure_spec_id], index)
+        if self._figure_text is None:
+            self._figure_text = FigureText.from_typography(self.typography, self.fonts)
+        return self._figure_text
+
+    def figure_view_caption_markup(self, figure_spec_id: str, *, index: int | None = None) -> str:
+        """What is written under one figure view, as ``figure_view_caption_markup`` makes it.
+
+        The label's style travels inline: this markup goes to a widget with
+        no stylesheet to reach the label's class.
+        """
+
+        return figure_view_caption_markup(
+            self.figure_specs[figure_spec_id],
+            index,
+            label_style=self.typography.caption_label.inline_css(self.fonts),
+        )
 
     def figure_views_for_spec(self, figure_spec_id: str) -> list[dict[str, Any]]:
         """Every figure view rendering one spec, in the order a reader meets them.

@@ -625,6 +625,7 @@ name = "limelight-app"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
+    { name = "fonttools" },
     { name = "h5py" },
     { name = "linkify-it-py" },
     { name = "markdown-it-py", extra = ["linkify"] },
@@ -654,6 +655,7 @@ packaging = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = ">=42.0" },
+    { name = "fonttools", specifier = ">=4.40" },
     { name = "h5py", specifier = ">=3.10" },
     { name = "linkify-it-py", specifier = ">=2.0" },
     { name = "markdown-it-py", extras = ["linkify"], specifier = ">=4.0" },
