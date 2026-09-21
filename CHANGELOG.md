@@ -7,6 +7,18 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- Launching Limelight with no package offers the packages you last had
+  open, with the most recent selected, alongside the buttons for choosing a
+  file or a folder.
+
+### Changed
+
+- A recent package that has been moved or deleted is dropped from the list
+  rather than offered: the File > Recent menu prunes them each time it is
+  built, not only at startup.
+
 ## [0.0.17] - 2026-09-22
 
 ### Fixed

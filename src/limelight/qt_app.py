@@ -77,6 +77,8 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
     QMainWindow,
     QMessageBox,
@@ -193,6 +195,45 @@ STORY_TEXT_MIN_HEIGHT = 44
 PACKAGE_FILE_FILTER = (
     "Limelight packages (" + " ".join(f"*{suffix}" for suffix in PACKAGE_SUFFIXES) + ");;All files (*)"
 )
+
+
+# The packages this reader has opened, most recent first. They are kept in
+# QSettings, shared by the window's File > Recent menu and the startup
+# dialog, and a path that has since been moved or deleted is dropped rather
+# than offered: a recent entry is a thing to open, not a record of history.
+RECENT_PACKAGES_KEY = "recentPackages"
+MAX_RECENT_PACKAGES = 10
+
+
+def load_recent_packages() -> list[str]:
+    """The recent packages that are still on disk, pruning any that are not."""
+
+    settings = QSettings()
+    stored = settings.value(RECENT_PACKAGES_KEY, [])
+    if isinstance(stored, str):
+        stored = [stored]
+    paths = [str(path) for path in stored]
+    present = [path for path in paths if Path(path).exists()]
+    if present != paths:
+        _store_recent_packages(present)
+    return present
+
+
+def add_recent_package(path: str | Path) -> list[str]:
+    """Put `path` at the head of the recents; returns the list as it now stands."""
+
+    resolved = str(Path(path).resolve())
+    paths = [recent for recent in load_recent_packages() if recent != resolved]
+    paths.insert(0, resolved)
+    del paths[MAX_RECENT_PACKAGES:]
+    _store_recent_packages(paths)
+    return paths
+
+
+def _store_recent_packages(paths: list[str]) -> None:
+    settings = QSettings()
+    settings.setValue(RECENT_PACKAGES_KEY, paths)
+    settings.sync()
 
 
 @dataclass(frozen=True)
@@ -358,13 +399,17 @@ class StartupPackageDialog(QDialog):
 
     Launching from a desktop shortcut gives us no window, and therefore no File
     menu, so this is the only place a folder package can be reached in that
-    case. Archives come first because that is the shape packages are shipped in.
+    case. The packages this reader last had open are offered first, since
+    launching with no path usually means going back to one of them; archives
+    come next because that is the shape packages are shipped in.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Open Limelight Package")
         self.setWindowIcon(_application_icon())
+        # Wide enough that a recent package's folder is readable beside its name.
+        self.setMinimumWidth(520)
         self.selected_path: str | None = None
 
         layout = QVBoxLayout(self)
@@ -380,8 +425,43 @@ class StartupPackageDialog(QDialog):
         description.setWordWrap(True)
         layout.addWidget(description)
 
+        self.recent_list: QListWidget | None = None
+        recent_paths = load_recent_packages()
+        if recent_paths:
+            recent_label = QLabel("Recent packages")
+            recent_label.setStyleSheet("font-weight: 600;")
+            layout.addWidget(recent_label)
+
+            self.recent_list = QListWidget()
+            # The list is as tall as it needs to be, up to six packages;
+            # the rest are scrolled to. A path too long for the width is
+            # elided rather than scrolled sideways, and is there in full on
+            # hover.
+            self.recent_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.recent_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+            for path in recent_paths:
+                # The name is what a reader recognises; the folder it sits in
+                # tells two packages of the same name apart.
+                item = QListWidgetItem(f"{Path(path).name}  -  {_shorten_home(Path(path).parent)}")
+                item.setData(Qt.ItemDataRole.UserRole, path)
+                item.setToolTip(path)
+                self.recent_list.addItem(item)
+            self.recent_list.setCurrentRow(0)
+            rows = min(len(recent_paths), 6)
+            self.recent_list.setFixedHeight(
+                rows * self.recent_list.sizeHintForRow(0) + 2 * self.recent_list.frameWidth()
+            )
+            self.recent_list.itemActivated.connect(self._choose_recent)
+            self.recent_list.itemDoubleClicked.connect(self._choose_recent)
+            layout.addWidget(self.recent_list)
+
+            open_recent_button = QPushButton("Open Recent")
+            open_recent_button.setDefault(True)
+            open_recent_button.clicked.connect(self._open_selected_recent)
+            layout.addWidget(open_recent_button)
+
         file_button = QPushButton("Open Package File...")
-        file_button.setDefault(True)
+        file_button.setDefault(self.recent_list is None)
         file_button.clicked.connect(self._choose_file)
         layout.addWidget(file_button)
 
@@ -392,6 +472,17 @@ class StartupPackageDialog(QDialog):
         quit_button = QPushButton("Quit")
         quit_button.clicked.connect(self.reject)
         layout.addWidget(quit_button)
+
+    def _choose_recent(self, item: QListWidgetItem) -> None:
+        self.selected_path = str(item.data(Qt.ItemDataRole.UserRole))
+        self.accept()
+
+    def _open_selected_recent(self) -> None:
+        if self.recent_list is None:
+            return
+        item = self.recent_list.currentItem()
+        if item is not None:
+            self._choose_recent(item)
 
     def _choose_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -409,6 +500,15 @@ class StartupPackageDialog(QDialog):
         if path:
             self.selected_path = path
             self.accept()
+
+
+def _shorten_home(path: Path) -> str:
+    """A path with the reader's home directory written as `~`, as a shell would."""
+
+    try:
+        return "~/" + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
 
 def prompt_for_package_path() -> str | None:
@@ -2707,7 +2807,7 @@ class LimelightWindow(QMainWindow):
         self.setWindowIcon(_application_icon())
         self.figure_view_windows: dict[tuple[str, int | None], FigureViewWindow] = {}
         self.table_view_windows: dict[tuple[str, str | None], "TableViewWindow"] = {}
-        self._recent_paths: list[str] = self._load_recent_paths()
+        self._recent_paths: list[str] = load_recent_packages()
         self._busy_cursor_active = False
         self.tabs: QTabWidget | None = None
         self.story_tree: QTreeWidget | None = None
@@ -2903,29 +3003,8 @@ class LimelightWindow(QMainWindow):
         if old_runtime.package is not package:
             old_runtime.close()
 
-    @staticmethod
-    def _load_recent_paths() -> list[str]:
-        settings = QSettings()
-        stored = settings.value("recentPackages", [])
-        if isinstance(stored, str):
-            stored = [stored]
-        return [path for path in stored if Path(path).exists()]
-
-    def _save_recent_paths(self) -> None:
-        settings = QSettings()
-        settings.setValue("recentPackages", self._recent_paths)
-        settings.sync()
-
     def _add_recent_path(self, path: str | Path) -> None:
-        resolved = str(Path(path).resolve())
-        self._recent_paths = [
-            recent_path
-            for recent_path in self._recent_paths
-            if recent_path != resolved
-        ]
-        self._recent_paths.insert(0, resolved)
-        del self._recent_paths[10:]
-        self._save_recent_paths()
+        self._recent_paths = add_recent_package(path)
         self._update_recent_menu()
 
     def _build_view_menu(self) -> None:
@@ -3103,6 +3182,9 @@ class LimelightWindow(QMainWindow):
         self._show_page_geometry(self.runtime.declared_page_geometry)
 
     def _update_recent_menu(self) -> None:
+        # A package opened earlier may have been moved or deleted since, so
+        # the list is pruned each time the menu is built, not only at startup.
+        self._recent_paths = load_recent_packages()
         self.recent_menu.clear()
         if not self._recent_paths:
             empty_action = QAction("No Recent Packages", self)
