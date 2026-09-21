@@ -40,6 +40,7 @@ dependencies = [
     # fonttools is what matplotlib already brings; named here because
     # typography.py uses it directly, to tell a variable font from a static
     # one and to instance a weight from a system font that is variable.
+    "filelock>=3.12",
     "fonttools>=4.40",
     "matplotlib>=3.8",
     "mdit-py-plugins>=0.6",

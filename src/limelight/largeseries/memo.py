@@ -6,6 +6,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from .cachedir import cache_lock
+
 MEMO_FILENAME = "memo.json"
 MEMO_VERSION = 1
 
@@ -82,23 +84,26 @@ def update_memo(
     dataset_path: str,
     entry: MemoEntry,
 ) -> None:
-    entries = load_memo(cache_dir)
-    entries[memo_key(source_path, dataset_path)] = entry
+    """Record `entry`; the memo is read and written back whole, so writers take turns."""
 
-    payload = {
-        "version": MEMO_VERSION,
-        "entries": {key: value.to_json() for key, value in entries.items()},
-    }
+    with cache_lock(cache_dir, "memo"):
+        entries = load_memo(cache_dir)
+        entries[memo_key(source_path, dataset_path)] = entry
 
-    memo_path = cache_dir / MEMO_FILENAME
-    fd, tmp_name = tempfile.mkstemp(prefix="memo-", suffix=".json.tmp", dir=cache_dir)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle)
-        os.replace(tmp_name, memo_path)
-    except BaseException:
+        payload = {
+            "version": MEMO_VERSION,
+            "entries": {key: value.to_json() for key, value in entries.items()},
+        }
+
+        memo_path = cache_dir / MEMO_FILENAME
+        fd, tmp_name = tempfile.mkstemp(prefix="memo-", suffix=".json.tmp", dir=cache_dir)
         try:
-            os.remove(tmp_name)
-        except OSError:
-            pass
-        raise
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+            os.replace(tmp_name, memo_path)
+        except BaseException:
+            try:
+                os.remove(tmp_name)
+            except OSError:
+                pass
+            raise

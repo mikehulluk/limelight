@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import h5py
 import numpy as np
 
 from .arraysource import ArraySource, HdfArraySource
-from .cachedir import resolve_cache_dir
+from .cachedir import cache_lock, resolve_cache_dir
 from .constants import (
     DEFAULT_CHUNK_SIZE,
     HASH_STREAM_BLOCK,
@@ -153,6 +154,12 @@ def build_or_get_cache(
     A build streams the whole source once; `progress(samples_done, source_length)`
     is called after each block and once more when the cache is written, so a
     caller can show how far along a long build is. A cache hit reports nothing.
+
+    The cache directory is shared between processes - two windows on one
+    package, say - so a build takes a lock named for the series. A second
+    process wanting the same cache waits for the first, reporting the wait as
+    a build at zero, and then finds the cache in the memo rather than making
+    it again.
     """
     if not is_power_of_two(chunk_size):
         raise InvalidSourceSpecError(f"chunk_size must be a power of two, got {chunk_size}")
@@ -163,31 +170,115 @@ def build_or_get_cache(
     mtime_ns = stat.st_mtime_ns
     size = stat.st_size
 
-    if not force:
-        entry = lookup_memo(resolved_cache_dir, source_path, spec.y_selector, mtime_ns, size, chunk_size)
-        if entry is not None:
-            dest = resolved_cache_dir / f"{entry.content_hash}.h5"
-            if dest.exists():
-                hit_start = timing.start() if timing is not None else None
-                try:
-                    handle = open_existing_cache(resolved_cache_dir, entry.content_hash)
-                except CacheCorruptError:
-                    pass
-                else:
-                    if timing is not None and hit_start is not None:
-                        timing.log(
-                            "limelight.largeseries.cache.hit",
-                            hit_start,
-                            (
-                                ("source_length", handle.source_length),
-                                ("chunk_size", handle.chunk_size),
-                                ("n_levels", handle.n_levels),
-                                ("cache_bytes", dest.stat().st_size),
-                                ("content_hash", handle.content_hash),
-                            ),
-                        )
-                    return handle
+    def memoised() -> CacheHandle | None:
+        if force:
+            return None
+        return _open_memoised_cache(resolved_cache_dir, source_path, spec, mtime_ns, size, chunk_size, timing)
 
+    handle = memoised()
+    if handle is not None:
+        return handle
+
+    lock = cache_lock(resolved_cache_dir, _build_lock_name(source_path, spec))
+    waited = _acquire_build_lock(lock, spec, progress)
+    try:
+        handle = memoised()
+        if handle is not None:
+            if waited and progress is not None:
+                progress(handle.source_length, handle.source_length)
+            return handle
+        return _build_cache(
+            spec,
+            resolved_cache_dir,
+            source_path,
+            mtime_ns=mtime_ns,
+            size=size,
+            chunk_size=chunk_size,
+            stream_block=stream_block,
+            timing=timing,
+            progress=progress,
+        )
+    finally:
+        lock.release()
+
+
+def _build_lock_name(source_path: Path, spec: SourceSpec) -> str:
+    key = f"{source_path}::{spec.y_selector}".encode("utf-8", "surrogateescape")
+    return "build-" + hashlib.sha256(key).hexdigest()[:16]
+
+
+def _acquire_build_lock(lock: Any, spec: SourceSpec, progress: Callable[[int, int], None] | None) -> bool:
+    """Take the build lock; returns whether another process was holding it.
+
+    A wait is reported as a build at zero, so the caller's indicator shows
+    the series being prepared - by whoever is preparing it.
+    """
+    from filelock import Timeout
+
+    try:
+        lock.acquire(timeout=0)
+        return False
+    except Timeout:
+        pass
+    if progress is not None:
+        y_array = spec.open_y()
+        try:
+            progress(0, y_array.length)
+        finally:
+            y_array.close()
+    lock.acquire()
+    return True
+
+
+def _open_memoised_cache(
+    cache_dir: Path,
+    source_path: Path,
+    spec: SourceSpec,
+    mtime_ns: int,
+    size: int,
+    chunk_size: int,
+    timing: TimingProbeLike | None,
+) -> CacheHandle | None:
+    """The cache the memo records for this source as it is now, if it is there and sound."""
+    entry = lookup_memo(cache_dir, source_path, spec.y_selector, mtime_ns, size, chunk_size)
+    if entry is None:
+        return None
+    dest = cache_dir / f"{entry.content_hash}.h5"
+    if not dest.exists():
+        return None
+    hit_start = timing.start() if timing is not None else None
+    try:
+        handle = open_existing_cache(cache_dir, entry.content_hash)
+    except CacheCorruptError:
+        return None
+    if timing is not None and hit_start is not None:
+        timing.log(
+            "limelight.largeseries.cache.hit",
+            hit_start,
+            (
+                ("source_length", handle.source_length),
+                ("chunk_size", handle.chunk_size),
+                ("n_levels", handle.n_levels),
+                ("cache_bytes", dest.stat().st_size),
+                ("content_hash", handle.content_hash),
+            ),
+        )
+    return handle
+
+
+def _build_cache(
+    spec: SourceSpec,
+    resolved_cache_dir: Path,
+    source_path: Path,
+    *,
+    mtime_ns: int,
+    size: int,
+    chunk_size: int,
+    stream_block: int,
+    timing: TimingProbeLike | None,
+    progress: Callable[[int, int], None] | None,
+) -> CacheHandle:
+    """Stream the source, write its pyramid to the cache and record it in the memo."""
     start = timing.start() if timing is not None else None
 
     block = aligned_stream_block(stream_block, chunk_size)
@@ -373,7 +464,15 @@ def _write_cache_file(
                     group.create_dataset("x_min", data=level.x_min, compression="lzf")
                     group.create_dataset("x_max", data=level.x_max, compression="lzf")
 
-        os.replace(tmp_name, dest_path)
+        try:
+            os.replace(tmp_name, dest_path)
+        except PermissionError:
+            # Windows refuses to replace a file another process has open.
+            # The file there is named by the same content hash, so it holds
+            # what was just built; the new copy is not needed.
+            if not dest_path.is_file():
+                raise
+            os.remove(tmp_name)
     except BaseException:
         try:
             os.remove(tmp_name)

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
@@ -563,24 +565,41 @@ def _system_font_static_faces(font: ResolvedFont, weights: set[tuple[int, bool]]
 
 
 def _instance_variable_font(source: Path, weight: int) -> Path:
-    from .largeseries.cachedir import resolve_cache_dir
+    from .largeseries.cachedir import cache_lock, resolve_cache_dir
 
     digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
-    target = resolve_cache_dir() / "fonts" / f"{digest}-w{weight}.ttf"
+    cache_dir = resolve_cache_dir()
+    target = cache_dir / "fonts" / f"{digest}-w{weight}.ttf"
     if target.is_file():
         return target
     from fontTools.ttLib import TTFont
     from fontTools.varLib import instancer
 
-    logger.info("Instancing %s at weight %d into %s", source.name, weight, target)
-    with TTFont(source) as variable:
-        axes = {axis.axisTag: axis for axis in variable["fvar"].axes}
-        location: dict[str, float] = {}
-        if "wght" in axes:
-            location["wght"] = float(min(max(weight, axes["wght"].minValue), axes["wght"].maxValue))
-        static = instancer.instantiateVariableFont(variable, location)
+    # Another Limelight may be instancing this very face; it is written
+    # whole, beside its final name, and moved into place, under a lock so
+    # the second process finds it there rather than writing it again.
+    with cache_lock(cache_dir, f"font-{target.stem}"):
+        if target.is_file():
+            return target
+        logger.info("Instancing %s at weight %d into %s", source.name, weight, target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        static.save(target)
+        fd, tmp_name = tempfile.mkstemp(prefix=target.stem + "-", suffix=".ttf.tmp", dir=target.parent)
+        os.close(fd)
+        try:
+            with TTFont(source) as variable:
+                axes = {axis.axisTag: axis for axis in variable["fvar"].axes}
+                location: dict[str, float] = {}
+                if "wght" in axes:
+                    location["wght"] = float(min(max(weight, axes["wght"].minValue), axes["wght"].maxValue))
+                static = instancer.instantiateVariableFont(variable, location)
+                static.save(tmp_name)
+            os.replace(tmp_name, target)
+        except BaseException:
+            try:
+                os.remove(tmp_name)
+            except OSError:
+                pass
+            raise
     return target
 
 
