@@ -5,8 +5,9 @@ depends on how this copy was installed, which the app can tell:
 
 * a PyInstaller bundle (``sys.frozen``) came from one of the installers, and
   on Windows the Inno Setup installer can be run silently over the top;
-* otherwise this is a Python package, upgraded with ``uv tool upgrade`` or
-  ``pip install --upgrade`` depending on which put it here.
+* otherwise this is a Python package, reinstalled as ``limelight-app[gui]``
+  with ``uv tool install --force`` or ``pip install --upgrade`` depending on
+  which put it here.
 
 On macOS and Linux the bundles have no in-place path, so the app can only
 point at the download. Nothing here touches Qt: the window drives it.
@@ -151,19 +152,23 @@ def installer_asset(release: Release, kind: InstallKind) -> tuple[str, str] | No
     return None
 
 
+# The desktop app is the `gui` extra of the distribution (Qt is not a
+# dependency of the library). An upgrade run from inside the app must ask
+# for it by name: `uv tool upgrade limelight-app` and `pip install --upgrade
+# limelight-app` both resolve the bare distribution, and the copy that
+# comes back has no Qt to start the app with.
+GUI_SPEC = f"{DISTRIBUTION}[gui]"
+
+
 def python_upgrade_command(kind: InstallKind, version: str | None = None) -> list[str]:
     """The command that upgrades a Python-package install of Limelight.
 
-    With a `version`, that exact release; without, whatever is newest.
+    With a `version`, that exact release; without, whatever is newest. Both
+    forms name the `gui` extra, so the upgrade keeps Qt.
     """
+    spec = f"{GUI_SPEC}=={version}" if version else GUI_SPEC
     if kind is InstallKind.PYTHON_UV_TOOL:
-        return ["uv", "tool", "install", "--force", f"{DISTRIBUTION}=={version}"] if version else [
-            "uv",
-            "tool",
-            "upgrade",
-            DISTRIBUTION,
-        ]
-    spec = f"{DISTRIBUTION}=={version}" if version else DISTRIBUTION
+        return ["uv", "tool", "install", "--force", spec]
     return [sys.executable, "-m", "pip", "install", "--upgrade", spec]
 
 

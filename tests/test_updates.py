@@ -92,13 +92,20 @@ def test_installer_asset_matches_the_install_kind() -> None:
     assert picks[updates.InstallKind.PYTHON_UV_TOOL] is None
 
 
-def test_python_upgrade_commands() -> None:
+def test_python_upgrade_commands_keep_the_gui_extra() -> None:
+    # The app is the `gui` extra; an upgrade that named the bare distribution
+    # would come back without Qt and the app would not start.
     assert updates.python_upgrade_command(updates.InstallKind.PYTHON_UV_TOOL, "0.0.9") == [
-        "uv", "tool", "install", "--force", "limelight-app==0.0.9",
+        "uv", "tool", "install", "--force", "limelight-app[gui]==0.0.9",
     ]
-    assert updates.python_upgrade_command(updates.InstallKind.PYTHON_UV_TOOL) == ["uv", "tool", "upgrade", "limelight-app"]
+    assert updates.python_upgrade_command(updates.InstallKind.PYTHON_UV_TOOL) == [
+        "uv", "tool", "install", "--force", "limelight-app[gui]",
+    ]
     assert updates.python_upgrade_command(updates.InstallKind.PYTHON_PACKAGE, "0.0.9") == [
-        sys.executable, "-m", "pip", "install", "--upgrade", "limelight-app==0.0.9",
+        sys.executable, "-m", "pip", "install", "--upgrade", "limelight-app[gui]==0.0.9",
+    ]
+    assert updates.python_upgrade_command(updates.InstallKind.PYTHON_PACKAGE) == [
+        sys.executable, "-m", "pip", "install", "--upgrade", "limelight-app[gui]",
     ]
 
 

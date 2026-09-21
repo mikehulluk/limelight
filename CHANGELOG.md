@@ -7,6 +7,14 @@ versions may break things.
 
 ## [Unreleased]
 
+### Fixed
+
+- Help ▸ Check for Updates on a pip or uv install upgraded the bare
+  `limelight-app`, which since 0.0.10 is the library without Qt, so the
+  app it had just updated could not start. The upgrade now names
+  `limelight-app[gui]`. A copy already caught by this is repaired with
+  `uv tool install --force "limelight-app[gui]"` (or the pip equivalent).
+
 ## [0.0.12] - 2026-09-21
 
 ### Added
