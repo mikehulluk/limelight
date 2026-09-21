@@ -7,6 +7,8 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-09-21
+
 ### Added
 
 - A missing sample (a NaN cell) is marked with a small red cross at its x,
