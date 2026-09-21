@@ -7,6 +7,13 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-09-22
+
+### Changed
+
+- The Story tab no longer repeats the project title above the story; the
+  window title and Document Information carry it.
+
 ## [0.0.15] - 2026-09-21
 
 ### Added
@@ -342,7 +349,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.15...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.16...HEAD
+[0.0.16]: https://github.com/mikehulluk/limelight/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/mikehulluk/limelight/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/mikehulluk/limelight/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/mikehulluk/limelight/compare/v0.0.12...v0.0.13
