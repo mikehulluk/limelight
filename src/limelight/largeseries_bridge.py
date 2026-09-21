@@ -95,9 +95,12 @@ def install_timeseries_artist(
     color: str | None = None,
     fill_color: str | None = None,
     fill_alpha: float | None = None,
+    missing_marker: str | None = None,
     timing: Any | None = None,
 ) -> largeseries.ZoomSync:
     kwargs: dict[str, Any] = {"color": color, "fill_color": fill_color, "fill_alpha": fill_alpha}
+    if missing_marker is not None:
+        kwargs["missing_marker"] = missing_marker
     if target_buckets is not None:
         kwargs["target_buckets"] = target_buckets
     if timing is not None:

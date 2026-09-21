@@ -214,6 +214,7 @@ in    { limelightVersion = "1.0"
                         , color = None Text
                         , linestyle = None Text
                         , marker = None Text
+                        , missingMarker = None Limelight.MissingMarker
                         , visibleWhen = None Limelight.TextControlParameterMatch
                         }
                     )

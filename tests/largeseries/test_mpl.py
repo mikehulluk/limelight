@@ -26,17 +26,18 @@ def _build_handle(tmp_path: Path, n: int = 4096, chunk_size: int = 8):
     return spec, cache_handle
 
 
-def test_plot_envelope_creates_exactly_three_artists(tmp_path: Path) -> None:
+def test_plot_envelope_creates_exactly_four_artists(tmp_path: Path) -> None:
     spec, handle = _build_handle(tmp_path)
     fig, ax = plt.subplots()
     try:
         result = query_range(handle, spec, 0, handle.source_length - 1, target_buckets=50)
         artists = plot_envelope(ax, result)
-        assert len(artists) == 3
-        line_min, line_max, fill = artists
+        assert len(artists) == 4
+        line_min, line_max, fill, marks = artists
         assert line_min in ax.lines
         assert line_max in ax.lines
         assert fill in ax.collections
+        assert marks in ax.lines and not marks.get_visible()  # envelope view: nothing to mark
     finally:
         plt.close(fig)
         close_cache(handle)
@@ -47,10 +48,10 @@ def test_update_envelope_artists_mutates_same_objects(tmp_path: Path) -> None:
     fig, ax = plt.subplots()
     try:
         result1 = query_range(handle, spec, 0, 1000, target_buckets=50)
-        line_min, line_max, fill = plot_envelope(ax, result1)
+        line_min, line_max, fill, marks = plot_envelope(ax, result1)
 
         result2 = query_range(handle, spec, 1000, 2000, target_buckets=50)
-        update_envelope_artists(line_min, line_max, fill, result2)
+        update_envelope_artists(line_min, line_max, fill, result2, marks)
 
         assert line_min is ax.lines[0]
         np.testing.assert_array_equal(line_min.get_xdata(), result2.x)
@@ -60,19 +61,19 @@ def test_update_envelope_artists_mutates_same_objects(tmp_path: Path) -> None:
         close_cache(handle)
 
 
-def test_zoom_sync_creates_one_triple_and_updates_in_place(tmp_path: Path) -> None:
+def test_zoom_sync_creates_one_artist_set_and_updates_in_place(tmp_path: Path) -> None:
     spec, handle = _build_handle(tmp_path, n=8192, chunk_size=8)
     fig, ax = plt.subplots()
     try:
         sync = ZoomSync(ax=ax, handle=handle, spec=spec, target_buckets=50)
-        assert len(ax.lines) == 2
+        assert len(ax.lines) == 3  # min, max, missing-sample marks
         assert len(ax.collections) == 1
 
         ax.set_xlim(0, 500)
         ax.set_xlim(1000, 4000)
         ax.set_xlim(2000, 2100)
 
-        assert len(ax.lines) == 2
+        assert len(ax.lines) == 3  # min, max, missing-sample marks
         assert len(ax.collections) == 1
     finally:
         sync.disconnect()
@@ -102,7 +103,7 @@ def test_plot_envelope_uses_one_opaque_colour_for_lines_and_fill(tmp_path: Path)
     fig, ax = plt.subplots()
     try:
         result = query_range(handle, spec, 0, handle.source_length - 1, target_buckets=50)
-        line_min, line_max, fill = plot_envelope(ax, result)
+        line_min, line_max, fill, _marks = plot_envelope(ax, result)
         colour = matplotlib.colors.to_rgb(line_min.get_color())
         assert matplotlib.colors.to_rgb(line_max.get_color()) == colour
         assert tuple(fill.get_facecolor()[0]) == colour + (1.0,)
@@ -116,7 +117,7 @@ def test_plot_envelope_fill_colour_and_alpha_are_configurable(tmp_path: Path) ->
     fig, ax = plt.subplots()
     try:
         result = query_range(handle, spec, 0, handle.source_length - 1, target_buckets=50)
-        line_min, line_max, fill = plot_envelope(ax, result, color="red", fill_color="blue", fill_alpha=0.25)
+        line_min, line_max, fill, _marks = plot_envelope(ax, result, color="red", fill_color="blue", fill_alpha=0.25)
         assert matplotlib.colors.to_rgb(line_min.get_color()) == (1.0, 0.0, 0.0)
         assert matplotlib.colors.to_rgb(line_max.get_color()) == (1.0, 0.0, 0.0)
         assert tuple(fill.get_facecolor()[0]) == (0.0, 0.0, 1.0, 0.25)
@@ -137,7 +138,7 @@ def test_plot_envelope_shows_raw_line_only_when_fully_zoomed(tmp_path: Path) -> 
         # 20 samples into 50 buckets: every point is a raw sample.
         raw = query_range(handle, spec, 0, 19, target_buckets=50)
         assert raw.raw is True
-        line_min, line_max, fill = plot_envelope(ax, raw)
+        line_min, line_max, fill, _marks = plot_envelope(ax, raw)
         assert line_min.get_visible()
         assert not line_max.get_visible()
         assert not fill.get_visible()
@@ -203,6 +204,49 @@ def test_target_buckets_caps_the_pixel_resolution(tmp_path: Path) -> None:
         assert ZoomSync(ax=ax, handle=handle, spec=spec, target_buckets=10_000)._estimate_target_buckets() == int(
             ax.get_window_extent().width
         )
+    finally:
+        plt.close(fig)
+        close_cache(handle)
+
+
+def test_missing_sample_marks_sit_at_the_last_good_value() -> None:
+    from limelight.largeseries.mpl import missing_sample_marks
+
+    x = np.arange(8, dtype=np.float64)
+    y = np.array([np.nan, 1.0, 2.0, np.nan, np.nan, 5.0, np.nan, 7.0])
+    mx, my = missing_sample_marks(x, y)
+    np.testing.assert_array_equal(mx, [0.0, 3.0, 4.0, 6.0])
+    # Before any good sample the first good value stands in; a run of misses
+    # all sit at the level of the sample before the run.
+    np.testing.assert_array_equal(my, [1.0, 2.0, 2.0, 5.0])
+    assert missing_sample_marks(x, np.full(8, np.nan))[0].size == 0
+    assert missing_sample_marks(x, np.ones(8))[0].size == 0
+
+
+def test_marks_appear_only_in_the_raw_view(tmp_path: Path) -> None:
+    h5 = tmp_path / "gaps.h5"
+    y = np.sin(np.arange(20_000) / 50.0)
+    y[::30] = np.nan
+    with h5py.File(h5, "w") as f:
+        f["/y"] = y
+    spec = SourceSpec.uniform(h5, "/y", x0=0.0, dx=1.0)
+    handle = build_or_get_cache(spec, cache_dir=tmp_path / "cache", chunk_size=1024)
+    fig, ax = plt.subplots()
+    try:
+        envelope = query_range(handle, spec, 0, 19_999, target_buckets=20)
+        line_min, line_max, fill, marks = plot_envelope(ax, envelope)
+        assert not envelope.raw and not marks.get_visible()
+
+        raw = query_range(handle, spec, 0, 100, target_buckets=500)
+        update_envelope_artists(line_min, line_max, fill, raw, marks)
+        assert raw.raw and marks.get_visible()
+        np.testing.assert_array_equal(marks.get_xdata(), [0.0, 30.0, 60.0, 90.0])
+        # The first miss is sample 0: it takes the first good value after it.
+        np.testing.assert_allclose(marks.get_ydata()[0], y[1])
+        np.testing.assert_allclose(marks.get_ydata()[1], y[29])
+
+        line_min2, line_max2, fill2, marks2 = plot_envelope(ax, raw, missing_marker="none")
+        assert not marks2.get_visible()
     finally:
         plt.close(fig)
         close_cache(handle)

@@ -546,6 +546,7 @@ PERIOD_RENDER_ANCHORS = {"periodStart", "periodMidpoint", "periodEnd"}
 ALIGNMENTS = {"Left", "Center", "Right"}
 FONT_STYLES = {"Bold", "Italic"}
 AXIS_SCALES = {"Linear", "Log"}
+MISSING_MARKERS = {"cross", "none"}
 
 
 def _integer(value: int) -> str:
@@ -1122,6 +1123,8 @@ class LineArtist:
     color: str | None = None
     linestyle: str | None = None
     marker: str | None = None
+    # "cross" (default) or "none": how a missing (null/NaN) sample is shown.
+    missing_marker: str | None = None
     visible_when: "TextControlParameterMatch | None" = None
 
 
@@ -1226,6 +1229,8 @@ class TimeSeriesArtist:
     color: str | None = None
     fill_color: str | None = None
     fill_alpha: float | None = None
+    # "cross" (default) or "none": how a missing sample is shown in the raw view.
+    missing_marker: str | None = None
     visible_when: "TextControlParameterMatch | None" = None
 
 
@@ -1460,6 +1465,7 @@ class FigureSpec:
                     ("xOverride", _optional_text(x_override)),
                     ("color", _optional_text(line.color)),
                     ("linestyle", _optional_text(line.linestyle)),
+                    ("missingMarker", _optional_enum("MissingMarker", MISSING_MARKERS, line.missing_marker)),
                     ("marker", _optional_text(line.marker)),
                     ("visibleWhen", _optional_expr("Limelight.TextControlParameterMatch", visible_when)),
                 ]
@@ -1531,6 +1537,7 @@ class FigureSpec:
                     ("color", _optional_text(time_series.color)),
                     ("fillColor", _optional_text(time_series.fill_color)),
                     ("fillAlpha", _optional_double(time_series.fill_alpha)),
+                    ("missingMarker", _optional_enum("MissingMarker", MISSING_MARKERS, time_series.missing_marker)),
                     ("visibleWhen", _optional_expr("Limelight.TextControlParameterMatch", visible_when)),
                 ]
             )

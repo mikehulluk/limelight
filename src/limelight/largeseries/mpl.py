@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.collections import PolyCollection
 from matplotlib.lines import Line2D
@@ -18,6 +19,34 @@ DEFAULT_TARGET_BUCKETS = 2000
 INDICATOR_GID = "limelight-envelope-indicator"
 DEFAULT_FILL_ALPHA = 1.0
 
+# How a missing sample (a NaN in the source) is pointed out once the view is
+# zoomed to raw samples: a small red cross at the sample's x, at the height of
+# the last good sample before it, so a single bad reading is seen rather than
+# just leaving a hole in the line. Zoomed out, a bucket with some missing
+# samples draws its good ones and there is nothing to mark.
+MISSING_MARKERS = ("cross", "none")
+DEFAULT_MISSING_MARKER = "cross"
+MISSING_MARK_COLOR = "#d62728"
+MISSING_MARK_SIZE_PT = 5.0
+
+
+def missing_sample_marks(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Where to draw the marks for the NaNs in `y`: their x, at the last good y.
+
+    A missing sample before any good one takes the first good value after it
+    instead; with no good samples at all there is nothing to place them on.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    missing = np.isnan(y)
+    if not missing.any() or missing.all():
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    good = np.flatnonzero(~missing)
+    # Index of the last good sample at or before each position; positions
+    # before the first good sample get the first good one.
+    last_good = good[np.clip(np.searchsorted(good, np.arange(len(y)), side="right") - 1, 0, None)]
+    return x[missing], y[last_good[missing]]
+
 
 def plot_envelope(
     ax: Axes,
@@ -28,8 +57,10 @@ def plot_envelope(
     fill_alpha: float | None = None,
     line_kwargs: dict | None = None,
     fill_kwargs: dict | None = None,
-) -> tuple[Line2D, Line2D, PolyCollection]:
-    """Draws a min/max envelope: two edge lines and the band between them.
+    missing_marker: str = DEFAULT_MISSING_MARKER,
+) -> tuple[Line2D, Line2D, PolyCollection, Line2D]:
+    """Draws a min/max envelope: two edge lines and the band between them,
+    plus the marks for missing samples (see `missing_sample_marks`).
 
     `color` is the edge colour and, unless `fill_color` is given, the band
     colour too; the band is opaque unless `fill_alpha` says otherwise. With no
@@ -52,9 +83,28 @@ def plot_envelope(
     (line_min,) = ax.plot(result.x, result.y_min, **line_kwargs)
     (line_max,) = ax.plot(result.x, result.y_max, **line_kwargs)
     fill = ax.fill_between(result.x, result.y_min, result.y_max, **fill_kwargs)
-    _apply_envelope_mode(line_max, fill, result)
+    marks = add_missing_marks(ax, visible=missing_marker != "none")
+    _apply_envelope_mode(line_max, fill, marks, result)
 
-    return line_min, line_max, fill
+    return line_min, line_max, fill, marks
+
+
+def add_missing_marks(ax: Axes, *, visible: bool = True) -> Line2D:
+    """An (initially empty) marker-only line for missing-sample marks."""
+    (marks,) = ax.plot(
+        [], [],
+        linestyle="none",
+        marker="x",
+        markersize=MISSING_MARK_SIZE_PT,
+        markeredgewidth=1.0,
+        color=MISSING_MARK_COLOR,
+        label="_nolegend_",
+        zorder=4,
+    )
+    marks.set_visible(visible)
+    # Remembered here so the mode switch below can hide/show without losing it.
+    marks._limelight_marks_enabled = visible  # type: ignore[attr-defined]
+    return marks
 
 
 def update_envelope_artists(
@@ -62,26 +112,40 @@ def update_envelope_artists(
     line_max: Line2D,
     fill: PolyCollection,
     result: QueryResult,
+    marks: Line2D | None = None,
 ) -> None:
     line_min.set_data(result.x, result.y_min)
     line_max.set_data(result.x, result.y_max)
     # fill is a FillBetweenPolyCollection; set_data() (not set_verts()) is required
     # so its cached _bbox used by get_datalim()/relim() is refreshed too.
     fill.set_data(result.x, result.y_min, result.y_max)
-    _apply_envelope_mode(line_max, fill, result)
+    _apply_envelope_mode(line_max, fill, marks, result)
 
 
-def _apply_envelope_mode(line_max: Line2D, fill: PolyCollection, result: QueryResult) -> None:
-    """Show the envelope only when there is one.
+def _apply_envelope_mode(
+    line_max: Line2D, fill: PolyCollection, marks: Line2D | None, result: QueryResult
+) -> None:
+    """Show the envelope only when there is one, and the marks only when there isn't.
 
     Once the query returns raw samples (zoomed in far enough that every point is
     a single source value) y_min and y_max coincide, so the max line and the
     fill would just retrace the min line; hide them and let the min line stand
-    as the plain data line.
+    as the plain data line. That is also the only view in which a missing
+    sample is an identifiable point, so the marks are placed then and cleared
+    otherwise.
     """
     show_envelope = not result.raw
     line_max.set_visible(show_envelope)
     fill.set_visible(show_envelope)
+    if marks is not None:
+        enabled = getattr(marks, "_limelight_marks_enabled", True)
+        if result.raw and enabled:
+            mx, my = missing_sample_marks(result.x, result.y_min)
+            marks.set_data(mx, my)
+            marks.set_visible(True)
+        else:
+            marks.set_data([], [])
+            marks.set_visible(False)
 
 
 def indicator_label(result: QueryResult) -> str:
@@ -131,10 +195,13 @@ class ZoomSync:
     # Show a corner badge saying whether the axes currently shows raw samples
     # or a min/max envelope, so a viewer can tell how far they have zoomed in.
     indicator: bool = True
+    # "cross" marks each missing sample in the raw view; "none" leaves the gap.
+    missing_marker: str = DEFAULT_MISSING_MARKER
 
     _line_min: Line2D | None = field(default=None, init=False, repr=False)
     _line_max: Line2D | None = field(default=None, init=False, repr=False)
     _fill: PolyCollection | None = field(default=None, init=False, repr=False)
+    _marks: Line2D | None = field(default=None, init=False, repr=False)
     _indicator: Text | None = field(default=None, init=False, repr=False)
     _cid: int | None = field(default=None, init=False, repr=False)
 
@@ -148,8 +215,9 @@ class ZoomSync:
         result = query_range(
             self.handle, self.spec, x_start, x_end, self._estimate_target_buckets(), timing=self.timing
         )
-        self._line_min, self._line_max, self._fill = plot_envelope(
-            self.ax, result, color=self.color, fill_color=self.fill_color, fill_alpha=self.fill_alpha
+        self._line_min, self._line_max, self._fill, self._marks = plot_envelope(
+            self.ax, result, color=self.color, fill_color=self.fill_color, fill_alpha=self.fill_alpha,
+            missing_marker=self.missing_marker,
         )
         if self.indicator:
             self._indicator = add_indicator(self.ax, self._line_min.get_color())
@@ -168,7 +236,7 @@ class ZoomSync:
         result = query_range(
             self.handle, self.spec, x_start, x_end, self._estimate_target_buckets(), timing=self.timing
         )
-        update_envelope_artists(self._line_min, self._line_max, self._fill, result)
+        update_envelope_artists(self._line_min, self._line_max, self._fill, result, self._marks)
         if self._indicator is not None:
             self._indicator.set_text(indicator_label(result))
         ax.relim()

@@ -445,6 +445,12 @@ class _SemanticValidator:
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
                 f"fillAlpha {fill_alpha!r} is outside 0..1"
             )
+        missing_marker = artist.get("missingMarker")
+        if missing_marker is not None and missing_marker not in ("cross", "none"):
+            raise LimelightError(
+                f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
+                f"has unknown missingMarker {missing_marker!r}; expected cross or none"
+            )
         marker = artist.get("marker")
         if marker is not None and kind in ("line", "scatter") and marker not in _VALID_MARKERS:
             raise LimelightError(

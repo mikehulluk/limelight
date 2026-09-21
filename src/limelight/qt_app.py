@@ -1634,6 +1634,16 @@ def _draw_plot_contents(
                 alpha=1.0 if alpha is None else alpha,
             )
             line_colors[y_name] = line.get_color()
+            if artist.get("missingMarker") != "none":
+                # The same red cross the large-series view draws at a missing
+                # sample, at the height of the last good one.
+                from .largeseries.mpl import add_missing_marks, missing_sample_marks
+
+                mx, my = missing_sample_marks(
+                    np.asarray(x_values, dtype=float), np.array([np.nan if y is None else y for y in y_values], dtype=float)
+                )
+                if mx.size:
+                    add_missing_marks(axes).set_data(mx, my)
             artist_kind = "line"
             hover_label = series.label
         if hover_sink is not None:
@@ -2258,10 +2268,40 @@ def _format_month_ordinal_axis(axes: Any) -> None:
 
 
 def _format_matplotlib_date_axis(axes: Any) -> None:
+    """A UTC axis: each tick labelled on two lines, the time above the date.
+
+    Every tick carries the full time (HH:MM:SS, with milliseconds once the
+    view is narrower than a few seconds) and its date, so a label reads on its
+    own wherever the view is scrolled to, rather than relying on the corner
+    offset text and a first tick that happens to say the day. When every tick
+    falls on midnight (a view of days or more) the time line is dropped.
+    """
     locator = mdates.AutoDateLocator(minticks=5, maxticks=9)
     axes.xaxis.set_major_locator(locator)
-    axes.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
-    axes.tick_params(axis="x", labelrotation=35)
+    axes.xaxis.set_major_formatter(FuncFormatter(lambda value, _: _utc_tick_label(value, axes)))
+    axes.tick_params(axis="x", labelrotation=0)
+
+
+def _utc_tick_label(value: float, axes: Any) -> str:
+    when = mdates.num2date(value)
+    lower, upper = axes.get_xlim()
+    span_seconds = abs(upper - lower) * 86_400.0
+    ticks = axes.xaxis.get_majorticklocs()
+    all_midnight = len(ticks) > 0 and all(
+        _is_midnight(mdates.num2date(tick)) for tick in ticks
+    )
+    date = when.strftime("%Y-%m-%d")
+    if all_midnight and span_seconds >= 86_400.0:
+        return date
+    if span_seconds < 5.0:
+        time = when.strftime("%H:%M:%S.%f")[:-3]
+    else:
+        time = when.strftime("%H:%M:%S")
+    return f"{time}\n{date}"
+
+
+def _is_midnight(when: datetime) -> bool:
+    return when.hour == 0 and when.minute == 0 and when.second == 0 and when.microsecond == 0
 
 
 def _shortcuts(standard: QKeySequence.StandardKey, *extras: str) -> list[QKeySequence]:
@@ -5139,6 +5179,7 @@ def _install_timeseries_artist(runtime: LimelightRuntime, axes: Any, artist: dic
         color=artist.get("color"),
         fill_color=artist.get("fillColor"),
         fill_alpha=artist.get("fillAlpha"),
+        missing_marker=artist.get("missingMarker"),
         timing=runtime.timing,
     )
 

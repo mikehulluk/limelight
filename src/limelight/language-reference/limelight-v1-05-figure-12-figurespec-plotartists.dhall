@@ -19,6 +19,12 @@ let Transforms = ./limelight-v1-04-transform.dhall
 
 let TextControlParameterMatch = { controlParameter : Core.ControlParameterId, value : Text }
 
+-- `missingMarker` says how a missing sample (a null / NaN cell) is shown:
+-- `cross` (the default) draws a small red cross at the sample's x, at the
+-- height of the last good sample before it, so one bad reading is seen and
+-- not just a hole in the line; `none` leaves the gap.
+let MissingMarker = < cross | none >
+
 let LineArtist =
       { id : Core.Id
       , y : Text
@@ -28,6 +34,7 @@ let LineArtist =
       , color : Optional Text
       , linestyle : Optional Text
       , marker : Optional Text
+      , missingMarker : Optional MissingMarker
       , visibleWhen : Optional TextControlParameterMatch
       }
 
@@ -48,7 +55,9 @@ let ScatterArtist =
 -- caps that, for a series that need not be drawn at full resolution.
 -- `color` is the envelope's edge lines (and the line itself once zoomed in
 -- to raw samples); `fillColor` and `fillAlpha` are the band between the
--- edges, defaulting to the same colour, fully opaque.
+-- edges, defaulting to the same colour, fully opaque. `missingMarker` applies
+-- once the view is zoomed to raw samples; zoomed out, a bucket with some
+-- missing samples draws its good ones and there is nothing to mark.
 let TimeSeriesArtist =
       { id : Core.Id
       , y : Text
@@ -58,6 +67,7 @@ let TimeSeriesArtist =
       , color : Optional Text
       , fillColor : Optional Text
       , fillAlpha : Optional Double
+      , missingMarker : Optional MissingMarker
       , visibleWhen : Optional TextControlParameterMatch
       }
 
@@ -84,6 +94,7 @@ in  { TextControlParameterMatch = TextControlParameterMatch
     , LineArtist = LineArtist
     , ScatterArtist = ScatterArtist
     , TimeSeriesArtist = TimeSeriesArtist
+    , MissingMarker = MissingMarker
     , StemArtist = StemArtist
     , PlotArtist = PlotArtist
     }

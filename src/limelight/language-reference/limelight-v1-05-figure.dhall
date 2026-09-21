@@ -41,6 +41,7 @@ in  { Frame = Types.Frame
     , ScatterArtist = PlotArtists.ScatterArtist
     , TimeSeriesArtist = PlotArtists.TimeSeriesArtist
     , StemArtist = PlotArtists.StemArtist
+    , MissingMarker = PlotArtists.MissingMarker
     , PlotArtist = PlotArtists.PlotArtist
     , AxesAction = AxesSpecs.AxesAction
 
