@@ -7,6 +7,8 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-09-21
+
 ### Fixed
 
 - Help ▸ Check for Updates on a pip or uv install upgraded the bare
