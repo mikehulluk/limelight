@@ -14,7 +14,7 @@ from matplotlib.figure import Figure
 from limelight.app import LimelightRuntime
 from limelight.reader import open_limelight
 from limelight.semantic import validate_manifest_semantics
-from limelight.writer import LimelightProject
+from limelight.writer import FigureViewAction, LimelightProject
 
 
 def _two_panel_package(tmp_path: Path) -> Path:
@@ -469,3 +469,96 @@ def test_one_line_figure_is_one_panel(tmp_path: Path) -> None:
     assert axes_spec["xAxis"]["id"] == "fig-x-axis" and axes_spec["yAxis"]["id"] == "fig-y-axis"
     [axes] = figure.axes
     assert axes.get_title() == "Fig" and axes.get_xlabel() == "t"
+
+
+# --- Aiming at a panel ----------------------------------------------------
+
+
+def test_a_view_action_can_aim_at_any_panel(tmp_path: Path) -> None:
+    from limelight.writer import (
+        Panel,
+        axes_action_set_y_float_limits,
+        figure_view_action,
+        panel_axes_id,
+    )
+
+    project = LimelightProject(title="Aim", authors=["Test"])
+    project.add_csv_dataset(id="src", arrays={"t": [0.0, 1.0], "a": [1.0, 2.0], "b": [2.0, 1.0], "c": [0.0, 1.0]})
+    figure = project.add_figure(
+        id="fig",
+        title="Fig",
+        panels=[
+            Panel(lines=["a"], data="src", x="t"),
+            Panel(lines=["b"], data="src", x="t"),
+            Panel(lines=["c"], data="src", x="t", id="named"),
+        ],
+    )
+    assert figure.panel_ids() == ["fig-plot", "fig-plot2", "named"]
+    assert panel_axes_id("fig") == "fig-plot" and panel_axes_id("fig", 3) == "fig-plot3"
+
+    project.add_figure_view(
+        id="view",
+        ref="fig",
+        actions=[
+            figure_view_action("fig", axes_action_set_y_float_limits(0.0, 10.0), panel=2),
+            FigureViewAction(ref="named", action=axes_action_set_y_float_limits(-1.0, 1.0)),
+        ],
+    )
+    folder = tmp_path / "pkg"
+    project.write_folder(folder)
+
+    with open_limelight(folder) as package:
+        manifest = package.manifest_json()
+    validate_manifest_semantics(manifest)
+
+    [figure_view] = manifest["figureViews"]
+    assert [action["ref"] for action in figure_view["actions"]] == ["fig-plot2", "named"]
+
+    # And the limits land on those panels when the figure is drawn.
+    from limelight.qt_app import _render_figure_view_to_matplotlib_figure
+
+    with open_limelight(folder) as package:
+        runtime = LimelightRuntime(package, package.manifest_json())
+        rendered = Figure()
+        _render_figure_view_to_matplotlib_figure(
+            runtime, rendered, "fig", figure_view_actions=manifest["figureViews"][0]["actions"]
+        )
+    top, middle, bottom = rendered.axes
+    assert middle.get_ylim() == (0.0, 10.0)
+    assert bottom.get_ylim() == (-1.0, 1.0)
+
+
+def test_a_panel_can_name_its_axes(tmp_path: Path) -> None:
+    from limelight.writer import AxisDataType, Panel
+
+    project = LimelightProject(title="Named axes", authors=["Test"])
+    project.add_csv_dataset(id="src", arrays={"t": [0.0, 1.0], "a": [1.0, 2.0]})
+    project.add_figure(
+        id="fig",
+        title="Fig",
+        panels=[
+            Panel(
+                lines=["a"],
+                data="src",
+                x="t",
+                x_axis=AxisDataType.continuous(label="t", id="time-axis"),
+                y_axis=AxisDataType.continuous(label="A", id="value-axis"),
+            )
+        ],
+    )
+    folder = tmp_path / "pkg"
+    project.write_folder(folder)
+
+    with open_limelight(folder) as package:
+        manifest = package.manifest_json()
+    validate_manifest_semantics(manifest)
+
+    [figure_spec] = manifest["figures"]
+    [axes_spec] = figure_spec["axesSpecs"]
+    assert axes_spec["xAxis"]["id"] == "time-axis" and axes_spec["yAxis"]["id"] == "value-axis"
+
+
+def test_a_time_series_artist_names_its_transform() -> None:
+    from limelight.writer import TimeSeriesArtist
+
+    assert TimeSeriesArtist(data="src", array="y").transform == "identity"

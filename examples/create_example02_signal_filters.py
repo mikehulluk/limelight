@@ -13,6 +13,7 @@ from limelight import (
     AxisDataType,
     DropdownCtrlSpec,
     FigureViewAction,
+    FormSpec,
     Index,
     LineArtist,
     LimelightProject,
@@ -23,6 +24,7 @@ from limelight import (
     TextControlParameterMatch,
     array,
     axes_action_add_axis_window_decorator,
+    figure_view_action,
 )
 
 SAMPLE_RATE_HZ = 400.0
@@ -305,10 +307,12 @@ def build_project() -> LimelightProject:
             "Magnitude and phase response of the selected low-pass filter, plotted against a "
             "logarithmically-spaced frequency axis."
         ),
-        controls=[filter_dropdown],
+        forms=[FormSpec(controls=[filter_dropdown])],
     )
 
     def component_frequency_markers(figure_id: str) -> list[FigureViewAction]:
+        # The same marker down both panels of a Bode plot: the magnitude
+        # above and the phase below, so a component lines up across them.
         markers = []
         for frequency_hz in COMPONENT_FREQUENCIES_HZ:
             decorator = axes_action_add_axis_window_decorator(
@@ -316,8 +320,9 @@ def build_project() -> LimelightProject:
                 upper=frequency_hz,
                 label=f"{frequency_hz:g} Hz",
             )
-            markers.append(FigureViewAction(ref=f"{figure_id}-plot", action=decorator))
-            markers.append(FigureViewAction(ref=f"{figure_id}-plot2", action=decorator))
+            markers.extend(
+                figure_view_action(figure_id, decorator, panel=panel) for panel in (1, 2)
+            )
         return markers
 
     project.set_story_markdown(

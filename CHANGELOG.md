@@ -7,6 +7,30 @@ versions may break things.
 
 ## [Unreleased]
 
+### Changed
+
+- **A figure's forms are FormSpecs, and it can have more than one.** The
+  manifest has always given a figure a list of forms, each with its own
+  `id`, `frame`, `title`, `caption` and `controls`; the writer folded
+  `controls=`/`form_title=`/`form_caption=` into at most one, named after
+  the figure and never placed. `FigureSpec.forms` is now that list and
+  `FormSpec` carries the whole record, so a figure can group its controls
+  into several titled forms and place one by a frame. `add_figure` takes
+  `forms=[FormSpec(...)]`; `add_line_figure` and `add_map_figure` keep
+  `controls=`, `form_title=` and `form_caption=` as the one-form case.
+- A figure view's action can aim at any panel, not only the first:
+  `figure_view_action(figure_id, action, panel=2)`. `panel_axes_id` is the
+  naming rule it and the writer share, and `FigureSpec.panel_ids()` reports
+  the id of each panel, including one that named its own, for a
+  `FigureViewAction(ref=...)` written directly. Setting limits on or
+  decorating a second panel was not possible before.
+- An axis can be given an `id` (`AxisDataType.continuous(..., id="time")`);
+  it used to be named after the figure and the panel's place in it, with no
+  way to say otherwise.
+- `TimeSeriesArtist.transform` is a field rather than an assumption the
+  renderer made. `identity` remains the manifest's only Transform, so
+  nothing changes in a package.
+
 ## [0.0.18] - 2026-09-22
 
 ### Added

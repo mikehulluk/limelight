@@ -652,6 +652,7 @@ ALIGNMENTS = {"Left", "Center", "Right"}
 FONT_STYLES = {"Bold", "Italic"}
 AXIS_SCALES = {"Linear", "Log"}
 MISSING_MARKERS = {"cross", "none"}
+TRANSFORMS = {"identity"}
 
 
 def _integer(value: int) -> str:
@@ -797,12 +798,20 @@ class Index:
 
 @dataclass(frozen=True)
 class AxisDataType:
+    """An axis of a panel: the manifest's AxisSpec, with its dataType inside it.
+
+    `label`, `share_group` and `id` are the AxisSpec's own; `kind`, `unit`,
+    `calendar` and `scale` are the AxisDataType it carries. An `id` left
+    unset is named after the figure and the panel's place in it.
+    """
+
     kind: str
     label: str | None = None
     unit: str | None = None
     calendar: str | None = None
     share_group: str | None = None
     scale: str = "Linear"
+    id: str | None = None
 
     @classmethod
     def continuous(
@@ -812,8 +821,9 @@ class AxisDataType:
         unit: str | None = None,
         share_group: str | None = None,
         scale: str = "Linear",
+        id: str | None = None,
     ) -> "AxisDataType":
-        return cls("continuous", label=label, unit=unit, share_group=share_group, scale=scale)
+        return cls("continuous", label=label, unit=unit, share_group=share_group, scale=scale, id=id)
 
     @classmethod
     def discrete(
@@ -822,8 +832,9 @@ class AxisDataType:
         label: str | None = None,
         unit: str | None = None,
         share_group: str | None = None,
+        id: str | None = None,
     ) -> "AxisDataType":
-        return cls("discrete", label=label, unit=unit, share_group=share_group)
+        return cls("discrete", label=label, unit=unit, share_group=share_group, id=id)
 
     @classmethod
     def time_series(
@@ -832,8 +843,9 @@ class AxisDataType:
         label: str | None = None,
         calendar: str | None = None,
         share_group: str | None = None,
+        id: str | None = None,
     ) -> "AxisDataType":
-        return cls("timeSeries", label=label, calendar=calendar, share_group=share_group)
+        return cls("timeSeries", label=label, calendar=calendar, share_group=share_group, id=id)
 
     def render(self) -> str:
         if self.kind == "continuous":
@@ -853,10 +865,10 @@ class AxisDataType:
         raise ValueError(f"Unsupported axis data type {self.kind!r}")
 
 
-def _axis_spec(axis_id: str, axis_data_type: AxisDataType) -> str:
+def _axis_spec(default_id: str, axis_data_type: AxisDataType) -> str:
     return _record(
         [
-            ("id", _quote(axis_id)),
+            ("id", _quote(axis_data_type.id or default_id)),
             ("label", _optional_display_text(axis_data_type.label)),
             ("shareGroup", _optional_axis_group_id(axis_data_type.share_group)),
             ("dataType", axis_data_type.render()),
@@ -1364,6 +1376,9 @@ class TimeSeriesArtist:
     # "cross" (default) or "none": how a missing sample is shown in the raw view.
     missing_marker: str | None = None
     visible_when: "TextControlParameterMatch | None" = None
+    # The manifest's only Transform today; named here so the field is the
+    # artist's rather than the renderer's assumption.
+    transform: str = "identity"
 
 
 @dataclass
@@ -1547,13 +1562,54 @@ class SliderCtrlSpec:
 
 
 @dataclass
+class FormSpec:
+    """A figure's form of controls: the FormSpec the manifest carries, in Python.
+
+    `controls` are the dropdowns and sliders that edit the project's control
+    parameters. A figure can carry more than one form - a group per thing
+    being controlled - and each has its own `title`, `caption` and `id`. A
+    `frame` places the form in figure coordinates the way a panel's does.
+    """
+
+    controls: Sequence[DropdownCtrlSpec | SliderCtrlSpec] = ()
+    title: str | None = None
+    caption: str | None = None
+    id: str | None = None
+    frame: Frame | None = None
+
+    def render(self, *, default_id: str) -> str:
+        return _record(
+            [
+                ("id", _quote(self.id or default_id)),
+                ("frame", _optional_frame(self.frame)),
+                ("title", _optional_display_text(self.title)),
+                ("caption", _optional_display_text(self.caption)),
+                ("controls", _list([control.render() for control in self.controls], "Limelight.FormCtrlSpec")),
+            ]
+        )
+
+
+def _one_form(
+    controls: Sequence[DropdownCtrlSpec | SliderCtrlSpec],
+    title: str | None,
+    caption: str | None,
+) -> list[FormSpec]:
+    """The single form a builder's `controls=` makes, or none when it names no controls."""
+
+    if not controls:
+        return []
+    return [FormSpec(controls=list(controls), title=title, caption=caption)]
+
+
+@dataclass
 class FigureSpec:
     """A figure: its panels, and the maps, forms and table views beside them.
 
-    The manifest's FigureSpec, field for field. `panels` is its `axesSpecs`,
-    in order, and every panel is a Panel: a figure that is one plot is a
-    figure with one panel. `add_figure` builds one of these, and
-    `add_line_figure` builds the single-panel case.
+    The manifest's FigureSpec, field for field. `panels` is its `axesSpecs`
+    and `forms` its `formSpecs`, each in order, and each entry is the whole
+    record the manifest carries: a figure that is one plot is a figure with
+    one Panel. `add_figure` builds one of these, and `add_line_figure`
+    builds the single-panel case.
     """
 
     id: str
@@ -1563,9 +1619,18 @@ class FigureSpec:
     size: FigureSize | None = None
     map_specs: list["MapSpec"] = field(default_factory=list)
     table_views: list["TableViewSpec"] = field(default_factory=list)
-    controls: list[DropdownCtrlSpec | SliderCtrlSpec] = field(default_factory=list)
-    form_title: str | None = None
-    form_caption: str | None = None
+    forms: list[FormSpec] = field(default_factory=list)
+
+    def panel_ids(self) -> list[str]:
+        """The id of each panel, in order, as the manifest will carry it.
+
+        What a FigureViewAction aims at; a panel that named its own `id` has
+        that one, and the rest are named after the figure.
+        """
+
+        return [
+            panel.id or panel_axes_id(self.id, number) for number, panel in enumerate(self.panels, start=1)
+        ]
 
     def _artist_actions(self, panel: Panel) -> list[str]:
         """The panel's artists, each as an `AddData` action.
@@ -1656,7 +1721,7 @@ class FigureSpec:
                     ("id", _quote(artist_id)),
                     ("y", _quote(_column_ref(time_series.data, time_series.array))),
                     ("label", _optional_display_text(time_series.label)),
-                    ("transform", "Limelight.Transform.identity"),
+                    ("transform", _enum("Transform", TRANSFORMS, time_series.transform)),
                     ("targetBuckets", _optional_natural(time_series.target_buckets)),
                     ("color", _optional_text(time_series.color)),
                     ("fillColor", _optional_text(time_series.fill_color)),
@@ -1675,7 +1740,7 @@ class FigureSpec:
         """One panel as an AxesSpec. `number` is its place in the figure, from 1."""
 
         suffix = "" if number == 1 else str(number)
-        panel_id = panel.id or f"{self.id}-plot{suffix}"
+        panel_id = panel.id or panel_axes_id(self.id, number)
         x_axis = panel.x_axis or AxisDataType.continuous(label=panel.x)
         y_axis = panel.y_axis or AxisDataType.continuous(label="Value")
         return _record(
@@ -1696,18 +1761,10 @@ class FigureSpec:
             self._render_panel(panel, number=number) for number, panel in enumerate(self.panels, start=1)
         ]
 
-        form_specs = []
-        if self.controls:
-            control_form = _record(
-                [
-                    ("id", _quote(f"{self.id}-controls")),
-                    ("frame", "None Limelight.Frame"),
-                    ("title", _optional_display_text(self.form_title)),
-                    ("caption", _optional_display_text(self.form_caption)),
-                    ("controls", _list([control.render() for control in self.controls], "Limelight.FormCtrlSpec")),
-                ]
-            )
-            form_specs.append(control_form)
+        form_specs = [
+            form.render(default_id=f"{self.id}-controls{'' if number == 1 else number}")
+            for number, form in enumerate(self.forms, start=1)
+        ]
 
         return _record(
             [
@@ -2144,8 +2201,26 @@ def axes_action_add_annotation(
     )
 
 
-def figure_view_action(figure_id: str, action: AxesAction | str) -> FigureViewAction:
-    return FigureViewAction(ref=f"{figure_id}-plot", action=action)
+def panel_axes_id(figure_id: str, panel: int = 1) -> str:
+    """The id a figure's `panel`th AxesSpec is given when the Panel names none.
+
+    Panels are numbered from 1, as they are drawn: the first is
+    `<figure>-plot` and the rest `<figure>-plot2`, `-plot3` and so on.
+    """
+
+    if panel < 1:
+        raise ValueError(f"Panel number {panel!r} must be 1 or more")
+    return f"{figure_id}-plot{'' if panel == 1 else panel}"
+
+
+def figure_view_action(figure_id: str, action: AxesAction | str, *, panel: int = 1) -> FigureViewAction:
+    """An action for one panel of a figure, the first unless `panel` says otherwise.
+
+    A panel given an `id` of its own is aimed at by that id, which
+    `FigureSpec.panel_ids` reports: `FigureViewAction(ref=..., action=...)`.
+    """
+
+    return FigureViewAction(ref=panel_axes_id(figure_id, panel), action=action)
 
 
 @dataclass(frozen=True)
@@ -2600,14 +2675,12 @@ class LimelightProject:
         size: FigureSize | None = None,
         map_specs: Sequence[MapSpec] = (),
         table_views: Sequence[TableViewSpec] = (),
-        controls: Sequence[DropdownCtrlSpec | SliderCtrlSpec] = (),
-        form_title: str | None = None,
-        form_caption: str | None = None,
+        forms: Sequence[FormSpec] = (),
     ) -> FigureSpec:
-        """A figure of however many panels, each said in full.
+        """A figure of however many panels and forms, each said in full.
 
-        Every panel is a Panel, the first included; `add_line_figure` is the
-        one-panel case with its artists named on the call.
+        Every panel is a Panel and every form a FormSpec; `add_line_figure`
+        is the case of one of each, named on the call.
         """
 
         figure_spec = FigureSpec(
@@ -2618,9 +2691,7 @@ class LimelightProject:
             size=size,
             map_specs=list(map_specs),
             table_views=list(table_views),
-            controls=list(controls),
-            form_title=form_title,
-            form_caption=form_caption,
+            forms=list(forms),
         )
         self.figure_specs.append(figure_spec)
         return figure_spec
@@ -2680,9 +2751,7 @@ class LimelightProject:
             size=size,
             map_specs=map_specs,
             table_views=table_views,
-            controls=controls,
-            form_title=form_title,
-            form_caption=form_caption,
+            forms=_one_form(controls, form_title, form_caption),
         )
 
     def _index_is_absolute_time(self, dataset_id: str) -> bool:
@@ -2709,9 +2778,7 @@ class LimelightProject:
             caption=caption,
             map_specs=map_specs,
             table_views=table_views,
-            controls=controls,
-            form_title=form_title,
-            form_caption=form_caption,
+            forms=_one_form(controls, form_title, form_caption),
         )
 
     def render_project_dhall(self) -> str:
