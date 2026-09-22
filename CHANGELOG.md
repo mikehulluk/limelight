@@ -7,6 +7,8 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.18] - 2026-09-22
+
 ### Added
 
 - Launching Limelight with no package offers the packages you last had
@@ -396,7 +398,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.17...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.18...HEAD
+[0.0.18]: https://github.com/mikehulluk/limelight/compare/v0.0.17...v0.0.18
 [0.0.17]: https://github.com/mikehulluk/limelight/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/mikehulluk/limelight/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/mikehulluk/limelight/compare/v0.0.14...v0.0.15
