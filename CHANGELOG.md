@@ -18,6 +18,28 @@ versions may break things.
 - A recent package that has been moved or deleted is dropped from the list
   rather than offered: the File > Recent menu prunes them each time it is
   built, not only at startup.
+- **A figure is a list of panels, each said in full.** The writer's figure
+  model now mirrors the manifest's: `FigureSpec` is the manifest's
+  FigureSpec field for field - `id`, `title`, `caption`, `size`, `panels`
+  (its `axesSpecs`), `map_specs`, `table_views` and the form - and a `Panel`
+  is a whole `AxesSpec`: lines, scatters, stems and time series, its own
+  `actions` (the limits and decorators the `axes_action_*` helpers build),
+  `title`, `caption`, `x_axis`, `y_axis`, `data`/`x`, `id`, `height` and
+  `frame`. Before this, only lines could go on any panel but the first, and
+  a panel could not be titled, bounded, decorated, or drawn from another
+  dataset.
+- `Project.add_figure(id=, title=, panels=[Panel(...), ...])` is the
+  constructor for a figure of any number of panels. `add_line_figure` is now
+  only the one-panel case, and no longer takes `y2`, `y2_axis`,
+  `panel_height` or `panel_frame`: **this breaks authoring scripts that used
+  those**, which become a second `Panel` passed to `add_figure`, or `height`
+  and `frame` on the panel.
+- A panel with a `title` of its own is drawn with it; a figure's title still
+  sits over its first panel.
+- Panels no longer have a share group forced on them. As before, panels
+  whose x-axes name no `share_group` pan and zoom together; a panel that
+  names one of its own now stands apart, which is what side-by-side panels
+  want.
 
 ## [0.0.17] - 2026-09-22
 

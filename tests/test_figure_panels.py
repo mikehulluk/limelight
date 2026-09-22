@@ -1,6 +1,6 @@
 """Stacked panels: a figure whose axesSpecs render as vertically stacked plots.
 
-`y2=` on add_line_figure is the original two-panel form (a Bode plot); the
+A figure is a list of panels, each said in full (a Bode plot is two); the
 renderer, PDF sizing and writer must all treat that as one case of N panels.
 """
 
@@ -18,12 +18,21 @@ from limelight.writer import LimelightProject
 
 
 def _two_panel_package(tmp_path: Path) -> Path:
+    from limelight.writer import Panel
+
     project = LimelightProject(title="Bode", authors=["Test"])
     project.add_csv_dataset(
         id="src",
         arrays={"f": [1.0, 10.0, 100.0], "mag": [0.0, -3.0, -20.0], "phase": [0.0, -45.0, -90.0]},
     )
-    project.add_line_figure(id="bode", title="Bode", data="src", x="f", y=["mag"], y2=["phase"])
+    project.add_figure(
+        id="bode",
+        title="Bode",
+        panels=[
+            Panel(lines=["mag"], data="src", x="f"),
+            Panel(lines=["phase"], data="src", x="f"),
+        ],
+    )
     folder = tmp_path / "pkg"
     project.write_folder(folder)
     return folder
@@ -60,6 +69,8 @@ def test_y2_renders_two_stacked_panels_sharing_x(tmp_path: Path) -> None:
 def test_stacked_panels_line_their_y_labels_up(tmp_path: Path) -> None:
     from matplotlib.backends.backend_agg import FigureCanvasAgg
 
+    from limelight.writer import Panel
+
     project = LimelightProject(title="Wide and narrow", authors=["Test"])
     # The top panel's tick labels are far wider than the bottom's, which is
     # what pushes one y label further from its axis than the other.
@@ -67,7 +78,11 @@ def test_stacked_panels_line_their_y_labels_up(tmp_path: Path) -> None:
         id="src",
         arrays={"f": [1.0, 2.0, 3.0], "wide": [-123456.0, 0.0, 123456.0], "narrow": [0.0, 1.0, 2.0]},
     )
-    project.add_line_figure(id="fig", title="Fig", data="src", x="f", y=["wide"], y2=["narrow"])
+    project.add_figure(
+        id="fig",
+        title="Fig",
+        panels=[Panel(lines=["wide"], data="src", x="f"), Panel(lines=["narrow"], data="src", x="f")],
+    )
     folder = tmp_path / "pkg"
     project.write_folder(folder)
 
@@ -87,15 +102,13 @@ def _three_panel_package(tmp_path: Path) -> Path:
         id="src",
         arrays={"t": [0.0, 1.0, 2.0], "a": [1.0, 2.0, 3.0], "b": [3.0, 2.0, 1.0], "c": [0.0, 1.0, 0.0]},
     )
-    project.add_line_figure(
+    project.add_figure(
         id="stack",
         title="Stack",
-        data="src",
-        x="t",
-        y=["a"],
         panels=[
-            Panel(lines=[("b", "B")], y_axis=AxisDataType.continuous(label="B value")),
-            Panel(lines=[("c", "C")], id="custom-third"),
+            Panel(lines=["a"], data="src", x="t"),
+            Panel(lines=[("b", "B")], data="src", x="t", y_axis=AxisDataType.continuous(label="B value")),
+            Panel(lines=[("c", "C")], data="src", x="t", id="custom-third"),
         ],
     )
     folder = tmp_path / "pkg"
@@ -111,7 +124,8 @@ def test_panels_write_one_axes_spec_each_in_one_share_group(tmp_path: Path) -> N
     [figure_spec] = manifest["figures"]
     axes_specs = figure_spec["axesSpecs"]
     assert [spec["id"] for spec in axes_specs] == ["stack-plot", "stack-plot2", "custom-third"]
-    assert len({spec["xAxis"]["shareGroup"] for spec in axes_specs}) == 1
+    # None names a share group, so the renderer reads them as one stack.
+    assert all("shareGroup" not in spec["xAxis"] for spec in axes_specs)
     assert axes_specs[1]["yAxis"]["label"] == "B value"
     assert [action["y"] for action in axes_specs[2]["actions"]] == ["src['c']"]
 
@@ -128,12 +142,16 @@ def test_three_panels_render_as_a_stack(tmp_path: Path) -> None:
     assert middle.get_ylabel() == "B value"
 
 
-def test_y2_and_panels_combine_in_order(tmp_path: Path) -> None:
+def test_panels_render_in_the_order_they_are_given(tmp_path: Path) -> None:
     from limelight.writer import Panel
 
     project = LimelightProject(title="Mixed", authors=["Test"])
     project.add_csv_dataset(id="src", arrays={"t": [0.0, 1.0], "a": [1.0, 2.0], "b": [2.0, 1.0], "c": [0.0, 1.0]})
-    project.add_line_figure(id="mixed", title="Mixed", data="src", x="t", y=["a"], y2=["b"], panels=[Panel(lines=["c"])])
+    project.add_figure(
+        id="mixed",
+        title="Mixed",
+        panels=[Panel(lines=[name], data="src", x="t") for name in ("a", "b", "c")],
+    )
     folder = tmp_path / "pkg"
     project.write_folder(folder)
 
@@ -172,10 +190,14 @@ def test_figure_aspect_grows_with_each_panel() -> None:
     assert figure_aspect(spec(3)) > figure_aspect(spec(2))
 
 
-def _sized_package(tmp_path: Path, **figure_kwargs: object) -> Path:
+def _sized_package(tmp_path: Path, *, panels=None, **figure_kwargs: object) -> Path:
+    from limelight.writer import Panel
+
     project = LimelightProject(title="Sized", authors=["Test"])
     project.add_csv_dataset(id="src", arrays={"t": [0.0, 1.0, 2.0], "a": [1.0, 2.0, 3.0], "b": [3.0, 2.0, 1.0]})
-    project.add_line_figure(id="fig", title="Fig", data="src", x="t", y=["a"], **figure_kwargs)
+    if panels is None:
+        panels = [Panel(lines=["a"], data="src", x="t")]
+    project.add_figure(id="fig", title="Fig", panels=panels, **figure_kwargs)
     folder = tmp_path / "pkg"
     project.write_folder(folder)
     return folder
@@ -184,7 +206,14 @@ def _sized_package(tmp_path: Path, **figure_kwargs: object) -> Path:
 def test_height_ratios_size_the_stacked_panels(tmp_path: Path) -> None:
     from limelight.writer import Panel
 
-    figure, manifest = _render(_sized_package(tmp_path, panel_height=3.0, panels=[Panel(lines=["b"])]), "fig")
+    package = _sized_package(
+        tmp_path,
+        panels=[
+            Panel(lines=["a"], data="src", x="t", height=3.0),
+            Panel(lines=["b"], data="src", x="t"),
+        ],
+    )
+    figure, manifest = _render(package, "fig")
 
     [figure_spec] = manifest["figures"]
     assert [spec.get("heightRatio") for spec in figure_spec["axesSpecs"]] == [3.0, None]
@@ -199,8 +228,10 @@ def test_frames_place_panels_exactly_and_side_by_side(tmp_path: Path) -> None:
 
     folder = _sized_package(
         tmp_path,
-        panel_frame=(0.1, 0.15, 0.35, 0.75),
-        panels=[Panel(lines=["b"], frame=(0.6, 0.15, 0.35, 0.75))],
+        panels=[
+            Panel(lines=["a"], data="src", x="t", frame=(0.1, 0.15, 0.35, 0.75)),
+            Panel(lines=["b"], data="src", x="t", frame=(0.6, 0.15, 0.35, 0.75)),
+        ],
     )
     figure, manifest = _render(folder, "fig")
 
@@ -242,17 +273,199 @@ def test_figure_size_sets_width_and_aspect(tmp_path: Path) -> None:
     [
         ({"size": "FigureSize(width=ImageWidth.percent(120))"}, "wider than the column"),
         ({"size": "FigureSize(aspect=0)"}, "aspect 0 must be positive"),
-        ({"panel_height": -1.0}, "heightRatio -1 must be positive"),
-        ({"panel_frame": (0.5, 0.5, 0.6, 0.4)}, "within the figure"),
-        ({"panel_frame": (0.1, 0.1, 0.0, 0.5)}, "positive width and height"),
+        ({"panels": '[Panel(lines=["a"], data="src", x="t", height=-1.0)]'}, "heightRatio -1 must be positive"),
+        (
+            {"panels": '[Panel(lines=["a"], data="src", x="t", frame=(0.5, 0.5, 0.6, 0.4))]'},
+            "within the figure",
+        ),
+        (
+            {"panels": '[Panel(lines=["a"], data="src", x="t", frame=(0.1, 0.1, 0.0, 0.5))]'},
+            "positive width and height",
+        ),
     ],
 )
 def test_bad_sizes_are_rejected(tmp_path: Path, figure_kwargs: dict, message: str) -> None:
     from limelight.reader import LimelightError
-    from limelight.writer import FigureSize, ImageWidth  # noqa: F401 - named in the parametrised source
+    # Named in the parametrised source, which is evaluated here.
+    from limelight.writer import FigureSize, ImageWidth, Panel  # noqa: F401
 
     kwargs = {key: (eval(value) if isinstance(value, str) else value) for key, value in figure_kwargs.items()}
     with open_limelight(_sized_package(tmp_path, **kwargs)) as package:
         manifest = package.manifest_json()
     with pytest.raises(LimelightError, match=message):
         validate_manifest_semantics(manifest)
+
+
+# --- A Panel is a whole AxesSpec ------------------------------------------
+
+
+def test_a_panel_carries_every_kind_of_artist_not_just_lines(tmp_path: Path) -> None:
+    from limelight.writer import Panel, ScatterArtist, StemArtist
+
+    project = LimelightProject(title="Kinds", authors=["Test"])
+    project.add_csv_dataset(
+        id="src",
+        arrays={"t": [0.0, 1.0, 2.0], "a": [1.0, 2.0, 3.0], "b": [3.0, 2.0, 1.0], "c": [0.0, 1.0, 0.0]},
+    )
+    project.add_figure(
+        id="fig",
+        title="Fig",
+        panels=[
+            Panel(lines=["a"], data="src", x="t"),
+            Panel(scatters=[ScatterArtist(array="b", label="B")], data="src", x="t"),
+            Panel(stems=[StemArtist(array="c", label="C")], data="src", x="t"),
+        ],
+    )
+    folder = tmp_path / "pkg"
+    project.write_folder(folder)
+
+    figure, manifest = _render(folder, "fig")
+    validate_manifest_semantics(manifest)
+
+    [figure_spec] = manifest["figures"]
+    scatter_panel, stem_panel = figure_spec["axesSpecs"][1:]
+    assert [action["x"] for action in scatter_panel["actions"]] == ["src['t']"]
+    assert [action["y"] for action in scatter_panel["actions"]] == ["src['b']"]
+    assert [action["baseline"] for action in stem_panel["actions"]] == [0.0]
+    # All three drew something.
+    assert all(axes.collections or axes.lines for axes in figure.axes)
+
+
+def test_a_panel_titles_itself_and_the_figure_titles_the_first(tmp_path: Path) -> None:
+    from limelight.writer import Panel
+
+    project = LimelightProject(title="Titled", authors=["Test"])
+    project.add_csv_dataset(id="src", arrays={"t": [0.0, 1.0], "a": [1.0, 2.0], "b": [2.0, 1.0]})
+    project.add_figure(
+        id="fig",
+        title="Fig",
+        panels=[
+            Panel(lines=["a"], data="src", x="t"),
+            Panel(lines=["b"], data="src", x="t", title="Below"),
+        ],
+    )
+    folder = tmp_path / "pkg"
+    project.write_folder(folder)
+
+    figure, manifest = _render(folder, "fig")
+    [figure_spec] = manifest["figures"]
+    assert figure_spec["axesSpecs"][1]["title"] == "Below"
+    top, bottom = figure.axes
+    assert top.get_title() == "Fig"
+    assert bottom.get_title() == "Below"
+
+
+def test_a_panel_plots_another_dataset_when_it_names_one(tmp_path: Path) -> None:
+    from limelight.writer import Panel
+
+    project = LimelightProject(title="Two sources", authors=["Test"])
+    project.add_csv_dataset(id="one", arrays={"t": [0.0, 1.0], "a": [1.0, 2.0]})
+    project.add_csv_dataset(id="two", arrays={"u": [0.0, 1.0], "b": [5.0, 6.0]})
+    project.add_figure(
+        id="fig",
+        title="Fig",
+        panels=[
+            Panel(lines=["a"], data="one", x="t"),
+            Panel(lines=["b"], data="two", x="u"),
+        ],
+    )
+    folder = tmp_path / "pkg"
+    project.write_folder(folder)
+
+    with open_limelight(folder) as package:
+        manifest = package.manifest_json()
+    validate_manifest_semantics(manifest)
+
+    [figure_spec] = manifest["figures"]
+    [action] = figure_spec["axesSpecs"][1]["actions"]
+    assert action["y"] == "two['b']" and action["xOverride"] == "two['u']"
+
+
+def test_a_panel_carries_its_own_limits_and_decorators(tmp_path: Path) -> None:
+    from limelight.writer import Panel, axes_action_add_rect_decorator, axes_action_set_y_float_limits
+
+    project = LimelightProject(title="Marked", authors=["Test"])
+    project.add_csv_dataset(id="src", arrays={"t": [0.0, 1.0], "a": [1.0, 2.0], "b": [2.0, 1.0]})
+    project.add_figure(
+        id="fig",
+        title="Fig",
+        panels=[
+            Panel(lines=["a"], data="src", x="t"),
+            Panel(
+                lines=["b"],
+                data="src",
+                x="t",
+                actions=[
+                    axes_action_set_y_float_limits(0.0, 10.0),
+                    axes_action_add_rect_decorator(
+                        x_lower=0.1, x_upper=0.4, y_lower=1.0, y_upper=2.0, label="Window"
+                    ),
+                ],
+            )
+        ],
+    )
+    folder = tmp_path / "pkg"
+    project.write_folder(folder)
+
+    figure, manifest = _render(folder, "fig")
+    validate_manifest_semantics(manifest)
+
+    [figure_spec] = manifest["figures"]
+    actions = figure_spec["axesSpecs"][1]["actions"]
+    # The line, then the limits and the rectangle the panel itself carries.
+    assert len(actions) == 3
+    bottom = figure.axes[1]
+    assert bottom.get_ylim() == (0.0, 10.0)
+    assert bottom.patches
+
+
+def test_a_panel_with_its_own_x_axis_stands_apart_from_the_stack(tmp_path: Path) -> None:
+    from limelight.writer import AxisDataType, Panel
+
+    project = LimelightProject(title="Own x", authors=["Test"])
+    project.add_csv_dataset(id="src", arrays={"t": [0.0, 1.0], "a": [1.0, 2.0], "u": [5.0, 6.0], "b": [2.0, 1.0]})
+    project.add_figure(
+        id="fig",
+        title="Fig",
+        panels=[
+            Panel(lines=["a"], data="src", x="t", x_axis=AxisDataType.continuous(label="t", share_group="together")),
+            Panel(
+                lines=["b"],
+                data="src",
+                x="u",
+                x_axis=AxisDataType.continuous(label="Its own x", share_group="apart"),
+            ),
+        ],
+    )
+    folder = tmp_path / "pkg"
+    project.write_folder(folder)
+
+    figure, manifest = _render(folder, "fig")
+    validate_manifest_semantics(manifest)
+
+    [figure_spec] = manifest["figures"]
+    top_spec, bottom_spec = figure_spec["axesSpecs"]
+    assert top_spec["xAxis"]["shareGroup"] == "together"
+    assert bottom_spec["xAxis"]["shareGroup"] == "apart"
+    assert bottom_spec["xAxis"]["label"] == "Its own x"
+
+    top, bottom = figure.axes
+    assert bottom not in top.get_shared_x_axes().get_siblings(top)
+    # Standing apart, it labels its own x, and so does the panel above it.
+    assert top.get_xlabel() == "t" and bottom.get_xlabel() == "Its own x"
+
+
+def test_one_line_figure_is_one_panel(tmp_path: Path) -> None:
+    project = LimelightProject(title="One", authors=["Test"])
+    project.add_csv_dataset(id="src", arrays={"t": [0.0, 1.0], "a": [1.0, 2.0]})
+    project.add_line_figure(id="fig", title="Fig", data="src", x="t", y=["a"])
+    folder = tmp_path / "pkg"
+    project.write_folder(folder)
+
+    figure, manifest = _render(folder, "fig")
+    [figure_spec] = manifest["figures"]
+    [axes_spec] = figure_spec["axesSpecs"]
+    assert axes_spec["id"] == "fig-plot"
+    assert axes_spec["xAxis"]["id"] == "fig-x-axis" and axes_spec["yAxis"]["id"] == "fig-y-axis"
+    [axes] = figure.axes
+    assert axes.get_title() == "Fig" and axes.get_xlabel() == "t"

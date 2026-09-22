@@ -1838,7 +1838,12 @@ def _draw_plot_contents(
     text.set_ylabel(axes, axis_label(y_axis_binding))
     axes.grid(True, color="#dddddd", linewidth=0.8)
     text.style_ticks(axes)
-    if show_title:
+    # A panel titles itself when it says so; otherwise the figure's title
+    # sits over the first panel, which is the whole title of a one-plot figure.
+    panel_title = axes_spec.get("title")
+    if panel_title:
+        text.set_title(axes, panel_title)
+    elif show_title:
         text.set_title(axes, runtime.figure_specs[figure_id]["title"])
     if show_x_axis:
         text.set_xlabel(axes, axis_label(x_axis_binding))

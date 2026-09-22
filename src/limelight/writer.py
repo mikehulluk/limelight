@@ -1297,19 +1297,46 @@ def _optional_frame(value: Frame | None) -> str:
 
 @dataclass
 class Panel:
-    """One further plot stacked below a figure's first, sharing its x-axis.
+    """One panel of a figure: the AxesSpec the manifest carries, in Python.
 
-    `lines` takes the same shorthand as `y=` on add_line_figure: an array
-    name, an (array, label) pair, or a LineArtist. `height` is the panel's
-    share of the stack relative to the others (all 1 by default); `frame`
-    instead places it exactly, and takes it out of the stack.
+    Every field of an `AxesSpec` is here. The artists are the panel's
+    `actions` of the `AddData` kind, one list per kind of artist, and
+    `actions` itself takes the rest - the limits and decorators the
+    `axes_action_*` helpers build. `data` and `x` are the dataset and the x
+    column the artists on this panel plot against unless one names its own,
+    so a panel says them once and a panel showing another dataset differs
+    from its neighbours in that one line.
+
+    `lines` takes a shorthand as well as a LineArtist: an array name, or an
+    (array, label) pair.
+
+    Panels without a `frame` are stacked top to bottom in the order they are
+    given, each `height` tall relative to the others (all 1 by default); a
+    `frame` places the panel exactly instead and takes it out of the stack.
+    Panels whose x-axes name no `share_group` pan and zoom together, as one
+    figure; give a panel's `x_axis` a `share_group` of its own to take it
+    out of that, which is what side-by-side panels usually want.
     """
 
     lines: Sequence["str | tuple[str, str] | LineArtist"] = ()
+    scatters: Sequence["ScatterArtist"] = ()
+    stems: Sequence["StemArtist"] = ()
+    time_series: Sequence["TimeSeriesArtist"] = ()
+    # Limits and decorators: what an AxesAction can be besides AddData.
+    actions: Sequence["AxesAction"] = ()
+    x_axis: "AxisDataType | None" = None
     y_axis: "AxisDataType | None" = None
+    title: str | None = None
+    caption: str | None = None
+    data: str | None = None
+    x: str | None = None
     id: str | None = None
     height: float | None = None
     frame: Frame | None = None
+
+    @property
+    def has_artists(self) -> bool:
+        return bool(self.lines or self.scatters or self.stems or self.time_series)
 
 
 def _to_lines(items: Sequence["str | tuple[str, str] | LineArtist"]) -> list["LineArtist"]:
@@ -1521,44 +1548,41 @@ class SliderCtrlSpec:
 
 @dataclass
 class FigureSpec:
+    """A figure: its panels, and the maps, forms and table views beside them.
+
+    The manifest's FigureSpec, field for field. `panels` is its `axesSpecs`,
+    in order, and every panel is a Panel: a figure that is one plot is a
+    figure with one panel. `add_figure` builds one of these, and
+    `add_line_figure` builds the single-panel case.
+    """
+
     id: str
     title: str
-    data: str
-    x: str
-    lines: list[LineArtist]
-    scatters: list[ScatterArtist]
-    caption: str | None
-    x_axis: AxisDataType
-    y_axis: AxisDataType
-    controls: list[DropdownCtrlSpec | SliderCtrlSpec] = field(default_factory=list)
-    map_specs: list["MapSpec"] = field(default_factory=list)
-    time_series: list[TimeSeriesArtist] = field(default_factory=list)
-    table_views: list["TableViewSpec"] = field(default_factory=list)
-    # Further panels below the first. `lines2`/`y2_axis` are the original
-    # two-panel form and render as the first extra panel.
     panels: list[Panel] = field(default_factory=list)
-    lines2: list[LineArtist] = field(default_factory=list)
-    y2_axis: AxisDataType | None = None
-    # The figure's drawn size, and the first panel's share of the stack or
-    # its exact place; the other panels carry their own.
+    caption: str | None = None
     size: FigureSize | None = None
-    panel_height: float | None = None
-    panel_frame: Frame | None = None
-    stems: list[StemArtist] = field(default_factory=list)
+    map_specs: list["MapSpec"] = field(default_factory=list)
+    table_views: list["TableViewSpec"] = field(default_factory=list)
+    controls: list[DropdownCtrlSpec | SliderCtrlSpec] = field(default_factory=list)
     form_title: str | None = None
     form_caption: str | None = None
 
-    def _extra_panels(self) -> list[Panel]:
-        panels = [Panel(lines=self.lines2, y_axis=self.y2_axis)] if self.lines2 else []
-        return panels + list(self.panels)
+    def _artist_actions(self, panel: Panel) -> list[str]:
+        """The panel's artists, each as an `AddData` action.
 
-    def _line_actions(self, lines: list[LineArtist]) -> list[str]:
-        actions = []
-        for line in lines:
+        An artist says which dataset and x column it plots; where it does
+        not, the panel's stand in.
+        """
+
+        default_data = panel.data
+        default_x = panel.x
+        actions: list[str] = []
+
+        for line in _to_lines(panel.lines):
             artist_id = line.id or f"{line.array}-line"
-            data = line.data or self.data
+            data = line.data or default_data
             x_data = line.x_data or data
-            x_column = line.x or self.x
+            x_column = line.x or default_x
             x_override = _column_ref(x_data, x_column) if x_column else None
             visible_when = line.visible_when.render() if line.visible_when is not None else None
             payload = _record(
@@ -1577,17 +1601,12 @@ class FigureSpec:
             )
             plot_artist = _constructor("Limelight.PlotArtist.line", payload)
             actions.append(_constructor("Limelight.AxesAction.AxesActionAddData", f"({plot_artist})"))
-        return actions
 
-    def render(self) -> str:
-        plot_id = f"{self.id}-plot"
-        actions = self._line_actions(self.lines)
-
-        for scatter in self.scatters:
+        for scatter in panel.scatters:
             artist_id = scatter.id or f"{scatter.array}-points"
-            data = scatter.data or self.data
+            data = scatter.data or default_data
             x_data = scatter.x_data or data
-            x_column = scatter.x or self.x
+            x_column = scatter.x or default_x
             payload = _record(
                 [
                     ("id", _quote(artist_id)),
@@ -1607,11 +1626,11 @@ class FigureSpec:
             plot_artist = _constructor("Limelight.PlotArtist.scatter", payload)
             actions.append(_constructor("Limelight.AxesAction.AxesActionAddData", f"({plot_artist})"))
 
-        for stem in self.stems:
+        for stem in panel.stems:
             artist_id = stem.id or f"{stem.array}-stem"
-            data = stem.data or self.data
+            data = stem.data or default_data
             x_data = stem.x_data or data
-            x_column = stem.x or self.x
+            x_column = stem.x or default_x
             payload = _record(
                 [
                     ("id", _quote(artist_id)),
@@ -1629,7 +1648,7 @@ class FigureSpec:
             plot_artist = _constructor("Limelight.PlotArtist.stem", payload)
             actions.append(_constructor("Limelight.AxesAction.AxesActionAddData", f"({plot_artist})"))
 
-        for time_series in self.time_series:
+        for time_series in panel.time_series:
             artist_id = time_series.id or f"{time_series.array}-timeseries"
             visible_when = time_series.visible_when.render() if time_series.visible_when is not None else None
             payload = _record(
@@ -1649,54 +1668,33 @@ class FigureSpec:
             plot_artist = _constructor("Limelight.PlotArtist.timeSeries", payload)
             actions.append(_constructor("Limelight.AxesAction.AxesActionAddData", f"({plot_artist})"))
 
-        extra_panels = self._extra_panels()
-        x_axis = self.x_axis
-        if extra_panels:
-            shared_group = self.x_axis.share_group or f"{self.id}-x-axis-share"
-            x_axis = replace(self.x_axis, share_group=shared_group)
+        actions.extend(_axes_action_from_value(action).render() for action in panel.actions)
+        return actions
 
-        plot = _record(
+    def _render_panel(self, panel: Panel, *, number: int) -> str:
+        """One panel as an AxesSpec. `number` is its place in the figure, from 1."""
+
+        suffix = "" if number == 1 else str(number)
+        panel_id = panel.id or f"{self.id}-plot{suffix}"
+        x_axis = panel.x_axis or AxisDataType.continuous(label=panel.x)
+        y_axis = panel.y_axis or AxisDataType.continuous(label="Value")
+        return _record(
             [
-                ("id", _quote(plot_id)),
-                ("frame", _optional_frame(self.panel_frame)),
-                ("heightRatio", _optional_double(self.panel_height)),
-                ("title", "None Limelight.DisplayText"),
-                ("caption", "None Limelight.DisplayText"),
-                (
-                    "xAxis",
-                    _axis_spec(f"{self.id}-x-axis", x_axis),
-                ),
-                (
-                    "yAxis",
-                    _axis_spec(f"{self.id}-y-axis", self.y_axis),
-                ),
-                ("actions", _list(actions, "Limelight.AxesAction")),
+                ("id", _quote(panel_id)),
+                ("frame", _optional_frame(panel.frame)),
+                ("heightRatio", _optional_double(panel.height)),
+                ("title", _optional_display_text(panel.title)),
+                ("caption", _optional_display_text(panel.caption)),
+                ("xAxis", _axis_spec(f"{self.id}-x{suffix}-axis", x_axis)),
+                ("yAxis", _axis_spec(f"{self.id}-y{suffix}-axis", y_axis)),
+                ("actions", _list(self._artist_actions(panel), "Limelight.AxesAction")),
             ]
         )
 
-        axes_specs = [plot] if actions else []
-        for number, panel in enumerate(extra_panels, start=2):
-            panel_id = panel.id or f"{self.id}-plot{number}"
-            axes_specs.append(
-                _record(
-                    [
-                        ("id", _quote(panel_id)),
-                        ("frame", _optional_frame(panel.frame)),
-                        ("heightRatio", _optional_double(panel.height)),
-                        ("title", "None Limelight.DisplayText"),
-                        ("caption", "None Limelight.DisplayText"),
-                        (
-                            "xAxis",
-                            _axis_spec(f"{self.id}-x{number}-axis", x_axis),
-                        ),
-                        (
-                            "yAxis",
-                            _axis_spec(f"{self.id}-y{number}-axis", panel.y_axis or AxisDataType.continuous(label="Value")),
-                        ),
-                        ("actions", _list(self._line_actions(panel.lines), "Limelight.AxesAction")),
-                    ]
-                )
-            )
+    def render(self) -> str:
+        axes_specs = [
+            self._render_panel(panel, number=number) for number, panel in enumerate(self.panels, start=1)
+        ]
 
         form_specs = []
         if self.controls:
@@ -2592,6 +2590,41 @@ class LimelightProject:
         self.hdf_datasets.append(dataset)
         return dataset
 
+    def add_figure(
+        self,
+        *,
+        id: str,
+        title: str,
+        panels: Sequence[Panel] = (),
+        caption: str | None = None,
+        size: FigureSize | None = None,
+        map_specs: Sequence[MapSpec] = (),
+        table_views: Sequence[TableViewSpec] = (),
+        controls: Sequence[DropdownCtrlSpec | SliderCtrlSpec] = (),
+        form_title: str | None = None,
+        form_caption: str | None = None,
+    ) -> FigureSpec:
+        """A figure of however many panels, each said in full.
+
+        Every panel is a Panel, the first included; `add_line_figure` is the
+        one-panel case with its artists named on the call.
+        """
+
+        figure_spec = FigureSpec(
+            id=id,
+            title=title,
+            panels=list(panels),
+            caption=caption,
+            size=size,
+            map_specs=list(map_specs),
+            table_views=list(table_views),
+            controls=list(controls),
+            form_title=form_title,
+            form_caption=form_caption,
+        )
+        self.figure_specs.append(figure_spec)
+        return figure_spec
+
     def add_line_figure(
         self,
         *,
@@ -2599,57 +2632,58 @@ class LimelightProject:
         title: str,
         data: str,
         x: str,
-        y: Sequence[str | tuple[str, str] | LineArtist],
+        y: Sequence[str | tuple[str, str] | LineArtist] = (),
         caption: str | None = None,
         x_axis: AxisDataType | None = None,
         y_axis: AxisDataType | None = None,
         scatter: Sequence[ScatterArtist] = (),
+        stem: Sequence[StemArtist] = (),
+        time_series: Sequence[TimeSeriesArtist] = (),
+        actions: Sequence[AxesAction] = (),
         controls: Sequence[DropdownCtrlSpec | SliderCtrlSpec] = (),
         map_specs: Sequence[MapSpec] = (),
-        time_series: Sequence[TimeSeriesArtist] = (),
         table_views: Sequence[TableViewSpec] = (),
-        y2: Sequence[str | tuple[str, str] | LineArtist] = (),
-        y2_axis: AxisDataType | None = None,
-        panels: Sequence[Panel] = (),
         size: FigureSize | None = None,
-        panel_height: float | None = None,
-        panel_frame: Frame | None = None,
-        stem: Sequence[StemArtist] = (),
         form_title: str | None = None,
         form_caption: str | None = None,
     ) -> FigureSpec:
-        lines = _to_lines(y)
-        lines2 = _to_lines(y2)
+        """A figure of one panel, drawn from one dataset.
+
+        For more than one panel, build them as Panels and pass them to
+        `add_figure`; this is that call with the single panel spelled out.
+        """
+
         # With no x axis given, the source's index says what kind it is: an
         # absolute time index is calendar time and gets a timeSeries axis;
         # anything else (a relative time index included) is a number line.
-        inferred_x_axis = AxisDataType.time_series(label=x) if self._index_is_absolute_time(data) else AxisDataType.continuous(label=x)
-        figure_spec = FigureSpec(
-            id=id,
-            title=title,
-            data=data,
-            x=x,
-            lines=lines,
+        inferred_x_axis = (
+            AxisDataType.time_series(label=x)
+            if self._index_is_absolute_time(data)
+            else AxisDataType.continuous(label=x)
+        )
+        panel = Panel(
+            lines=list(y),
             scatters=list(scatter),
-            caption=caption,
+            stems=list(stem),
+            time_series=list(time_series),
+            actions=list(actions),
             x_axis=x_axis or inferred_x_axis,
             y_axis=y_axis or AxisDataType.continuous(label="Value"),
-            controls=list(controls),
-            map_specs=list(map_specs),
-            time_series=list(time_series),
-            table_views=list(table_views),
-            lines2=lines2,
-            y2_axis=y2_axis,
-            panels=[replace(panel, lines=_to_lines(panel.lines)) for panel in panels],
+            data=data,
+            x=x,
+        )
+        return self.add_figure(
+            id=id,
+            title=title,
+            panels=[panel],
+            caption=caption,
             size=size,
-            panel_height=panel_height,
-            panel_frame=panel_frame,
-            stems=list(stem),
+            map_specs=map_specs,
+            table_views=table_views,
+            controls=controls,
             form_title=form_title,
             form_caption=form_caption,
         )
-        self.figure_specs.append(figure_spec)
-        return figure_spec
 
     def _index_is_absolute_time(self, dataset_id: str) -> bool:
         for dataset in [*self.datasets, *self.hdf_datasets]:
@@ -2669,24 +2703,16 @@ class LimelightProject:
         form_title: str | None = None,
         form_caption: str | None = None,
     ) -> FigureSpec:
-        figure_spec = FigureSpec(
+        return self.add_figure(
             id=id,
             title=title,
-            data="",
-            x="",
-            lines=[],
-            scatters=[],
             caption=caption,
-            x_axis=AxisDataType.continuous(label=""),
-            y_axis=AxisDataType.continuous(label=""),
-            controls=list(controls),
-            map_specs=list(map_specs),
-            table_views=list(table_views),
+            map_specs=map_specs,
+            table_views=table_views,
+            controls=controls,
             form_title=form_title,
             form_caption=form_caption,
         )
-        self.figure_specs.append(figure_spec)
-        return figure_spec
 
     def render_project_dhall(self) -> str:
         _, story_figure_views = self.render_story_markdown()

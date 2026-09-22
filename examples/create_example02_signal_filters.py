@@ -248,14 +248,28 @@ def build_project() -> LimelightProject:
         y_axis=AxisDataType.continuous(label="Amplitude"),
         controls=[filter_dropdown],
     )
-    project.add_line_figure(
+    bode_frequency_axis = AxisDataType.continuous(
+        label="Frequency", unit="Hz", scale="Log", share_group="bode-frequency"
+    )
+    project.add_figure(
         id="input-bode",
         title="Original signal Bode plot",
-        data="input-signal-bode",
-        x="frequency-hz",
-        y=[],
-        stem=[StemArtist(array="magnitude-db", label="Magnitude", baseline=-245.0)],
-        y2=[("phase-deg", "Phase")],
+        panels=[
+            Panel(
+                stems=[StemArtist(array="magnitude-db", label="Magnitude", baseline=-245.0)],
+                data="input-signal-bode",
+                x="frequency-hz",
+                x_axis=bode_frequency_axis,
+                y_axis=AxisDataType.continuous(label="Magnitude", unit="dB"),
+            ),
+            Panel(
+                lines=[("phase-deg", "Phase")],
+                data="input-signal-bode",
+                x="frequency-hz",
+                x_axis=bode_frequency_axis,
+                y_axis=AxisDataType.continuous(label="Phase", unit="deg"),
+            ),
+        ],
         caption=(
             "Full FFT magnitude and phase spectrum of the unfiltered input, plotted over every frequency "
             "bin rather than just the three component peaks. The 2, 13, and 45 Hz components each complete "
@@ -263,32 +277,34 @@ def build_project() -> LimelightProject:
             "leakage: magnitude between peaks sits at the numerical noise floor, and phase there is "
             "meaningless noise rather than filter phase delay."
         ),
-        x_axis=AxisDataType.continuous(label="Frequency", unit="Hz", scale="Log", share_group="bode-frequency"),
-        y_axis=AxisDataType.continuous(label="Magnitude", unit="dB"),
-        y2_axis=AxisDataType.continuous(label="Phase", unit="deg"),
     )
-    project.add_line_figure(
+    project.add_figure(
         id="bode-response",
         title="Bode magnitude and phase response",
-        data="filter-bode",
-        x="frequency-hz",
-        y=bode_lines("magnitude-db", "Magnitude"),
-        # The magnitude panel carries the story, so it gets twice the height
-        # of the phase panel beneath it.
-        panel_height=2.0,
         panels=[
+            # The magnitude panel carries the story, so it gets twice the
+            # height of the phase panel beneath it.
+            Panel(
+                lines=bode_lines("magnitude-db", "Magnitude"),
+                data="filter-bode",
+                x="frequency-hz",
+                x_axis=bode_frequency_axis,
+                y_axis=AxisDataType.continuous(label="Magnitude", unit="dB"),
+                height=2.0,
+            ),
             Panel(
                 lines=bode_lines("phase-deg", "Phase"),
+                data="filter-bode",
+                x="frequency-hz",
+                x_axis=bode_frequency_axis,
                 y_axis=AxisDataType.continuous(label="Phase", unit="deg"),
                 height=1.0,
-            )
+            ),
         ],
         caption=(
             "Magnitude and phase response of the selected low-pass filter, plotted against a "
             "logarithmically-spaced frequency axis."
         ),
-        x_axis=AxisDataType.continuous(label="Frequency", unit="Hz", scale="Log", share_group="bode-frequency"),
-        y_axis=AxisDataType.continuous(label="Magnitude", unit="dB"),
         controls=[filter_dropdown],
     )
 
