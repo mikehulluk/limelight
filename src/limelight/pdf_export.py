@@ -1,95 +1,70 @@
 """Render a Limelight story to a paginated PDF document.
 
-The Qt layer owns the markdown renderer and the matplotlib figure renderer, so
-those are injected through :class:`StoryPdfRenderers`. That keeps this module
-free of widget imports and lets the HTML builder be tested without a running
-application.
+The story's Markdown is written out as Typst (see story_typst), each figure
+view is drawn by matplotlib straight to a PDF of its own, and Typst lays the
+whole thing out and writes the document. A figure drawn to PDF stays vector,
+and carries its fonts inside it, so its labels print in the document's faces
+at the document's sizes.
+
+Figures are drawn by the Qt layer, so the drawing is injected through
+:class:`StoryPdfRenderers`. That keeps this module free of widget imports and
+lets the document be built and checked without a running application.
 """
 
 from __future__ import annotations
 
-import base64
-import binascii
-import html
+import io
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Callable, Sequence
-from urllib.parse import unquote_to_bytes
-
-from PySide6.QtCore import QEventLoop, QMarginsF, QObject, QSizeF, Qt, QTimer, QUrl
-from PySide6.QtGui import (
-    QImage,
-    QPageLayout,
-    QPageSize,
-    QPdfWriter,
-    QTextDocument,
-)
+from typing import Any, Callable, Mapping, Sequence
 
 from .app import (
     CSS_PIXELS_PER_INCH,
     DEFAULT_PAGE_HEIGHT_MM,
-    DEFAULT_PAGE_MARGIN_MM,
     DEFAULT_PAGE_WIDTH_MM,
     MM_PER_INCH,
-    STORY_FIGURE_CSS,
-    STORY_IMAGE_CSS,
     LimelightRuntime,
-    StorySpacing,
     figure_aspect,
     figure_width_px,
-    figure_view_caption_markup,
-    story_rhythm_css,
-    story_typography_css,
     table_view_cell_styles,
     table_view_column_alignment,
     table_view_column_formats,
     table_view_header_styles,
 )
-
-try:
-    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
-except ImportError:
-    QWebEnginePage = None
-    QWebEngineSettings = None
+from .story_typst import (
+    StoryTypstRenderer,
+    TypstImage,
+    TypstPage,
+    TypstSpacing,
+    typst_caption,
+    typst_preamble,
+    typst_string,
+    typst_text,
+)
 
 logger = logging.getLogger(__name__)
 
-MATHJAX_SCRIPT = "https://cdn.jsdelivr.net/npm/mathjax@4/tex-svg.js"
-
-# Figures are laid out at the width of the text column, so their labels print
-# at the story's size, then rasterised at a higher dpi so the page stays crisp.
-FIGURE_OUTPUT_DPI = 220
-
-# A page that runs as long as its content still needs a number to print at.
-# This is tall enough that no story reaches the end of it, and Chromium trims
-# the sheet to the content rather than padding it out.
-CONTINUOUS_PAGE_HEIGHT_MM = 5000.0
 # A viewport width has no physical size, so a PDF of one falls back to the
 # default page: A4.
 FALLBACK_PAGE_WIDTH_MM = DEFAULT_PAGE_WIDTH_MM
 FALLBACK_PAGE_HEIGHT_MM = DEFAULT_PAGE_HEIGHT_MM
-PAGE_MARGIN_MM = DEFAULT_PAGE_MARGIN_MM
-DOCUMENT_READY_TIMEOUT_MS = 20000
-DOCUMENT_READY_POLL_MS = 100
-PRINT_TIMEOUT_MS = 60000
 
-# The fallback writer has to size figures in device pixels, so it rewrites this
-# exact opening tag. Both sides are kept together deliberately. STORY_IMAGE_CSS
-# is dropped alongside this by the fallback writer, which cannot honour either.
-FIGURE_IMAGE_TAG_PREFIX = '<img class="limelight-figure-image"'
-FIGURE_IMAGE_CSS = """img.limelight-figure-image {
-  width: 100%;
-  height: auto;
-  display: block;
-  margin-left: auto;
-  margin-right: auto;
-}"""
-# Rich text lays out in logical (~96 dpi) coordinates regardless of the
-# writer's device resolution, so fallback figures are scaled to a printable
-# column width expressed in those same units.
-FALLBACK_IMAGE_WIDTH_PX = 540
+# Where the document keeps what it draws on, beside its source.
+FIGURES_DIR = "figures"
+IMAGES_DIR = "images"
+STORY_SOURCE = "story.typ"
+
+
+# A figure's artists are vector unless one is this many points or more: past
+# that a vector path costs more to store and to draw than it shows, and a
+# reader's viewer crawls. Below it, which is every ordinary plot, the figure
+# stays sharp at any zoom.
+DEFAULT_RASTERIZE_ABOVE_POINTS = 5000
+# The resolution a rasterised artist is drawn at. The axes, labels and text
+# around it stay vector.
+DEFAULT_RASTER_DPI = 300
 
 
 class PdfExportError(Exception):
@@ -97,19 +72,86 @@ class PdfExportError(Exception):
 
 
 @dataclass(frozen=True)
+class FigurePdfOptions:
+    """How a story's figures are drawn into its PDF.
+
+    An artist - a line, a scatter, a filled band - with more than
+    ``rasterize_above_points`` points is drawn as an image at ``raster_dpi``;
+    None keeps every artist vector, however large.
+    """
+
+    rasterize_above_points: int | None = DEFAULT_RASTERIZE_ABOVE_POINTS
+    raster_dpi: int = DEFAULT_RASTER_DPI
+
+    def __post_init__(self) -> None:
+        if self.rasterize_above_points is not None and self.rasterize_above_points < 0:
+            raise ValueError(f"rasterizeAbovePoints {self.rasterize_above_points!r} must not be negative")
+        if self.raster_dpi <= 0:
+            raise ValueError(f"rasterDpi {self.raster_dpi!r} must be positive")
+
+    @classmethod
+    def from_settings(cls, pdf_settings: Mapping[str, Any]) -> "FigurePdfOptions":
+        """The options a settings file's `pdf` block asks for, defaults for what it leaves out.
+
+        ``"rasterizeAbovePoints": null`` keeps every figure vector.
+        """
+
+        threshold = pdf_settings.get("rasterizeAbovePoints", DEFAULT_RASTERIZE_ABOVE_POINTS)
+        return cls(
+            rasterize_above_points=None if threshold is None else int(threshold),
+            raster_dpi=int(pdf_settings.get("rasterDpi", DEFAULT_RASTER_DPI)),
+        )
+
+
+def artist_point_count(artist: Any) -> int:
+    """How many points an artist draws: what makes it costly as vector."""
+
+    from matplotlib.collections import Collection
+    from matplotlib.lines import Line2D
+
+    if isinstance(artist, Line2D):
+        return len(artist.get_xydata())
+    if isinstance(artist, Collection):
+        # A scatter is one marker path at many offsets; a filled band or a
+        # line collection is many vertices in few paths.
+        offsets = artist.get_offsets()
+        if len(offsets) > 1:
+            return len(offsets)
+        return sum(len(path.vertices) for path in artist.get_paths())
+    return 0
+
+
+def rasterize_large_artists(figure: Any, above_points: int | None) -> int:
+    """Mark every artist in ``figure`` with more than ``above_points`` points to be rasterised.
+
+    Returns how many were. Only the artist itself becomes an image; the
+    axes, ticks, labels and legend stay vector.
+    """
+
+    if above_points is None:
+        return 0
+    rasterized = 0
+    for axes in figure.axes:
+        for artist in axes.get_children():
+            if artist_point_count(artist) > above_points:
+                artist.set_rasterized(True)
+                rasterized += 1
+    return rasterized
+
+
+@dataclass(frozen=True)
 class StoryPdfRenderers:
     """Rendering callables supplied by the Qt layer.
 
-    ``render_markdown_html`` turns one markdown block into an HTML fragment.
     ``figure_view_state_for_block`` maps a story block onto a figure view state
     exposing ``figure_view_id``, ``figure_id``, ``index`` and ``actions``, or
     ``None``.
-    ``render_figure_png`` rasterises one figure view to PNG bytes.
+    ``render_figure_pdf`` draws one figure view to a PDF at ``output_path``,
+    rasterising its large artists as its :class:`FigurePdfOptions` say.
     """
 
-    render_markdown_html: Callable[[str], str]
     figure_view_state_for_block: Callable[[Any], Any]
-    render_figure_png: Callable[..., bytes]
+    render_figure_pdf: Callable[..., Any]
 
 
 def is_story_text_block(block: Any) -> bool:
@@ -122,191 +164,16 @@ def _story_block_markdown(block: Any) -> str:
     return str(block["markdown"])
 
 
-def build_story_pdf_html(
-    runtime: LimelightRuntime,
-    renderers: StoryPdfRenderers,
-    *,
-    on_figure_progress: Callable[[int, int], bool] | None = None,
-) -> str:
-    """Build the complete print-ready HTML document for ``runtime``'s story.
-
-    ``on_figure_progress`` is called before each figure is rendered with the
-    1-based figure number and the total figure count; returning ``False``
-    cancels the export.
-    """
-
-    blocks = list(runtime.story_blocks)
-    figure_blocks = [block for block in blocks if not is_story_text_block(block)]
-    figure_total = len(figure_blocks)
-    page = printed_page(runtime)
-    column_px = page.content_width_px
-
-    parts: list[str] = []
-    if _needs_document_title(blocks):
-        parts.append(f"<h1>{html.escape(runtime.project_title)}</h1>")
-
-    figure_number = 0
-    for block in blocks:
-        if is_story_text_block(block):
-            parts.append(renderers.render_markdown_html(_story_block_markdown(block)))
-            continue
-
-        state = renderers.figure_view_state_for_block(block)
-        if state is None:
-            continue
-
-        figure_number += 1
-        if on_figure_progress is not None and not on_figure_progress(figure_number, figure_total):
-            raise PdfExportError("Export cancelled")
-        parts.append(_figure_html(runtime, renderers, state, column_px))
-
-    return _pdf_document_html(
-        "\n".join(parts),
-        title=runtime.project_title,
-        page=page,
-        spacing=runtime.story_spacing,
-        typography_css=story_typography_css(runtime.typography, runtime.fonts),
-    )
-
-
-def _needs_document_title(blocks: Sequence[Any]) -> bool:
-    """Only add a title heading when the story does not already open with one."""
-
-    for block in blocks:
-        if is_story_text_block(block):
-            return not _story_block_markdown(block).lstrip().startswith("# ")
-    return True
-
-
-def _figure_html(
-    runtime: LimelightRuntime,
-    renderers: StoryPdfRenderers,
-    state: Any,
-    column_px: int,
-) -> str:
-    figure_spec = runtime.figure_specs.get(state.figure_id)
-    if figure_spec is None:
-        return _notice_html(f"Unknown figure {state.figure_id!r}")
-
-    heading = runtime.figure_view_heading(state.figure_id, index=state.index)
-    try:
-        if figure_spec["tableViewSpecs"]:
-            # Tables carry no drawn-in title, so they get one of their own.
-            body = _heading_html(figure_spec["title"]) + _table_view_html(runtime, figure_spec)
-        else:
-            body = _figure_image_html(runtime, renderers, state, figure_spec, heading, column_px)
-    except Exception as error:
-        logger.exception("Could not render figure %s for PDF export", state.figure_id)
-        body = _notice_html(f"Could not render {heading}: {error}")
-
-    anchor = html.escape(state.figure_view_id, quote=True)
-    caption = figure_view_caption_markup(figure_spec, state.index)
-    return (
-        f'<figure class="limelight-figure" id="{anchor}">\n'
-        f'{body}\n<figcaption>{caption}</figcaption>\n</figure>'
-    )
-
-
-def _heading_html(heading: str) -> str:
-    return f'<p class="limelight-figure-heading">{html.escape(heading)}</p>'
-
-
-def _figure_image_html(
-    runtime: LimelightRuntime,
-    renderers: StoryPdfRenderers,
-    state: Any,
-    figure_spec: dict[str, Any],
-    heading: str,
-    column_px: int,
-) -> str:
-    width = figure_width_px(figure_spec, column_px, CSS_PIXELS_PER_INCH)
-    height = int(width * figure_aspect(figure_spec))
-    png_bytes = renderers.render_figure_png(
-        figure_id=state.figure_id,
-        figure_view_index=state.index,
-        figure_view_actions=state.actions,
-        parameter_values=dict(runtime.control_parameter_values),
-        width=width,
-        height=height,
-        dpi=FIGURE_OUTPUT_DPI,
-    )
-    encoded = base64.b64encode(png_bytes).decode("ascii")
-    # The column is the image's 100%; a narrower figure is that fraction of
-    # it, so it keeps its size relative to the page whatever the page is.
-    percent = 100.0 * width / column_px
-    return (
-        f'{FIGURE_IMAGE_TAG_PREFIX} alt="{html.escape(heading)}" '
-        f'style="width: {percent:.2f}%" '
-        f'src="data:image/png;base64,{encoded}">'
-    )
-
-
-def _table_view_html(runtime: LimelightRuntime, figure_spec: dict[str, Any]) -> str:
-    table_view_spec = figure_spec["tableViewSpecs"][0]
-    preview = runtime.table_preview(
-        table_view_spec["data"],
-        table_view_spec.get("columns"),
-        column_formats=table_view_column_formats(table_view_spec),
-    )
-
-    header_styles = table_view_header_styles(table_view_spec)
-    header_cells = "".join(
-        f'<th class="{_style_class(header_styles)}" style="text-align: '
-        f'{_alignment_css(table_view_column_alignment(table_view_spec, preview, column_index))};">'
-        f"{html.escape(column)}</th>"
-        for column_index, column in enumerate(preview.columns)
-    )
-
-    body_rows: list[str] = []
-    for row_index, row in enumerate(preview.rows):
-        cells = "".join(
-            f'<td class="{_style_class(table_view_cell_styles(table_view_spec, row_index, column_index))}" '
-            f'style="text-align: '
-            f'{_alignment_css(table_view_column_alignment(table_view_spec, preview, column_index))};">'
-            f"{html.escape(value)}</td>"
-            for column_index, value in enumerate(row)
-        )
-        body_rows.append(f"<tr>{cells}</tr>")
-
-    truncated_note = ""
-    if preview.truncated:
-        truncated_note = (
-            f'<p class="limelight-table-note">Showing {len(preview.rows)} of '
-            f"{preview.total_rows} rows.</p>"
-        )
-
-    return (
-        '<table class="limelight-table">'
-        f"<thead><tr>{header_cells}</tr></thead>"
-        f'<tbody>{"".join(body_rows)}</tbody>'
-        "</table>"
-        f"{truncated_note}"
-    )
-
-
-def _style_class(styles: set[str]) -> str:
-    classes = []
-    if "Bold" in styles:
-        classes.append("limelight-bold")
-    if "Italic" in styles:
-        classes.append("limelight-italic")
-    return " ".join(classes)
-
-
-def _alignment_css(alignment: str) -> str:
-    return {"Left": "left", "Center": "center", "Right": "right"}[alignment]
-
-
-def _notice_html(message: str) -> str:
-    return f'<p class="limelight-notice">{html.escape(message)}</p>'
-
-
 @dataclass(frozen=True)
 class PrintedPage:
-    """The physical page a story prints on, resolved from its geometry."""
+    """The physical page a story prints on, resolved from its geometry.
+
+    A ``height_mm`` of None is one sheet as long as the story, which is what
+    a continuous story already is on screen.
+    """
 
     width_mm: float
-    height_mm: float
+    height_mm: float | None
     margin_lr_mm: float
     margin_tb_mm: float
 
@@ -320,327 +187,307 @@ class PrintedPage:
 
         return max(1, int(round(self.content_width_mm / MM_PER_INCH * CSS_PIXELS_PER_INCH)))
 
-    @property
-    def margins(self) -> QMarginsF:
-        return QMarginsF(self.margin_lr_mm, self.margin_tb_mm, self.margin_lr_mm, self.margin_tb_mm)
-
 
 def printed_page(runtime: LimelightRuntime) -> PrintedPage:
     """Resolve a story's page geometry to something a printer can use.
 
-    A viewport width has no physical size, so it prints on A4. A continuous
-    height prints as one long sheet, which is what the story already is on
-    screen.
+    A viewport width has no physical size, so it prints on A4.
     """
 
     geometry = runtime.page_geometry
     return PrintedPage(
         width_mm=geometry.width_mm if geometry.width_mm is not None else FALLBACK_PAGE_WIDTH_MM,
-        height_mm=(
-            geometry.height_mm if geometry.height_mm is not None else CONTINUOUS_PAGE_HEIGHT_MM
-        ),
+        height_mm=geometry.height_mm,
         margin_lr_mm=geometry.margin_lr_mm,
         margin_tb_mm=geometry.margin_tb_mm,
     )
 
 
-def _pdf_document_html(
-    body: str, *, title: str, page: PrintedPage, spacing: StorySpacing, typography_css: str
+def build_story_typst(
+    runtime: LimelightRuntime,
+    renderers: StoryPdfRenderers,
+    root: Path,
+    *,
+    on_figure_progress: Callable[[int, int], bool] | None = None,
 ) -> str:
-    return f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>{html.escape(title)}</title>
-<script>
-window.__limelightPdfReady = false;
-window.MathJax = {{
-  tex: {{
-    inlineMath: [['\\\\(', '\\\\)']],
-    displayMath: [['\\\\[', '\\\\]']],
-    processEscapes: true
-  }},
-  svg: {{ fontCache: 'none' }},
-  startup: {{
-    pageReady: () => MathJax.startup.defaultPageReady().then(() => {{
-      window.__limelightPdfReady = true;
-    }})
-  }}
-}};
-</script>
-<script defer src="{MATHJAX_SCRIPT}"></script>
-<style>
-@page {{
-  size: {page.width_mm}mm {page.height_mm}mm;
-  margin: {page.margin_tb_mm}mm {page.margin_lr_mm}mm;
-}}
-html {{
-  color-scheme: light;
-}}
-body {{
-  margin: 0;
-  color: #202124;
-  background: #ffffff;
-}}
-{typography_css}
-h1, h2, h3, h4 {{
-  break-after: avoid;
-  page-break-after: avoid;
-}}
-p {{
-  orphans: 3;
-  widows: 3;
-}}
-code {{
-  background: #f3f4f6;
-  border-radius: 4px;
-  padding: 0.1rem 0.25rem;
-}}
-pre {{
-  background: #f3f4f6;
-  border-radius: 6px;
-  padding: 0.7rem;
-  break-inside: avoid;
-  page-break-inside: avoid;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}}
-figure.limelight-figure, figure.limelight-story-figure {{
-  break-inside: avoid;
-  page-break-inside: avoid;
-}}
-{FIGURE_IMAGE_CSS}
-{STORY_IMAGE_CSS}
-{STORY_FIGURE_CSS}
-span.limelight-missing-image {{
-  color: #b3261e;
-  font-style: italic;
-}}
-p.limelight-figure-heading {{
-  margin: 0 0 0.35em;
-  text-align: center;
-}}
-table.limelight-table {{
-  border-collapse: collapse;
-  width: 100%;
-}}
-table.limelight-table th, table.limelight-table td {{
-  border: 1px solid #d0d3d6;
-  padding: 3px 7px;
-}}
-table.limelight-table thead th {{
-  background: #f3f4f6;
-}}
-table.limelight-table tr {{
-  break-inside: avoid;
-  page-break-inside: avoid;
-}}
-.limelight-bold {{
-  font-weight: 700;
-}}
-.limelight-italic {{
-  font-style: italic;
-}}
-.limelight-table-note, .limelight-notice {{
-  color: #5f6368;
-}}
-{story_rhythm_css(spacing)}
-</style>
-</head>
-<body>
-{body}
-</body>
-</html>"""
+    """Build the Typst source for ``runtime``'s story, drawing what it needs under ``root``.
 
+    Figures are drawn to ``root/figures`` and story images copied to
+    ``root/images``; the source names both relative to ``root``, which is
+    the root it is compiled against.
 
-def write_html_to_pdf(
-    html_text: str,
-    destination: Path,
-    page: PrintedPage | None = None,
-) -> None:
-    """Write ``html_text`` to ``destination`` as a PDF on ``page``."""
+    ``on_figure_progress`` is called before each figure is rendered with the
+    1-based figure number and the total figure count; returning ``False``
+    cancels the export.
+    """
 
-    resolved = page if page is not None else PrintedPage(
-        width_mm=FALLBACK_PAGE_WIDTH_MM,
-        height_mm=FALLBACK_PAGE_HEIGHT_MM,
-        margin_lr_mm=PAGE_MARGIN_MM,
-        margin_tb_mm=PAGE_MARGIN_MM,
+    blocks = list(runtime.story_blocks)
+    figure_total = sum(1 for block in blocks if not is_story_text_block(block))
+    page = printed_page(runtime)
+    column_px = page.content_width_px
+
+    states = [
+        renderers.figure_view_state_for_block(block)
+        for block in blocks
+        if not is_story_text_block(block)
+    ]
+    anchors = {state.figure_view_id for state in states if state is not None}
+    anchors.update(_image_anchors(runtime))
+    text_renderer = StoryTypstRenderer(
+        _StoryImageFiles(runtime, root),
+        runtime.image_number,
+        runtime.image_anchor,
+        runtime.image_display_width,
+        anchors,
+        paged=page.height_mm is not None,
     )
-    if QWebEnginePage is None:
-        _write_pdf_with_text_document(html_text, destination, resolved)
-        return
-    _write_pdf_with_web_engine(html_text, destination, resolved)
+
+    parts: list[str] = []
+    if _needs_document_title(blocks):
+        parts.append(f"= {typst_text(runtime.project_title)}")
+
+    figure_number = 0
+    state_iter = iter(states)
+    for block in blocks:
+        if is_story_text_block(block):
+            parts.append(text_renderer.render(_story_block_markdown(block)))
+            continue
+
+        state = next(state_iter)
+        if state is None:
+            continue
+
+        figure_number += 1
+        if on_figure_progress is not None and not on_figure_progress(figure_number, figure_total):
+            raise PdfExportError("Export cancelled")
+        parts.append(_figure_typst(runtime, renderers, state, column_px, root) + text_renderer.label(state.figure_view_id))
+
+    preamble = typst_preamble(
+        title=runtime.project_title,
+        page=TypstPage(page.width_mm, page.height_mm, page.margin_lr_mm, page.margin_tb_mm),
+        spacing=TypstSpacing(
+            block_gap_mm=runtime.story_spacing.block_gap_mm,
+            figure_gap_mm=runtime.story_spacing.figure_gap_mm,
+            heading_gap_before_mm=runtime.story_spacing.heading_gap_before_mm,
+            heading_gap_after_mm=runtime.story_spacing.heading_gap_after_mm,
+        ),
+        typography=runtime.typography,
+        fonts=runtime.fonts,
+    )
+    return preamble + "\n\n" + "\n\n".join(part for part in parts if part) + "\n"
 
 
-class _WebEnginePdfPrinter(QObject):
-    def __init__(self, html_text: str, destination: Path, page: PrintedPage) -> None:
-        super().__init__()
-        self._html_text = html_text
-        self._destination = destination
-        self._page_geometry = page
-        self._loop = QEventLoop()
-        self._page = QWebEnginePage(self)
-        self._elapsed_ms = 0
-        self._error: str | None = None
-        self._finished = False
-        # Stories embed their figures as data URLs and routinely exceed the 2 MB
-        # ceiling on setHtml, so the document is loaded from a file instead. That
-        # makes it local content, which cannot reach the MathJax CDN by default.
-        settings = self._page.settings()
-        settings.setAttribute(
-            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
-        )
-        self._page.loadFinished.connect(self._on_load_finished)
-        self._page.pdfPrintingFinished.connect(self._on_print_finished)
+def _needs_document_title(blocks: Sequence[Any]) -> bool:
+    """Only add a title heading when the story does not already open with one."""
 
-    def run(self) -> None:
-        guard = QTimer(self)
-        guard.setSingleShot(True)
-        guard.timeout.connect(self._on_timeout)
-        guard.start(DOCUMENT_READY_TIMEOUT_MS + PRINT_TIMEOUT_MS)
-
-        with TemporaryDirectory(prefix="limelight-pdf-") as staging_directory:
-            source = Path(staging_directory) / "story.html"
-            source.write_text(self._html_text, encoding="utf-8")
-            self._page.load(QUrl.fromLocalFile(str(source)))
-            self._loop.exec()
-        guard.stop()
-
-        if self._error is not None:
-            raise PdfExportError(self._error)
-
-    def _finish(self, error: str | None) -> None:
-        if self._finished:
-            return
-        self._finished = True
-        self._error = error
-        self._loop.quit()
-
-    def _on_load_finished(self, ok: bool) -> None:
-        if not ok:
-            self._finish("The story document could not be laid out for printing")
-            return
-        self._poll_document_ready()
-
-    def _poll_document_ready(self) -> None:
-        if self._finished:
-            return
-        self._page.runJavaScript(
-            "document.readyState === 'complete' && window.__limelightPdfReady === true",
-            self._on_document_ready_result,
-        )
-
-    def _on_document_ready_result(self, ready: object) -> None:
-        if self._finished:
-            return
-        if ready is True:
-            self._start_print()
-            return
-
-        self._elapsed_ms += DOCUMENT_READY_POLL_MS
-        if self._elapsed_ms >= DOCUMENT_READY_TIMEOUT_MS:
-            # MathJax is fetched from a CDN, so an offline machine never reports
-            # ready. Print what rendered rather than failing the whole export.
-            logger.warning("Timed out waiting for maths typesetting; printing anyway")
-            self._start_print()
-            return
-
-        QTimer.singleShot(DOCUMENT_READY_POLL_MS, self._poll_document_ready)
-
-    def _start_print(self) -> None:
-        geometry = self._page_geometry
-        layout = QPageLayout(
-            QPageSize(
-                QSizeF(geometry.width_mm, geometry.height_mm),
-                QPageSize.Unit.Millimeter,
-            ),
-            QPageLayout.Orientation.Portrait,
-            geometry.margins,
-            QPageLayout.Unit.Millimeter,
-        )
-        self._page.printToPdf(str(self._destination), layout)
-
-    def _on_print_finished(self, file_path: str, success: bool) -> None:
-        if success:
-            self._finish(None)
-            return
-        self._finish(f"Could not write {file_path}")
-
-    def _on_timeout(self) -> None:
-        self._finish("Timed out while rendering the story to PDF")
+    for block in blocks:
+        if is_story_text_block(block):
+            return not _story_block_markdown(block).lstrip().startswith("# ")
+    return True
 
 
-def _write_pdf_with_web_engine(html_text: str, destination: Path, page: PrintedPage) -> None:
-    printer = _WebEnginePdfPrinter(html_text, destination, page)
-    printer.run()
+def _image_anchors(runtime: LimelightRuntime) -> set[str]:
+    anchors = set()
+    for src in runtime.image_assets_by_path:
+        anchor = runtime.image_anchor(src)
+        if anchor is not None:
+            anchors.add(anchor)
+    return anchors
 
 
-class _DataUrlTextDocument(QTextDocument):
-    """QTextDocument that resolves the ``data:`` image URLs we embed.
+class _StoryImageFiles:
+    """Copies each story image out of the package, once, for the document to draw."""
 
-    Rich text has no usable percentage sizing for images, so each figure is
-    scaled down to the printable column width as it is decoded.
-    """
+    def __init__(self, runtime: LimelightRuntime, root: Path) -> None:
+        self._runtime = runtime
+        self._root = root
+        self._placed: dict[str, TypstImage | None] = {}
 
-    def __init__(self, max_image_width: int) -> None:
-        super().__init__()
-        self._max_image_width = max_image_width
+    def __call__(self, src: str) -> TypstImage | None:
+        if src not in self._placed:
+            self._placed[src] = self._place(src)
+        return self._placed[src]
 
-    def loadResource(self, resource_type: int, url: QUrl) -> Any:
-        if url.scheme() == "data":
-            image = _image_from_data_url(url)
-            if image is not None:
-                if image.width() <= self._max_image_width:
-                    return image
-                return image.scaledToWidth(
-                    self._max_image_width, Qt.TransformationMode.SmoothTransformation
-                )
-        return super().loadResource(resource_type, url)
+    def _place(self, src: str) -> TypstImage | None:
+        data = self._runtime.image_bytes(src)
+        if data is None:
+            return None
+
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as image:
+            width_px = image.width
+            extension = ".png" if image.format == "PNG" else ".jpg"
+        relative = f"{IMAGES_DIR}/image-{len(self._placed)}{extension}"
+        target = self._root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        # The story panel draws an image at its pixels in CSS pixels, and so
+        # does the page.
+        return TypstImage(relative, width_px / CSS_PIXELS_PER_INCH * MM_PER_INCH)
 
 
-def _image_from_data_url(url: QUrl) -> QImage | None:
-    payload = url.toString()[len("data:") :]
-    separator = payload.find(",")
-    if separator < 0:
-        return None
+def _figure_typst(
+    runtime: LimelightRuntime,
+    renderers: StoryPdfRenderers,
+    state: Any,
+    column_px: int,
+    root: Path,
+) -> str:
+    figure_spec = runtime.figure_specs.get(state.figure_id)
+    if figure_spec is None:
+        return _notice_typst(f"Unknown figure {state.figure_id!r}")
 
-    header = payload[:separator]
-    data = payload[separator + 1 :]
+    caption = typst_caption(state.index, figure_spec.get("caption") or figure_spec["title"])
+    caption_argument = f", caption: [{caption}]" if caption else ""
+    heading = runtime.figure_view_heading(state.figure_id, index=state.index)
     try:
-        if header.endswith(";base64"):
-            raw = base64.b64decode(data)
+        if figure_spec["tableViewSpecs"]:
+            # Tables carry no drawn-in title, so they get one of their own.
+            body = (
+                f"[#ll-table-heading[{typst_text(figure_spec['title'])}]\n"
+                f"{_table_view_typst(runtime, figure_spec)}]"
+            )
+            width = "100%"
         else:
-            raw = unquote_to_bytes(data)
-    except (binascii.Error, ValueError):
-        logger.warning("Could not decode an embedded image while writing the PDF")
-        return None
+            body, width = _figure_image_typst(runtime, renderers, state, figure_spec, column_px, root)
+    except Exception as error:
+        logger.exception("Could not render figure %s for PDF export", state.figure_id)
+        return _notice_typst(f"Could not render {heading}: {error}")
 
-    image = QImage()
-    if not image.loadFromData(raw):
-        return None
-    return image
+    return f"#ll-figure({body}, width: {width}{caption_argument})"
 
 
-def _write_pdf_with_text_document(html_text: str, destination: Path, page: PrintedPage) -> None:
-    """Fallback used when Qt WebEngine is unavailable.
+def _figure_image_typst(
+    runtime: LimelightRuntime,
+    renderers: StoryPdfRenderers,
+    state: Any,
+    figure_spec: dict[str, Any],
+    column_px: int,
+    root: Path,
+) -> tuple[str, str]:
+    # Laid out at CSS resolution to the column, so a label drawn at the
+    # body's points is the body's size on the page.
+    width = figure_width_px(figure_spec, column_px, CSS_PIXELS_PER_INCH)
+    height = int(width * figure_aspect(figure_spec))
+    relative = f"{FIGURES_DIR}/{state.figure_view_id}.pdf"
+    output_path = root / relative
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    renderers.render_figure_pdf(
+        figure_id=state.figure_id,
+        output_path=output_path,
+        figure_view_index=state.index,
+        figure_view_actions=state.actions,
+        parameter_values=dict(runtime.control_parameter_values),
+        width=width,
+        height=height,
+    )
+    # The column is the figure's 100%; a narrower figure is that share of
+    # it, so it keeps its size relative to the page whatever the page is.
+    percent = 100.0 * width / column_px
+    return f"image({typst_string(relative)}, width: 100%)", f"{percent:.2f}%"
 
-    Layout is coarser and TeX maths stays as source text, but the story, figures
-    and tables still reach the page.
+
+def _table_view_typst(runtime: LimelightRuntime, figure_spec: dict[str, Any]) -> str:
+    table_view_spec = figure_spec["tableViewSpecs"][0]
+    preview = runtime.table_preview(
+        table_view_spec["data"],
+        table_view_spec.get("columns"),
+        column_formats=table_view_column_formats(table_view_spec),
+    )
+
+    alignments = ", ".join(
+        _alignment_typst(table_view_column_alignment(table_view_spec, preview, column_index))
+        for column_index in range(len(preview.columns))
+    )
+    header_styles = table_view_header_styles(table_view_spec)
+    header = ", ".join(
+        f"[#ll-table-header[{_styled(typst_text(column), header_styles)}]]" for column in preview.columns
+    )
+    cells = [
+        f"[#ll-table-cell[{_styled(typst_text(value), table_view_cell_styles(table_view_spec, row_index, column_index))}]]"
+        for row_index, row in enumerate(preview.rows)
+        for column_index, value in enumerate(row)
+    ]
+    table = (
+        f"#table(\n  columns: {len(preview.columns)},\n  align: ({alignments},),\n"
+        f"  fill: (x, y) => if y == 0 {{ rgb(\"#f3f4f6\") }},\n"
+        f"  table.header({header}),\n  "
+        + ",\n  ".join(cells)
+        + ",\n)"
+    )
+    if preview.truncated:
+        table += (
+            f"\n#ll-table-note[Showing {len(preview.rows)} of {preview.total_rows} rows\\.]"
+        )
+    return table
+
+
+def _styled(markup: str, styles: set[str]) -> str:
+    if "Bold" in styles:
+        markup = f"#text(weight: 700)[{markup}]"
+    if "Italic" in styles:
+        markup = f"#emph[{markup}]"
+    return markup
+
+
+def _alignment_typst(alignment: str) -> str:
+    return {"Left": "left", "Center": "center", "Right": "right"}[alignment]
+
+
+def _notice_typst(message: str) -> str:
+    return f"#ll-notice[{typst_text(message)}]"
+
+
+def _font_paths(runtime: LimelightRuntime) -> list[str]:
+    """Every directory holding one of the document's font files, for Typst to search."""
+
+    directories = {
+        str(face.path.parent)
+        for font in runtime.fonts.values()
+        for face in font.faces
+        if face.path.is_file()
+    }
+    return sorted(directories)
+
+
+def write_story_pdf(
+    runtime: LimelightRuntime,
+    renderers: StoryPdfRenderers,
+    destination: Path,
+    *,
+    on_figure_progress: Callable[[int, int], bool] | None = None,
+    keep_source: Path | None = None,
+) -> None:
+    """Write ``runtime``'s story to ``destination`` as a PDF.
+
+    ``keep_source``, when given, is a directory the Typst source and what it
+    draws on are left in, for looking at how a document was set.
     """
 
-    logger.warning("Qt WebEngine is unavailable; writing the PDF with a reduced layout")
-    writer = QPdfWriter(str(destination))
-    writer.setPageSize(QPageSize(QSizeF(page.width_mm, page.height_mm), QPageSize.Unit.Millimeter))
-    writer.setPageMargins(page.margins, QPageLayout.Unit.Millimeter)
+    import typst
 
-    # Rich text cannot honour the percentage width the print stylesheet uses, so
-    # the rule is dropped and the images themselves are scaled to fit instead.
-    document_html = html_text.replace(FIGURE_IMAGE_CSS, "").replace(STORY_IMAGE_CSS, "")
+    with TemporaryDirectory(prefix="limelight-pdf-") as staging_directory:
+        root = Path(staging_directory) if keep_source is None else Path(keep_source)
+        root.mkdir(parents=True, exist_ok=True)
+        source = build_story_typst(runtime, renderers, root, on_figure_progress=on_figure_progress)
+        source_path = root / STORY_SOURCE
+        source_path.write_text(source, encoding="utf-8")
 
-    document = _DataUrlTextDocument(FALLBACK_IMAGE_WIDTH_PX)
-    document.setHtml(document_html)
-    # Leave the page size unset so print_ derives it from the writer's layout.
-    document.print_(writer)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        start_time = runtime.timing.start()
+        try:
+            _, warnings = typst.compile_with_warnings(
+                str(source_path),
+                output=str(destination),
+                root=str(root),
+                font_paths=_font_paths(runtime),
+            )
+        except typst.TypstError as error:
+            raise PdfExportError(f"Typst could not set the story: {error}") from error
+        for warning in warnings:
+            logger.warning("Typst: %s", warning)
+        runtime.timing.log("story.pdf.typst", start_time, [("path", str(destination))])
 
 
 def default_pdf_path(package_path: Path) -> Path:
@@ -648,10 +495,16 @@ def default_pdf_path(package_path: Path) -> Path:
 
 
 __all__ = [
+    "DEFAULT_RASTERIZE_ABOVE_POINTS",
+    "DEFAULT_RASTER_DPI",
+    "FigurePdfOptions",
     "PdfExportError",
+    "PrintedPage",
     "StoryPdfRenderers",
-    "build_story_pdf_html",
+    "build_story_typst",
     "default_pdf_path",
     "is_story_text_block",
-    "write_html_to_pdf",
+    "printed_page",
+    "rasterize_large_artists",
+    "write_story_pdf",
 ]

@@ -1044,14 +1044,24 @@ class LimelightRuntime:
         suffix = "mm" if width["unit"] == "millimetres" else "%"
         return f"{width['value']}{suffix}"
 
+    def image_bytes(self, src: str) -> bytes | None:
+        """A packaged image's file, or None if it is not declared.
+
+        Only a declared asset can be read, so this, rather than a path, decides
+        what a story can reach.
+        """
+
+        asset = self.image_assets_by_path.get(src)
+        if asset is None:
+            return None
+        return self.package.read_bytes(asset["path"])
+
     def image_data_url(self, src: str) -> str | None:
         """A packaged image as a ``data:`` URI, or None if it is not declared.
 
-        Inlining is what lets one renderer serve the story panel, the WebEngine
-        PDF path and the rich text PDF fallback: the first has no usable base
-        URL, the second is loaded from a temporary directory, and the third
-        resolves nothing but ``data:``. It also means this method, rather than
-        a base URL, decides what a package can reach.
+        The story panel has no usable base URL, so its images are inlined. It
+        also means this method, rather than a base URL, decides what a package
+        can reach.
         """
 
         asset = self.image_assets_by_path.get(src)

@@ -40,6 +40,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = load_settings()
     pdf_settings = settings.get("pdf", {})
     default_rolling_build = bool(pdf_settings.get("rollingBuild", False))
+    from .pdf_export import DEFAULT_RASTER_DPI, DEFAULT_RASTERIZE_ABOVE_POINTS
 
     parser = argparse.ArgumentParser(
         prog="limelight-cli",
@@ -58,6 +59,28 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     pdf_parser = subparsers.add_parser("pdf", help="Render each package's story document to a PDF")
     pdf_parser.add_argument("packages", nargs="+", help="Paths to .limelight or .ll folders or archives")
+    pdf_parser.add_argument(
+        "--rasterize-above",
+        type=_rasterize_threshold,
+        default=None,
+        metavar="POINTS",
+        help=(
+            "Draw a figure's lines, scatters and bands as images when one has more than POINTS "
+            "points, keeping axes and text vector; 'never' keeps every figure vector. Defaults to "
+            "the pdf block's rasterizeAbovePoints in limelight-setting.json, else "
+            f"{DEFAULT_RASTERIZE_ABOVE_POINTS}."
+        ),
+    )
+    pdf_parser.add_argument(
+        "--raster-dpi",
+        type=int,
+        default=None,
+        metavar="DPI",
+        help=(
+            "Resolution of the rasterised artists. Defaults to the pdf block's rasterDpi in "
+            f"limelight-setting.json, else {DEFAULT_RASTER_DPI}."
+        ),
+    )
     pdf_parser.add_argument(
         "--rolling-build",
         action="store_true",
@@ -90,7 +113,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "verify":
         return _run_verify(args.packages)
     if args.command == "pdf":
-        return _run_pdf(args.packages, rolling_build=args.rolling_build)
+        try:
+            figure_options = _figure_pdf_options(pdf_settings, args.rasterize_above, args.raster_dpi)
+        except (TypeError, ValueError) as error:
+            pdf_parser.error(str(error))
+        return _run_pdf(args.packages, rolling_build=args.rolling_build, figure_options=figure_options)
 
     try:
         with open_limelight(args.package) as package:
@@ -204,8 +231,7 @@ def _signature_check_lines(checks: Sequence[Any]) -> list[str]:
 
 def _default_pdf_output_path(input_path: Path) -> Path:
     # Shared with the app's File -> Export to PDF so both name the file the same
-    # way. Imported here rather than at module scope because limelight.pdf_export
-    # pulls in PySide6, which the other subcommands must not pay for.
+    # way.
     from .pdf_export import default_pdf_path
 
     return default_pdf_path(input_path)
@@ -231,7 +257,33 @@ def _create_or_replace_symlink(symlink_path: Path, target_path: Path) -> None:
         )
 
 
-def _run_pdf(paths: Sequence[str], *, rolling_build: bool = False) -> int:
+_NO_THRESHOLD = object()
+
+
+def _rasterize_threshold(value: str) -> Any:
+    if value.strip().lower() == "never":
+        return _NO_THRESHOLD
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a number of points or 'never'") from None
+
+
+def _figure_pdf_options(pdf_settings: dict[str, Any], rasterize_above: Any, raster_dpi: int | None) -> Any:
+    """The settings file's figure options, with whatever the command line said on top."""
+
+    from .pdf_export import FigurePdfOptions
+
+    options = FigurePdfOptions.from_settings(pdf_settings)
+    if rasterize_above is not None:
+        threshold = None if rasterize_above is _NO_THRESHOLD else rasterize_above
+        options = FigurePdfOptions(rasterize_above_points=threshold, raster_dpi=options.raster_dpi)
+    if raster_dpi is not None:
+        options = FigurePdfOptions(rasterize_above_points=options.rasterize_above_points, raster_dpi=raster_dpi)
+    return options
+
+
+def _run_pdf(paths: Sequence[str], *, rolling_build: bool = False, figure_options: Any = None) -> int:
     import os
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -241,7 +293,7 @@ def _run_pdf(paths: Sequence[str], *, rolling_build: bool = False) -> int:
 
         # The same pipeline the app's File -> Export to PDF uses, so a story exported
         # here and one exported from the app are the same document.
-        from .pdf_export import PdfExportError, build_story_pdf_html, printed_page, write_html_to_pdf
+        from .pdf_export import PdfExportError, write_story_pdf
         from .qt_app import story_pdf_renderers
     except ImportError as error:
         from .app import GUI_MISSING_MESSAGE
@@ -266,17 +318,17 @@ def _run_pdf(paths: Sequence[str], *, rolling_build: bool = False) -> int:
             validate_manifest_semantics(manifest)
             runtime = LimelightRuntime(package, manifest)
             try:
-                document_html = build_story_pdf_html(runtime, story_pdf_renderers(runtime))
+                renderers = story_pdf_renderers(runtime, figure_options)
                 if rolling_build:
                     document_version = manifest["project"].get("documentVersion") or "0"
                     output_path, symlink_path = _rolling_build_pdf_output_paths(
                         input_path, document_version, package.manifest_text()
                     )
-                    write_html_to_pdf(document_html, output_path, printed_page(runtime))
+                    write_story_pdf(runtime, renderers, output_path)
                     _create_or_replace_symlink(symlink_path, output_path)
                 else:
                     output_path = _default_pdf_output_path(input_path)
-                    write_html_to_pdf(document_html, output_path, printed_page(runtime))
+                    write_story_pdf(runtime, renderers, output_path)
                 print(f"OK {raw_path} -> {output_path}")
             finally:
                 runtime.close()

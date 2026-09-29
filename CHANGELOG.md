@@ -7,6 +7,24 @@ versions may break things.
 
 ## [Unreleased]
 
+### Changed
+
+- **A story's PDF is set by Typst.** File > Export to PDF and `LL pdf` write
+  the story's Markdown out as Typst and compile it, where they used to print
+  an HTML page from Qt WebEngine. Figures are drawn by matplotlib straight to
+  PDF and placed as they are, so they stay vector and carry the document's
+  fonts; TeX maths is converted to Typst's and set without MathJax, so an
+  export no longer needs a network. A continuous page is one sheet as long as
+  the story. A horizontal rule (`---`) starts a new page on a paged story.
+  The `gui` extra now brings `typst` and `tex2typst`.
+- A figure's line, scatter or band with more than 5000 points is drawn into
+  the PDF as a 300 dpi image, with the axes and text around it still vector,
+  so a dense plot does not make the document slow to open. `LL pdf
+  --rasterize-above POINTS` (or `never`) and `--raster-dpi DPI` change that
+  for one run; `rasterizeAbovePoints` (`null` for never) and `rasterDpi` in
+  the `pdf` block of `limelight-setting.json` change it for both the command
+  and File > Export to PDF.
+
 ## [0.0.19] - 2026-09-22
 
 ### Changed

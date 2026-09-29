@@ -64,9 +64,9 @@ import or the regression comes straight back.
 
 **Size.** The bundle is around 700 MB uncompressed, roughly 215–260 MB
 compressed. `libQt6WebEngineCore.so` alone is 194 MB. It cannot be dropped: the
-story panel renders markdown and MathJax in a `QWebEngineView`, and PDF export
-prints from the same engine. The spec already excludes the Qt modules the app
-never touches.
+story panel renders markdown and MathJax in a `QWebEngineView`. (PDF export does
+not use it; Typst sets the PDF.) The spec already excludes the Qt modules the
+app never touches.
 
 **File associations target the archive form.** A package is a folder while it
 is authored and a `.limelight` archive once it is shipped, so only the archive is

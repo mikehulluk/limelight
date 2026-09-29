@@ -150,13 +150,14 @@ from .semantic import (
 )
 from .logging_config import configure_logging, log_file_path
 from .pdf_export import (
+    FigurePdfOptions,
     PdfExportError,
     StoryPdfRenderers,
-    build_story_pdf_html,
     default_pdf_path,
-    printed_page,
-    write_html_to_pdf,
+    rasterize_large_artists,
+    write_story_pdf,
 )
+from .settings import load_settings
 from . import updates
 from .metadata import metadata_entries
 from .reader import PACKAGE_SUFFIXES, LimelightError, LimelightPackage, open_limelight
@@ -521,54 +522,52 @@ def prompt_for_package_path() -> str | None:
     return dialog.selected_path
 
 
-def story_pdf_renderers(runtime: LimelightRuntime) -> StoryPdfRenderers:
+def story_pdf_renderers(
+    runtime: LimelightRuntime,
+    figure_options: FigurePdfOptions | None = None,
+) -> StoryPdfRenderers:
     """Build the rendering callables a story PDF export needs.
 
     Shared by the app's File -> Export to PDF and by ``limelight-cli pdf`` so the
     two produce the same document.
     """
 
+    options = figure_options if figure_options is not None else FigurePdfOptions()
+
     # `limelight-cli pdf` reaches here with no window having registered the
-    # document's fonts; the figures need them, and so does the fallback PDF
-    # writer, which draws from Qt's font database rather than the stylesheet.
+    # document's fonts, and the figures need them.
     _configure_figure_typography()
     register_fonts_with_matplotlib(runtime.fonts, runtime.typography)
-    if QGuiApplication.instance() is not None:
-        register_fonts_with_qt(runtime.fonts)
-
-    if StoryMarkdownRenderer is None:
-        render_markdown_html: Callable[[str], str] = _plain_text_html
-    else:
-        render_markdown_html = story_markdown_renderer(runtime).render
 
     def figure_view_state_for_block(block: Any) -> StoryFigureViewState | None:
         return _figure_view_state_from_block(runtime, block)
 
-    def render_figure_png(
+    def render_figure_pdf(
         *,
         figure_id: str,
+        output_path: Path,
         figure_view_index: int | None,
         figure_view_actions: Sequence[dict[str, Any]],
         parameter_values: dict[str, Any],
         width: int,
         height: int,
-        dpi: int,
-    ) -> bytes:
-        return _render_static_figure_view_png_bytes(
+    ) -> Path:
+        return _render_static_figure_view_pdf(
             runtime,
             figure_id,
+            output_path,
             figure_view_index=figure_view_index,
             figure_view_actions=figure_view_actions,
             parameter_values=parameter_values,
             width=width,
             height=height,
-            dpi=dpi,
+            rasterize_above_points=options.rasterize_above_points,
+            raster_dpi=options.raster_dpi,
         )
 
     return StoryPdfRenderers(
-        render_markdown_html=render_markdown_html,
         figure_view_state_for_block=figure_view_state_for_block,
-        render_figure_png=render_figure_png,
+        render_figure_pdf=render_figure_pdf,
     )
 
 
@@ -1450,6 +1449,39 @@ def _format_hover_x(x_value: float, x_categories: list[str] | None, x_time: str 
     return f"{x_value:.4g}"
 
 
+def _static_figure_view(
+    runtime: LimelightRuntime,
+    figure_id: str,
+    *,
+    figure_view_index: int | None,
+    figure_view_actions: Sequence[dict[str, Any]],
+    parameter_values: dict[str, Any] | None,
+    width: int,
+    height: int,
+    layout_dpi: float,
+) -> MatplotlibFigure:
+    """One figure view drawn on a figure of its own, ``width`` by ``height`` pixels at ``layout_dpi``."""
+
+    _configure_figure_typography()
+    # The PDF renders without the app having registered the document's fonts.
+    register_fonts_with_matplotlib(runtime.fonts, runtime.typography)
+    figure = MatplotlibFigure(
+        figsize=(max(width, 1) / layout_dpi, max(height, 1) / layout_dpi),
+        dpi=layout_dpi,
+        constrained_layout=True,
+    )
+    FigureCanvasAgg(figure)
+    _render_figure_view_to_matplotlib_figure(
+        runtime,
+        figure,
+        figure_id,
+        figure_view_index=figure_view_index,
+        figure_view_actions=figure_view_actions,
+        parameter_values=parameter_values,
+    )
+    return figure
+
+
 def _render_static_figure_view_png_bytes(
     runtime: LimelightRuntime,
     figure_id: str,
@@ -1467,27 +1499,20 @@ def _render_static_figure_view_png_bytes(
     ``layout_dpi`` is what a point comes out as: at CSS_PIXELS_PER_INCH the
     labels are the story's text size, and a zoomed story passes a zoomed
     resolution so its figures zoom with it, the same figure seen closer. A
-    higher output ``dpi`` only adds pixels, for the PDF.
+    higher output ``dpi`` only adds pixels.
     """
 
     start_time = runtime.timing.start()
-    _configure_figure_typography()
-    # The PDF renders without the app having registered the document's fonts.
-    register_fonts_with_matplotlib(runtime.fonts, runtime.typography)
     output_dpi = layout_dpi if dpi is None else dpi
-    figure = MatplotlibFigure(
-        figsize=(max(width, 1) / layout_dpi, max(height, 1) / layout_dpi),
-        dpi=layout_dpi,
-        constrained_layout=True,
-    )
-    FigureCanvasAgg(figure)
-    _render_figure_view_to_matplotlib_figure(
+    figure = _static_figure_view(
         runtime,
-        figure,
         figure_id,
         figure_view_index=figure_view_index,
         figure_view_actions=figure_view_actions,
         parameter_values=parameter_values,
+        width=width,
+        height=height,
+        layout_dpi=layout_dpi,
     )
 
     buffer = io.BytesIO()
@@ -1503,6 +1528,58 @@ def _render_static_figure_view_png_bytes(
         ],
     )
     return buffer.getvalue()
+
+
+def _render_static_figure_view_pdf(
+    runtime: LimelightRuntime,
+    figure_id: str,
+    output_path: Path,
+    *,
+    figure_view_index: int | None = None,
+    figure_view_actions: Sequence[dict[str, Any]] = (),
+    parameter_values: dict[str, Any] | None = None,
+    width: int,
+    height: int,
+    layout_dpi: float = CSS_PIXELS_PER_INCH,
+    rasterize_above_points: int | None = None,
+    raster_dpi: int = 300,
+) -> Path:
+    """Draw one figure view, ``width`` by ``height`` pixels at ``layout_dpi``, to a PDF.
+
+    The PDF is the figure at its printed size, vector, with its fonts
+    embedded in it, so the story's PDF can place it as it is. An artist with
+    more than ``rasterize_above_points`` points is drawn as an image at
+    ``raster_dpi`` instead; everything around it stays vector.
+    """
+
+    start_time = runtime.timing.start()
+    figure = _static_figure_view(
+        runtime,
+        figure_id,
+        figure_view_index=figure_view_index,
+        figure_view_actions=figure_view_actions,
+        parameter_values=parameter_values,
+        width=width,
+        height=height,
+        layout_dpi=layout_dpi,
+    )
+    rasterized = rasterize_large_artists(figure, rasterize_above_points)
+    # TrueType rather than matplotlib's default Type 3, so the text in a
+    # figure is text a reader can select and search. The dpi reaches only
+    # what was rasterised.
+    with matplotlib.rc_context({"pdf.fonttype": 42}):
+        figure.savefig(output_path, format="pdf", dpi=raster_dpi)
+    runtime.timing.log(
+        "story.static_figure_view.render_pdf",
+        start_time,
+        [
+            ("figure", figure_id),
+            ("width", width),
+            ("height", height),
+            ("rasterized", rasterized),
+        ],
+    )
+    return output_path
 
 
 def _render_figure_view_to_matplotlib_figure(
@@ -3336,7 +3413,12 @@ class LimelightWindow(QMainWindow):
         if destination.suffix.lower() != ".pdf":
             destination = destination.with_suffix(".pdf")
 
-        renderers = story_pdf_renderers(self.runtime)
+        try:
+            figure_options = FigurePdfOptions.from_settings(load_settings().get("pdf", {}))
+        except (TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Export to PDF", f"The PDF settings in limelight-setting.json are not usable:\n{error}")
+            return
+        renderers = story_pdf_renderers(self.runtime, figure_options)
 
         progress = QProgressDialog("Rendering story...", "Cancel", 0, 0, self)
         progress.setWindowTitle("Export to PDF")
@@ -3358,15 +3440,12 @@ class LimelightWindow(QMainWindow):
 
         start_time = self.runtime.timing.start()
         try:
-            document_html = build_story_pdf_html(
+            write_story_pdf(
                 self.runtime,
                 renderers,
+                destination,
                 on_figure_progress=report_figure_progress,
             )
-            progress.setLabelText("Writing PDF...")
-            progress.setValue(max(progress.maximum() - 1, 0))
-            QApplication.processEvents()
-            write_html_to_pdf(document_html, destination, printed_page(self.runtime))
         except PdfExportError as error:
             progress.close()
             if not progress.wasCanceled():

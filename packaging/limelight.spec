@@ -36,6 +36,8 @@ hiddenimports = [
     # Reached only through matplotlib's runtime backend lookup.
     "matplotlib.backends.backend_agg",
     "matplotlib.backends.backend_qtagg",
+    # A story's figures are saved to PDF, for the exported PDF to place.
+    "matplotlib.backends.backend_pdf",
 ]
 
 # Qt ships far more than this app touches. Dropping the unused modules cuts both

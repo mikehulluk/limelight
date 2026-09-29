@@ -23,8 +23,9 @@ pip install limelight-app           # the library and CLI only: no Qt
 The distribution is `limelight-app` (PyPI would not allow plain `limelight`),
 but the package imports as `limelight` and the commands are named as below.
 The `gui` extra is Qt (PySide6), which only the desktop app and `LL pdf`
-need; a program that builds or reads packages with `limelight.writer` and
-`limelight.reader` leaves it out.
+need, and Typst, which `LL pdf` sets the story's PDF with; a program that
+builds or reads packages with `limelight.writer` and `limelight.reader` leaves
+it out.
 
 A package's `project.dhall` manifest is read by a built-in evaluator, so
 nothing beyond the Python dependencies is needed. A hand-written manifest

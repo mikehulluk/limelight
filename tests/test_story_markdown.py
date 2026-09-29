@@ -214,7 +214,7 @@ def test_both_renderers_constrain_a_story_image_to_its_column() -> None:
     column in both.
     """
 
-    from limelight.pdf_export import STORY_IMAGE_CSS
+    from limelight.app import STORY_IMAGE_CSS
     from limelight.qt_app import _story_html
 
     assert "max-width: 100%" in STORY_IMAGE_CSS

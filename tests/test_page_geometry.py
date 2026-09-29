@@ -17,7 +17,6 @@ from limelight.app import (
     story_run_edge_css,
 )
 from limelight.pdf_export import (
-    CONTINUOUS_PAGE_HEIGHT_MM,
     FALLBACK_PAGE_WIDTH_MM,
     printed_page,
 )
@@ -96,7 +95,7 @@ def test_a_continuous_page_prints_as_one_long_sheet() -> None:
     page = printed_page(_PageRuntime(PageGeometry(170.0, None, 12.0, 8.0)))
 
     assert page.width_mm == 170.0
-    assert page.height_mm == CONTINUOUS_PAGE_HEIGHT_MM
+    assert page.height_mm is None
     assert page.content_width_mm == 146.0
     assert (page.margin_lr_mm, page.margin_tb_mm) == (12.0, 8.0)
 
