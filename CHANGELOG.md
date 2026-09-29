@@ -7,6 +7,8 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.20] - 2026-09-29
+
 ### Changed
 
 - **A story's PDF is set by Typst.** File > Export to PDF and `LL pdf` write
@@ -442,7 +444,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.19...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.20...HEAD
+[0.0.20]: https://github.com/mikehulluk/limelight/compare/v0.0.19...v0.0.20
 [0.0.19]: https://github.com/mikehulluk/limelight/compare/v0.0.18...v0.0.19
 [0.0.18]: https://github.com/mikehulluk/limelight/compare/v0.0.17...v0.0.18
 [0.0.17]: https://github.com/mikehulluk/limelight/compare/v0.0.16...v0.0.17
