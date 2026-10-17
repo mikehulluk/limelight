@@ -250,3 +250,43 @@ def test_marks_appear_only_in_the_raw_view(tmp_path: Path) -> None:
     finally:
         plt.close(fig)
         close_cache(handle)
+
+
+def test_installing_a_series_does_not_requery_the_ones_already_there(tmp_path: Path, monkeypatch) -> None:
+    """Each series costs one query however many share the axes.
+
+    Installing a series sets the axes' x limits, which notifies every series
+    already on them - and every panel sharing them. They are being told the
+    range they are already drawn at, so there is nothing for them to do.
+    """
+    from limelight.largeseries import mpl as mpl_module
+
+    spec, handle = _build_handle(tmp_path)
+
+    queries = {"count": 0}
+    original = mpl_module.query_range
+
+    def counting(*args, **kwargs):
+        queries["count"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(mpl_module, "query_range", counting)
+
+    figure = plt.figure()
+    top, bottom = figure.subplots(2, 1, sharex=True)
+    syncs = [ZoomSync(ax=axes, handle=handle, spec=spec) for axes in (top, bottom) for _ in range(3)]
+    assert queries["count"] == len(syncs)
+
+    # A real zoom still redraws every one of them, once.
+    queries["count"] = 0
+    top.set_xlim(10, 20)
+    assert queries["count"] == len(syncs)
+    assert all(sync._line_min.get_xdata()[0] >= 10 for sync in syncs)
+
+    # Asking again for what is drawn costs nothing.
+    queries["count"] = 0
+    top.set_xlim(10, 20)
+    assert queries["count"] == 0
+
+    plt.close(figure)
+    close_cache(handle)

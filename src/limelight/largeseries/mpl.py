@@ -211,6 +211,9 @@ class ZoomSync:
     _marks: Line2D | None = field(default=None, init=False, repr=False)
     _indicator: Text | None = field(default=None, init=False, repr=False)
     _cid: int | None = field(default=None, init=False, repr=False)
+    # The (x_start, x_end, buckets) the artists currently show, so a
+    # notification that asks for what is already drawn costs nothing.
+    _drawn: tuple[float, float, int] | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._install_initial_artists()
@@ -218,10 +221,13 @@ class ZoomSync:
 
     def _install_initial_artists(self) -> None:
         x_start, x_end = full_x_range(self.handle, self.spec)
+        # Setting the limits notifies every series already on these axes, and
+        # every panel sharing them. They are told the range they are already
+        # drawn at, which `_on_xlim_changed` then does nothing about.
         self.ax.set_xlim(x_start, x_end)
-        result = query_range(
-            self.handle, self.spec, x_start, x_end, self._estimate_target_buckets(), timing=self.timing
-        )
+        buckets = self._estimate_target_buckets()
+        result = query_range(self.handle, self.spec, x_start, x_end, buckets, timing=self.timing)
+        self._drawn = (x_start, x_end, buckets)
         self._line_min, self._line_max, self._fill, self._marks = plot_envelope(
             self.ax, result, color=self.color, fill_color=self.fill_color, fill_alpha=self.fill_alpha,
             missing_marker=self.missing_marker,
@@ -238,11 +244,17 @@ class ZoomSync:
         self._cid = self.ax.callbacks.connect("xlim_changed", self._on_xlim_changed)
 
     def _on_xlim_changed(self, ax: Axes) -> None:
-        redraw_start = self.timing.start() if self.timing is not None else None
         x_start, x_end = ax.get_xlim()
-        result = query_range(
-            self.handle, self.spec, x_start, x_end, self._estimate_target_buckets(), timing=self.timing
-        )
+        buckets = self._estimate_target_buckets()
+        if self._drawn == (x_start, x_end, buckets):
+            # Already showing exactly this. Another series installing itself
+            # on these axes, or a panel sharing them, sets the limits we are
+            # at; requerying would draw the same picture again.
+            return
+
+        redraw_start = self.timing.start() if self.timing is not None else None
+        result = query_range(self.handle, self.spec, x_start, x_end, buckets, timing=self.timing)
+        self._drawn = (x_start, x_end, buckets)
         update_envelope_artists(self._line_min, self._line_max, self._fill, result, self._marks)
         if self._indicator is not None:
             self._indicator.set_text(indicator_label(result))
