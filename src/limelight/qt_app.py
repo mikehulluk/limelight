@@ -138,6 +138,7 @@ from .app import (
     story_typography_css,
 )
 from .typography import (
+    MATHS_FONTS,
     FigureText,
     ResolvedFont,
     TextStyle,
@@ -1127,6 +1128,7 @@ window.MathJax = {{
     displayMath: [['\\\\[', '\\\\]']],
     processEscapes: true
   }},
+  output: {{ font: '{MATHS_FONTS[runtime.typography.maths_font].mathjax}' }},
   svg: {{ fontCache: 'global' }}
 }};
 </script>
@@ -4270,7 +4272,8 @@ def _typography_page(runtime: LimelightRuntime) -> QWidget:
         f"Line height: {typography.line_height:g} × the body size. "
         f"Axis labels sit {typography.axis_label_pad_pt:g}pt from the axis, "
         f"figure titles {typography.figure_title_pad_pt:g}pt above the axes. "
-        f"Maths is set at {typography.maths_scale:g} × the size of the text around it.\n"
+        f"Maths is set in {MATHS_FONTS[typography.maths_font].family}, "
+        f"at {typography.maths_scale:g} × the size of the text around it.\n"
         f"In use on screen: {', '.join(screen_families)}.\n"
         f"In use in figures: {', '.join(figure_families)}."
     )

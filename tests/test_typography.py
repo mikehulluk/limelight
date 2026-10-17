@@ -16,6 +16,7 @@ from limelight.story_markdown import figure_caption_markup
 from limelight.typography import (
     BOLD,
     FONTS_DIR,
+    MATHS_FONTS,
     FigureText,
     TextStyle,
     Typography,
@@ -82,6 +83,7 @@ def test_a_custom_typography_round_trips(tmp_path: Path) -> None:
         axis_label_pad_pt=9.0,
         figure_title_pad_pt=12.0,
         maths_scale=0.85,
+        maths_font="fira",
         heading1=TextStyle(fonts=("noto-sans",), size_pt=24.0, weight=800, italic=True),
         code=TextStyle(fonts=("dejavu-sans-mono",), size_pt=9.0),
     )
@@ -127,6 +129,29 @@ def test_a_maths_scale_must_be_positive(tmp_path: Path) -> None:
     block["mathsScale"] = 0.0
     with pytest.raises(LimelightError, match="mathsScale"):
         typography_from_story({"typography": block})
+
+
+def test_a_typography_block_written_before_the_maths_font_has_the_default_one(tmp_path: Path) -> None:
+    package = _written(tmp_path, _project())
+    with open_limelight(package) as opened:
+        block = opened.manifest_json()["story"]["typography"]
+    del block["mathsFont"]
+    assert typography_from_story({"typography": block}).maths_font == "new-computer-modern"
+
+
+def test_a_maths_font_must_be_one_limelight_knows(tmp_path: Path) -> None:
+    package = _written(tmp_path, _project())
+    with open_limelight(package) as opened:
+        block = opened.manifest_json()["story"]["typography"]
+    block["mathsFont"] = "comic-sans"
+    with pytest.raises(LimelightError, match="mathsFont 'comic-sans' is not one of new-computer-modern, fira"):
+        typography_from_story({"typography": block})
+
+
+def test_every_maths_font_limelight_ships_is_there_with_its_licence() -> None:
+    for font in MATHS_FONTS.values():
+        if font.path is not None:
+            assert font.path.is_file() and font.licence is not None and font.licence.is_file()
 
 
 def test_the_stylesheet_scales_maths_from_the_text_around_it() -> None:

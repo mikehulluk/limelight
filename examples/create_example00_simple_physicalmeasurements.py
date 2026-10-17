@@ -307,6 +307,7 @@ in    { limelightVersion = "1.0"
           , axisLabelPadPt = 4.0
           , figureTitlePadPt = 6.0
           , mathsScale = 1.0
+          , mathsFont = "new-computer-modern"
           , body = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 10.5, weight = 400, italic = False }
           , heading1 = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 17.85, weight = 700, italic = False }
           , heading2 = { fonts = [ "ubuntu", "noto-sans" ], sizePt = 13.86, weight = 700, italic = False }

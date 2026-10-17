@@ -148,7 +148,9 @@ let TextStyle =
 -- title above it), `tableHeader` (column headers), `tableCell`, `tableNote`
 -- (notes and notices under a table). Mathematics is set in its own face (by
 -- MathJax on screen, by Typst in a PDF), at `mathsScale` times the size of
--- the text around it; 1.0 unless a document says. The application's own
+-- the text around it; 1.0 unless a document says. The face is `mathsFont`,
+-- one of the maths fonts Limelight knows: "new-computer-modern" (the
+-- default) or "fira". The application's own
 -- controls - toolbars, the sidebar, dialogs - are not the document's and
 -- keep the platform's font.
 --
@@ -161,6 +163,7 @@ let Typography =
       , axisLabelPadPt : Double
       , figureTitlePadPt : Double
       , mathsScale : Double
+      , mathsFont : Text
       , body : TextStyle
       , heading1 : TextStyle
       , heading2 : TextStyle

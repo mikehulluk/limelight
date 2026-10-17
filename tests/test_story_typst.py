@@ -181,7 +181,7 @@ def test_the_preamble_sets_every_kind_of_text_from_the_typography() -> None:
     assert '#show raw: set text(font: ("Ubuntu Mono", "DejaVu Sans Mono",)' in preamble
     # Line height 1.5 is half an em of leading between lines an em tall.
     assert "#set par(leading: 0.5em" in preamble
-    assert "#show math.equation: set text(size: 1em)" in preamble
+    assert '#show math.equation: set text(font: "New Computer Modern Math", size: 1em)' in preamble
 
 
 def test_the_preamble_scales_maths_from_the_text_around_it() -> None:
@@ -192,7 +192,18 @@ def test_the_preamble_scales_maths_from_the_text_around_it() -> None:
         typography=replace(Typography(), maths_scale=0.85),
         fonts=resolve_fonts({"story": {}}, None),
     )
-    assert "#show math.equation: set text(size: 0.85em)" in preamble
+    assert '#show math.equation: set text(font: "New Computer Modern Math", size: 0.85em)' in preamble
+
+
+def test_the_preamble_sets_maths_in_the_documents_maths_font() -> None:
+    preamble = typst_preamble(
+        title="Doc",
+        page=TypstPage(210.0, 297.0, 15.0, 20.0),
+        spacing=TypstSpacing(3.0, 4.5, 5.0, 2.0),
+        typography=replace(Typography(), maths_font="fira"),
+        fonts=resolve_fonts({"story": {}}, None),
+    )
+    assert '#show math.equation: set text(font: "Fira Math", size: 1em)' in preamble
 
 
 def test_tex_to_typst_writes_a_fraction_typst_stacks() -> None:

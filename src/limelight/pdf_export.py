@@ -46,6 +46,7 @@ from .story_typst import (
     typst_string,
     typst_text,
 )
+from .typography import MATHS_FONTS
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +497,9 @@ def _font_paths(runtime: LimelightRuntime) -> list[str]:
         for face in font.faces
         if face.path.is_file()
     }
+    maths_font = MATHS_FONTS[runtime.typography.maths_font]
+    if maths_font.path is not None:
+        directories.add(str(maths_font.path.parent))
     return sorted(directories)
 
 

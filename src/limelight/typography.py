@@ -115,6 +115,30 @@ def _matplotlib_dejavu(id: str, family: str, stem: str, *, monospace: bool = Fal
     )
 
 
+@dataclass(frozen=True)
+class MathsFont:
+    """A face mathematics can be set in: an OpenType maths font for Typst, and MathJax's build of it.
+
+    Maths needs a font made for it - stretching brackets and braces, sized
+    sub- and superscripts - and MathJax can only draw the few it has its own
+    copies of, so a document names one of these rather than a font stack.
+    """
+
+    id: str
+    family: str
+    mathjax: str
+    path: Path | None = None    # None: Typst carries it itself.
+    licence: Path | None = None
+
+
+MATHS_FONTS = {font.id: font for font in (
+    MathsFont("new-computer-modern", "New Computer Modern Math", "mathjax-newcm"),
+    MathsFont("fira", "Fira Math", "mathjax-fira",
+              FONTS_DIR / "fira-math" / "FiraMath-Regular.otf", FONTS_DIR / "fira-math" / "LICENSE.txt"),
+)}
+DEFAULT_MATHS_FONT = "new-computer-modern"
+
+
 _builtin_fonts: dict[str, BuiltinFont] | None = None
 
 
@@ -228,15 +252,17 @@ class Typography:
     are set with the text they space: ``axis_label_pad_pt`` between an axis
     and its label, ``figure_title_pad_pt`` between the axes and the title.
 
-    Mathematics keeps its own face; ``maths_scale`` is its size as a multiple
-    of the text around it, so a document of long equations can set them a
-    little smaller than its prose.
+    Mathematics is set in its own face, ``maths_font`` (an id in
+    ``MATHS_FONTS``); ``maths_scale`` is its size as a multiple of the text
+    around it, so a document of long equations can set them a little smaller
+    than its prose.
     """
 
     line_height: float = DEFAULT_LINE_HEIGHT
     axis_label_pad_pt: float = DEFAULT_AXIS_LABEL_PAD_PT
     figure_title_pad_pt: float = DEFAULT_FIGURE_TITLE_PAD_PT
     maths_scale: float = DEFAULT_MATHS_SCALE
+    maths_font: str = DEFAULT_MATHS_FONT
     body: TextStyle = _style(DEFAULT_TEXT_FONTS, 1.0)
     heading1: TextStyle = _style(DEFAULT_TEXT_FONTS, 1.7, BOLD)
     heading2: TextStyle = _style(DEFAULT_TEXT_FONTS, 1.32, BOLD)
@@ -334,6 +360,10 @@ def typography_from_story(story: dict[str, Any]) -> Typography:
     maths_scale = float(block.get("mathsScale", DEFAULT_MATHS_SCALE))
     if maths_scale <= 0:
         raise LimelightError(f"Typography mathsScale {maths_scale!r} must be positive")
+    # And the maths font; a document without one has Typst's and MathJax's default.
+    maths_font = str(block.get("mathsFont", DEFAULT_MATHS_FONT))
+    if maths_font not in MATHS_FONTS:
+        raise LimelightError(f"Typography mathsFont {maths_font!r} is not one of {', '.join(MATHS_FONTS)}")
     styles = {
         _field_name(name): text_style_from_manifest(block[name], f"Typography {name}")
         for name in STYLE_NAMES
@@ -343,6 +373,7 @@ def typography_from_story(story: dict[str, Any]) -> Typography:
         axis_label_pad_pt=axis_label_pad_pt,
         figure_title_pad_pt=figure_title_pad_pt,
         maths_scale=maths_scale,
+        maths_font=maths_font,
         **styles,
     )
 

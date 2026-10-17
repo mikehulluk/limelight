@@ -13,6 +13,11 @@ versions may break things.
   that multiple of the size of the text around it, by MathJax on screen and
   by Typst in a PDF, so a document of long equations can set them smaller
   than its prose. A document without one sets maths at its text's size.
+- **A maths font.** A story's typography has a `mathsFont`, one of the maths
+  fonts Limelight knows: `new-computer-modern` (the default, and what a
+  document without one gets) or `fira`, a sans-serif that sits with the
+  default Ubuntu text. Limelight ships Fira Math for the PDF and MathJax's
+  build of it for the screen.
 
 ## [0.0.20] - 2026-09-29
 
