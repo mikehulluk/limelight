@@ -24,6 +24,7 @@ from typing import Any, Callable, Container, Mapping
 from markdown_it.tree import SyntaxTreeNode
 
 from .story_markdown import image_width_css, story_markdown_parser
+from .story_syntax import StyleOf, find_roles, replace_roles, styled_typst, typst_syntax_settings
 from .typography import MATHS_FONTS, ResolvedFont, TextStyle, Typography
 
 logger = logging.getLogger(__name__)
@@ -140,8 +141,10 @@ class StoryTypstRenderer:
         anchors: Container[str] = (),
         *,
         paged: bool = True,
+        syntax_style: StyleOf | None = None,
     ) -> None:
         self._parser = story_markdown_parser()
+        self._syntax_style = syntax_style
         self._image = image
         self._image_number = image_number
         self._image_anchor = image_anchor
@@ -232,7 +235,7 @@ class StoryTypstRenderer:
 
     def _display_math(self, tex: str) -> str:
         try:
-            return f"$ {tex_to_typst(tex)} $"
+            return f"$ {self._maths(tex)} $"
         except Exception as error:
             logger.warning("Could not convert display maths %r: %s", tex, error)
             return f"#ll-notice[#raw({typst_string(tex.strip())}, block: true)]"
@@ -305,7 +308,11 @@ class StoryTypstRenderer:
         if kind == "hardbreak":
             return "\\\n"
         if kind == "code_inline":
-            return f"#raw({typst_string(node.content)})"
+            code = f"#raw({typst_string(node.content)})"
+            role = node.attrs.get("role")
+            settings = typst_syntax_settings(self._syntax_style(str(role))) if role and self._syntax_style else ""
+            # A scoped show rule, since the document's own rule for raw text sets its style and weight:
+            return f"#[#show raw: set text({settings}); {code}]" if settings else code
         if kind == "strong":
             return f"#strong[{self._inline_of(node)}]"
         if kind == "em":
@@ -345,10 +352,39 @@ class StoryTypstRenderer:
 
     def _inline_math(self, tex: str) -> str:
         try:
-            return f"${tex_to_typst(tex)}$"
+            return f"${self._maths(tex)}$"
         except Exception as error:
             logger.warning("Could not convert inline maths %r: %s", tex, error)
             return f"#ll-notice[#raw({typst_string(tex)})]"
+
+
+    def _maths(self, tex: str) -> str:
+        return typst_maths(tex, self._syntax_style)
+
+
+def typst_maths(tex: str, syntax_style: StyleOf | None) -> str:
+    """TeX maths as Typst, each labelled token set in its style.
+
+    tex2typst does not know the label macro, so each labelled token is
+    swapped for a placeholder it passes through as text, the rest is
+    converted, and each placeholder is then replaced by its token, converted
+    on its own and styled with Typst's maths functions.
+    """
+
+    roles = find_roles(tex)
+    if not roles:
+        return tex_to_typst(tex)
+    placeholders = iter(range(len(roles)))
+    converted = tex_to_typst(replace_roles(tex, lambda role: f"\\text{{LLROLE{next(placeholders)}}}"))
+    for index, role in enumerate(roles):
+        inner = tex_to_typst(role.inner)
+        if syntax_style is not None:
+            inner = styled_typst(inner, role.inner, syntax_style(role.label))
+        placeholder = f'"LLROLE{index}"'
+        if converted.count(placeholder) != 1:
+            raise ValueError(f"tex2typst did not keep the placeholder for {role.inner!r}")
+        converted = converted.replace(placeholder, inner)
+    return converted
 
 
 def _figure_image(paragraph: SyntaxTreeNode) -> SyntaxTreeNode | None:

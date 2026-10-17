@@ -65,6 +65,11 @@ class FakeRuntime:
             return title
         return f"Figure {index}. {title}"
 
+    def syntax_style(self, label: str):
+        from limelight.typography import resolve_syntax_style
+
+        return resolve_syntax_style(label, self.typography.syntax)
+
     def image_bytes(self, src: str) -> bytes | None:
         return None
 

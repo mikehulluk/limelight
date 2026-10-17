@@ -1097,6 +1097,7 @@ def story_markdown_renderer(
         runtime.image_anchor,
         anchor_href,
         runtime.image_display_width,
+        syntax_style=runtime.syntax_style,
     )
 
 
@@ -1129,7 +1130,9 @@ window.MathJax = {{
   tex: {{
     inlineMath: [['\\\\(', '\\\\)']],
     displayMath: [['\\\\[', '\\\\]']],
-    processEscapes: true
+    processEscapes: true,
+    // A labelled token (story_syntax) is styled before it gets here; one that is not is set plain.
+    macros: {{ llrole: ['{{#2}}', 2] }}
   }},
   loader: {{ paths: {{ fonts: '{MATHJAX_FONTS}' }} }},
   output: {{ font: '{MATHS_FONTS[runtime.typography.maths_font].mathjax}' }},

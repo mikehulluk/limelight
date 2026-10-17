@@ -24,7 +24,12 @@ versions may break things.
   one name (`symbol.cash`). Each property comes from the most particular
   style that sets it. A reader can override any style by name in the
   `syntax` object of `limelight-setting.json`; File > Document Information
-  lists them and where each comes from. (Drawing labelled tokens follows.)
+  lists them and where each comes from.
+- **Labelled tokens in maths and code.** A story labels a token in maths
+  with `\llrole{variable.state symbol.cash}{\text{cash}}` and inline code
+  with `` `cash`{role="variable.state symbol.cash"} ``; both are set in
+  their style on screen (MathJax) and in the PDF (Typst), including inside
+  tables. A label with no style is set plain.
 
 ### Changed
 

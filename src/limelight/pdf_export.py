@@ -257,6 +257,7 @@ def build_story_typst(
         runtime.image_display_width,
         anchors,
         paged=page.height_mm is not None,
+        syntax_style=runtime.syntax_style,
     )
 
     parts: list[str] = []

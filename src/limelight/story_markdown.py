@@ -31,6 +31,8 @@ from markdown_it.token import Token
 from mdit_py_plugins.attrs import attrs_plugin
 from mdit_py_plugins.dollarmath import dollarmath_plugin
 
+from .story_syntax import StyleOf, code_html, tex_with_roles
+
 # Caption words a cross-reference may use as its link text. The builder
 # replaces the text of such a link with the number of whatever it points at.
 REFERENCE_LABELS = ("Figure", "figure", "Fig.", "fig.", "Table", "table", "Image", "image")
@@ -73,21 +75,26 @@ class StoryImageReference:
         return self.title if self.title else self.alt
 
 
-def story_markdown_parser() -> MarkdownIt:
-    """The Markdown configuration every Limelight story is parsed with."""
+def story_markdown_parser(syntax_style: StyleOf | None = None) -> MarkdownIt:
+    """The Markdown configuration every Limelight story is parsed with.
+
+    ``syntax_style`` sets the maths' labelled tokens in their styles (see
+    ``story_syntax``); without it they are set plain.
+    """
 
     parser = MarkdownIt("gfm-like", {"html": False}).use(
         dollarmath_plugin,
-        renderer=_render_math,
+        renderer=lambda content, options: _render_math(content, options, syntax_style),
     )
-    # `![alt](rig.png){width=80mm}`. Only a width is honoured; anything else an
-    # author attaches is parsed and then ignored rather than reaching the page,
-    # which keeps this from becoming a way to write arbitrary HTML attributes.
-    return parser.use(attrs_plugin, allowed=["width"])
+    # `![alt](rig.png){width=80mm}`, and `` `cash`{role="variable.state"} `` on
+    # inline code. Only those are honoured; anything else an author attaches
+    # is parsed and then ignored rather than reaching the page, which keeps
+    # this from becoming a way to write arbitrary HTML attributes.
+    return parser.use(attrs_plugin, allowed=["width", "role"])
 
 
-def _render_math(content: str, options: dict[str, Any]) -> str:
-    escaped = html.escape(content, quote=False)
+def _render_math(content: str, options: dict[str, Any], syntax_style: StyleOf | None = None) -> str:
+    escaped = html.escape(tex_with_roles(content, syntax_style), quote=False)
     if options.get("display_mode"):
         return f"\\[{escaped}\\]"
     return f"\\({escaped}\\)"
@@ -398,8 +405,10 @@ class StoryMarkdownRenderer:
         image_anchor: Callable[[str], str | None] | None = None,
         anchor_href: Callable[[str], str] | None = None,
         image_width: Callable[[str], str | None] | None = None,
+        syntax_style: StyleOf | None = None,
     ) -> None:
-        self.markdown = story_markdown_parser()
+        self.markdown = story_markdown_parser(syntax_style)
+        self._syntax_style = syntax_style
         self._resolve_image = resolve_image
         self._image_number = image_number
         self._image_anchor = image_anchor
@@ -410,9 +419,15 @@ class StoryMarkdownRenderer:
         self.markdown.renderer.rules["paragraph_open"] = self._render_paragraph_open
         self.markdown.renderer.rules["paragraph_close"] = self._render_paragraph_close
         self.markdown.renderer.rules["link_open"] = self._render_link_open
+        self.markdown.renderer.rules["code_inline"] = self._render_code_inline
 
     def render(self, markdown: str) -> str:
         return self.markdown.render(markdown)
+
+    def _render_code_inline(self, tokens: list[Token], index: int, options: Any, env: Any) -> str:
+        token = tokens[index]
+        role = token.attrGet("role")
+        return code_html(token.content, str(role) if role else None, self._syntax_style)
 
     def _render_link_open(self, tokens: list[Token], index: int, options: Any, env: Any) -> str:
         """Rewrite in-page anchors for renderers that cannot follow them.

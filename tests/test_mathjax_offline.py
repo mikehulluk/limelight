@@ -27,6 +27,9 @@ EQUATIONS = [
     r"\operatorname{band}\left( x \right) = \begin{cases} 0 & x < 100 \\ 2 & \text{otherwise} \end{cases}",
     # \mathbb's glyphs and \boldsymbol's extension are both loaded on demand:
     r"\frac{\text{cash} \times \text{rate}}{12} \geq \sqrt{x^2} \sum_{i=1}^{n} \int_0^1 \mathbb{R} \boldsymbol{\alpha}",
+    # Syntax styles' TeX (story_syntax), and a label no lookup has styled, which MathJax sets plain:
+    r"\textcolor{#0550ae}{\textit{cash}} = \textcolor{#cf222e}{\textbf{IF}} + \textcolor{#8250df}{\mathrm{x}}",
+    r"\llrole{variable.state symbol.cash}{\text{cash}} + 1",
 ]
 
 
