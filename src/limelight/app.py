@@ -37,6 +37,7 @@ from .semantic import (
 )
 from .story_markdown import CAPTION_LABEL_CLASS, figure_caption_markup, numbered_story_items, story_image_references
 from .settings import load_settings
+from .story_syntax import CodeToken, parse_code_tokens
 from .typography import (
     FigureText,
     ResolvedFont,
@@ -699,6 +700,9 @@ class LimelightRuntime:
 
         # Packages built before assets existed have no such key at all.
         self.image_assets = {asset["id"]: asset for asset in (manifest.get("assets") or [])}
+        # Labelled code blocks' tokens, read when a block first asks for them.
+        self.code_tokens_assets = {entry["id"]: entry for entry in (manifest.get("codeTokens") or [])}
+        self._code_tokens: dict[str, list[CodeToken] | None] = {}
         self.image_assets_by_path = {
             asset["path"]: asset for asset in self.image_assets.values()
         }
@@ -1239,6 +1243,22 @@ class LimelightRuntime:
 
     def figure_heading(self, figure_id: str) -> str:
         return self.figure_view_heading(figure_id)
+
+    def code_tokens(self, code_id: str) -> list[CodeToken] | None:
+        """A code block's labelled tokens; None, set plain, when they are not declared or not readable."""
+
+        if code_id not in self._code_tokens:
+            entry = self.code_tokens_assets.get(code_id)
+            tokens = None
+            if entry is None:
+                logger.warning("The story names code tokens %r, which the package does not declare", code_id)
+            else:
+                try:
+                    tokens = parse_code_tokens(self.package.read_bytes(entry["path"]), f"CodeTokens {code_id!r}")
+                except (OSError, ValueError) as error:
+                    logger.warning("Setting code block %r plain: %s", code_id, error)
+            self._code_tokens[code_id] = tokens
+        return self._code_tokens[code_id]
 
     def syntax_style(self, label: str) -> ResolvedSyntaxStyle:
         """How a token labelled ``label`` is set: the reader's overrides, then the document's styles."""

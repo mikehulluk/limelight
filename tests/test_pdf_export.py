@@ -65,6 +65,9 @@ class FakeRuntime:
             return title
         return f"Figure {index}. {title}"
 
+    def code_tokens(self, code_id: str):
+        return None
+
     def syntax_style(self, label: str):
         from limelight.typography import resolve_syntax_style
 

@@ -24,7 +24,16 @@ from typing import Any, Callable, Container, Mapping
 from markdown_it.tree import SyntaxTreeNode
 
 from .story_markdown import image_width_css, story_markdown_parser
-from .story_syntax import StyleOf, find_roles, replace_roles, styled_typst, typst_syntax_settings
+from .story_syntax import (
+    CodeToken,
+    StyleOf,
+    code_block_typst,
+    fence_info,
+    find_roles,
+    replace_roles,
+    styled_typst,
+    typst_syntax_settings,
+)
 from .typography import MATHS_FONTS, ResolvedFont, TextStyle, Typography
 
 logger = logging.getLogger(__name__)
@@ -142,9 +151,11 @@ class StoryTypstRenderer:
         *,
         paged: bool = True,
         syntax_style: StyleOf | None = None,
+        code_tokens: Callable[[str], list[CodeToken] | None] | None = None,
     ) -> None:
         self._parser = story_markdown_parser()
         self._syntax_style = syntax_style
+        self._code_tokens = code_tokens
         self._image = image
         self._image_number = image_number
         self._image_anchor = image_anchor
@@ -230,6 +241,10 @@ class StoryTypstRenderer:
         if language == "math":
             return self._display_math(node.content)
         content = node.content.rstrip("\n")
+        language, tokens_id = fence_info(info)
+        tokens = self._code_tokens(tokens_id) if tokens_id and self._code_tokens is not None else None
+        if tokens:
+            return code_block_typst(content, tokens, self._syntax_style, typst_string)
         lang = f", lang: {typst_string(language)}" if language else ""
         return f"#raw({typst_string(content)}, block: true{lang})"
 
@@ -509,6 +524,9 @@ def typst_preamble(
             "inset: 0.7em, radius: 6pt, width: 100%, breakable: false)",
             f"#show raw.where(block: false): box.with(fill: rgb(\"{CODE_BACKGROUND}\"), "
             "inset: (x: 0.25em), outset: (y: 0.2em), radius: 4pt)",
+            # A labelled code block (story_syntax), set as text, looks as a raw block does:
+            f"#let ll-code-block(body) = block(fill: rgb(\"{CODE_BACKGROUND}\"), "
+            f"inset: 0.7em, radius: 6pt, width: 100%, breakable: false, text({text(typography.code)}, body))",
             f"#show link: set text(fill: rgb(\"{LINK_COLOUR}\"))",
             f"#let ll-rule-colour = rgb(\"{RULE_COLOUR}\")",
             "#set table(stroke: 0.5pt + ll-rule-colour, inset: (x: 7pt, y: 3pt))",

@@ -64,9 +64,18 @@ let ImageAsset =
       , signatures : List Core.DocumentSignature
       }
 
+-- A labelled code block's tokens, in a file of their own so the story's code
+-- stays as written. The story's fence names one by id:
+-- ```forecast {tokens=source}. The file (JSON, at `path`, conventionally
+-- under story/code/) is {"tokens": [[line, start, length, label], ...]}:
+-- lines and columns count from 0, in characters, over the block's text, and
+-- a label is syntax style names, general to particular (see SyntaxStyle).
+let CodeTokens = { id : Core.Id, path : Text }
+
 in  { ImageFormat = ImageFormat
     , ImageWidthUnit = ImageWidthUnit
     , ImageWidth = ImageWidth
     , ImageDerivation = ImageDerivation
     , ImageAsset = ImageAsset
+    , CodeTokens = CodeTokens
     }

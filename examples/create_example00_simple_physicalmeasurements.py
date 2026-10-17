@@ -273,6 +273,7 @@ in    { limelightVersion = "1.0"
           }
         ]
       , assets = [] : List Limelight.ImageAsset
+      , codeTokens = [] : List Limelight.CodeTokens
       -- The faces the text below names. `builtin` fonts ship with Limelight,
       -- so a reader has them whatever their machine has installed; the
       -- typography's stacks fall back from Ubuntu to Noto Sans where a glyph

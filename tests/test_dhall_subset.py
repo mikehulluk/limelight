@@ -83,6 +83,7 @@ def test_matches_dhall_to_json_on_written_package(tmp_path: Path) -> None:
     project = LimelightProject(
         title="Evaluator Test", authors=["Test"], subtitle="With a subtitle", typography=Typography(syntax=syntax)
     )
+    project.add_code_tokens("source", [(0, 0, 5, "keyword")])
     project.add_csv_dataset(
         id="readings",
         arrays={"value": [1.5, 2.0, 3.25], "count": [1, 2, 3]},

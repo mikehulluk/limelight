@@ -30,6 +30,13 @@ versions may break things.
   with `` `cash`{role="variable.state symbol.cash"} ``; both are set in
   their style on screen (MathJax) and in the PDF (Typst), including inside
   tables. A label with no style is set plain.
+- **Labelled code blocks.** A code block's tokens travel in a file of their
+  own, `story/code/<id>.json` (`{"tokens": [[line, start, length, label],
+  ...]}`), declared in the manifest's new `codeTokens` list and named by the
+  fence: ```` ```forecast {tokens=source} ````. The code stays as written; each
+  token is set in its label's style on screen and in the PDF.
+  `Project.add_code_tokens` writes them; `LL verify` checks the files. A
+  fence naming tokens that are missing or unreadable is set plain.
 
 ### Changed
 

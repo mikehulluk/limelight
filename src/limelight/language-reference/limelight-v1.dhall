@@ -40,6 +40,7 @@ let Manifest =
       , figures : List Figure.FigureSpec
       , figureViews : List Figure.FigureView
       , assets : List Assets.ImageAsset
+      , codeTokens : List Assets.CodeTokens
       , fonts : List Document.Font
       , story : Document.Story
       }

@@ -133,6 +133,7 @@ class _SemanticValidator:
         self._require_unique_ids("FigureSpec", self.manifest["figures"])
         self._require_unique_ids("FigureView", self.manifest["figureViews"])
         self._require_unique_ids("ImageAsset", self.manifest.get("assets") or [])
+        self._require_unique_ids("CodeTokens", self.manifest.get("codeTokens") or [])
         self._collect_dataset_arrays()
         self._validate_control_parameters()
         self._collect_axes_specs()
@@ -712,6 +713,13 @@ class _SemanticValidator:
                     f"ImageAsset {asset_id!r} and {claimed_path!r} both claim path {asset['path']!r}"
                 )
             paths[asset["path"]] = asset_id
+        # Code tokens came after images; a package without them has none.
+        for tokens in self.manifest.get("codeTokens") or []:
+            self._require_safe_package_path(tokens["path"], f"CodeTokens {tokens['id']!r} path")
+            claimed_path = paths.get(tokens["path"])
+            if claimed_path is not None:
+                raise LimelightError(f"CodeTokens {tokens['id']!r} and {claimed_path!r} both claim path {tokens['path']!r}")
+            paths[tokens["path"]] = tokens["id"]
 
     def _validate_story(self) -> None:
         story = self.manifest["story"]

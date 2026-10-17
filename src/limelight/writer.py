@@ -34,6 +34,7 @@ from .largeseries import DEFAULT_CHUNK_SIZE
 from .metadata import METADATA_TYPES, MetadataError, parse_metadata_value
 from .reader import PACKAGE_SUFFIXES
 from .signing import DocumentSignature, sign_document
+from .story_syntax import code_tokens_json
 from .typography import (
     BOLD,
     REGULAR,
@@ -199,6 +200,12 @@ def _list(items: Sequence[str], item_type: str, indent: int = 0) -> str:
             lines.append(" " * indent + f"{prefix} {item}")
     lines.append(" " * indent + "]")
     return "\n".join(lines)
+
+
+def _code_tokens_path(code_id: str) -> str:
+    from .story_syntax import CODE_TOKENS_DIR
+
+    return f"{CODE_TOKENS_DIR}/{code_id}.json"
 
 
 def _optional_text(value: str | None) -> str:
@@ -2334,6 +2341,8 @@ class LimelightProject:
         # `fonts` list, and one that adds its own extends it.
         self.typography = typography if typography is not None else Typography()
         self.fonts: list[Font] = []
+        # A labelled code block's tokens by id: (line, start, length, label).
+        self.code_tokens: dict[str, list[tuple[int, int, int, str]]] = {}
         for font_id in self.typography.font_ids():
             if font_id in builtin_fonts():
                 self.add_builtin_font(font_id)
@@ -2600,6 +2609,26 @@ class LimelightProject:
         self.fonts.append(font)
         return font
 
+    def add_code_tokens(self, code_id: str, tokens: Iterable[tuple[int, int, int, str]]) -> str:
+        """Label a story code block's tokens, for setting it in the document's syntax styles.
+
+        Each token is ``(line, start, length, label)`` over the block's text,
+        lines and columns from 0, and ``label`` syntax style names general to
+        particular ("variable.state symbol.cash"). The story's fence names
+        the tokens by id: ```forecast {tokens=source}. Returns the id.
+        """
+
+        from .story_syntax import CODE_TOKENS_ID, parse_code_tokens
+
+        if not CODE_TOKENS_ID.fullmatch(code_id):
+            raise ValueError(f"code tokens id {code_id!r} must be a letter then letters, digits, _ or -")
+        if code_id in self.code_tokens:
+            raise ValueError(f"code tokens {code_id!r} are already declared")
+        rows = [(int(line), int(start), int(length), str(label)) for (line, start, length, label) in tokens]
+        parse_code_tokens(code_tokens_json(rows).encode("utf-8"), f"code tokens {code_id!r}")
+        self.code_tokens[code_id] = rows
+        return code_id
+
     def _require_new_font_id(self, font_id: str) -> None:
         if any(font.id == font_id for font in self.fonts):
             raise ValueError(f"font {font_id!r} is already declared")
@@ -2860,6 +2889,11 @@ class LimelightProject:
                 ("figures", _list([figure.render() for figure in self.figure_specs], "Limelight.FigureSpec")),
                 ("figureViews", _list([figure_view.render() for figure_view in figure_views], "Limelight.FigureView")),
                 ("assets", _list([asset.render() for asset in resolved.assets], "Limelight.ImageAsset")),
+                ("codeTokens", _list(
+                    [_record([("id", _quote(code_id)), ("path", _quote(_code_tokens_path(code_id)))])
+                     for code_id in self.code_tokens],
+                    "Limelight.CodeTokens",
+                )),
                 ("fonts", _list([font.render() for font in self.fonts], "Limelight.Font")),
                 ("story", story),
             ]
@@ -3062,6 +3096,10 @@ class LimelightProject:
             asset.write_asset_file(package_root)
         for font in self.fonts:
             font.write_files(package_root)
+        for code_id, tokens in self.code_tokens.items():
+            tokens_path = package_root / _code_tokens_path(code_id)
+            tokens_path.parent.mkdir(parents=True, exist_ok=True)
+            tokens_path.write_text(code_tokens_json(tokens), encoding="utf-8", newline="\n")
         story_path = package_root / "story" / "index.md"
         story_path.parent.mkdir(parents=True, exist_ok=True)
         story_path.write_text(resolved.markdown, encoding="utf-8", newline="\n")

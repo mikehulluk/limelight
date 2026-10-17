@@ -103,3 +103,134 @@ def test_a_styled_story_compiles_in_typst(tmp_path: Path) -> None:
 
     pdf = typst.compile(str(source), font_paths=[str(d) for d in FONTS_DIR.iterdir() if d.is_dir()])
     assert pdf[:4] == b"%PDF"
+
+
+# --- Labelled code blocks ---------------------------------------------------
+
+CODE = "STATE cash = 0.0\nEVENT pay() -> [ SET cash += 1 ]\n"
+CODE_TOKENS = [
+    (0, 0, 5, "keyword"), (0, 6, 4, "variable variable.state symbol.cash"),
+    (1, 0, 5, "keyword"), (1, 21, 4, "variable variable.state symbol.cash"),
+]
+
+
+def _package_with_code(tmp_path: Path) -> Path:
+    from limelight.typography import Typography
+    from limelight.writer import LimelightProject
+
+    project = LimelightProject(title="Code", authors=["Test"], typography=Typography(syntax=DOCUMENT))
+    project.add_code_tokens("source", CODE_TOKENS)
+    project.set_story_markdown(f"# Code\n\n```forecast {{tokens=source}}\n{CODE}```\n", base_dir=Path("."))
+    return project.write_folder(tmp_path / "code.limelight")
+
+
+def test_a_fence_names_its_language_and_tokens() -> None:
+    from limelight.story_syntax import fence_info
+
+    assert fence_info("forecast {tokens=source}") == ("forecast", "source")
+    assert fence_info('forecast { tokens="events-1" }') == ("forecast", "events-1")
+    assert fence_info("python") == ("python", None)
+    assert fence_info("") == ("", None)
+
+
+@pytest.mark.parametrize("document, message", [
+    (b"[1, 2]", 'an object with a "tokens" list'),
+    (b'{"tokens": [[0, 0, 5]]}', "not \\[line, start, length, label\\]"),
+    (b'{"tokens": [[0, -1, 5, "keyword"]]}', "negative position"),
+    (b'{"tokens": [[0, 0, 5, "key word!"]]}', "not syntax style names"),
+    (b"not json", "is not JSON"),
+])
+def test_a_code_tokens_file_is_checked(document: bytes, message: str) -> None:
+    from limelight.story_syntax import parse_code_tokens
+
+    with pytest.raises(ValueError, match=message):
+        parse_code_tokens(document, "tokens")
+
+
+def test_code_tokens_are_written_declared_and_verified(tmp_path: Path) -> None:
+    import json
+
+    from limelight.reader import LimelightError, open_limelight
+    from limelight.semantic import validate_manifest_semantics
+    from limelight.story_syntax import verify_code_tokens
+
+    package = _package_with_code(tmp_path)
+    assert json.loads((package / "story" / "code" / "source.json").read_text()) == {"tokens": [list(t) for t in CODE_TOKENS]}
+    with open_limelight(package) as opened:
+        manifest = opened.manifest_json()
+        assert manifest["codeTokens"] == [{"id": "source", "path": "story/code/source.json"}]
+        validate_manifest_semantics(manifest)
+        verify_code_tokens(opened, manifest)
+    (package / "story" / "code" / "source.json").write_text('{"tokens": [[0, 0]]}')
+    with open_limelight(package) as opened, pytest.raises(LimelightError, match="not \\[line, start, length, label\\]"):
+        verify_code_tokens(opened, opened.manifest_json())
+    (package / "story" / "code" / "source.json").unlink()
+    with open_limelight(package) as opened, pytest.raises(LimelightError, match="is missing"):
+        verify_code_tokens(opened, opened.manifest_json())
+
+
+def test_the_writer_refuses_a_bad_id_a_repeat_or_a_bad_token() -> None:
+    from limelight.writer import LimelightProject
+
+    project = LimelightProject(title="Code", authors=["Test"])
+    project.add_code_tokens("source", CODE_TOKENS)
+    with pytest.raises(ValueError, match="already declared"):
+        project.add_code_tokens("source", [])
+    with pytest.raises(ValueError, match="must be a letter"):
+        project.add_code_tokens("1st", [])
+    with pytest.raises(ValueError, match="no length"):
+        project.add_code_tokens("other", [(0, 0, 0, "keyword")])
+
+
+def test_a_labelled_code_block_is_set_in_its_styles_on_screen(tmp_path: Path) -> None:
+    from limelight.app import LimelightRuntime
+    from limelight.reader import open_limelight
+
+    with open_limelight(_package_with_code(tmp_path)) as opened:
+        runtime = LimelightRuntime(opened, opened.manifest_json())
+    renderer = StoryMarkdownRenderer(syntax_style=style_of, code_tokens=runtime.code_tokens)
+    screen = renderer.render(f"```forecast {{tokens=source}}\n{CODE}```\n")
+    assert screen == (
+        '<pre><code class="language-forecast">'
+        '<span style="color: #cf222e; font-weight: 600">STATE</span> '
+        '<span style="color: #0550ae; font-style: italic">cash</span> = 0.0\n'
+        '<span style="color: #cf222e; font-weight: 600">EVENT</span> pay() -&gt; [ SET '
+        '<span style="color: #0550ae; font-style: italic">cash</span> += 1 ]\n</code></pre>\n'
+    )
+    # A fence naming no tokens is markdown-it's own, and one naming unknown tokens is set plain:
+    assert renderer.render("```forecast\nx\n```\n") == '<pre><code class="language-forecast">x\n</code></pre>\n'
+    assert renderer.render("```forecast {tokens=missing}\nx\n```\n") == '<pre><code class="language-forecast">x\n</code></pre>\n'
+
+
+def test_a_labelled_code_block_is_set_in_its_styles_in_the_pdf(tmp_path: Path) -> None:
+    import typst
+
+    from limelight.app import LimelightRuntime
+    from limelight.reader import open_limelight
+    from limelight.story_typst import TypstPage, TypstSpacing, typst_preamble
+    from limelight.typography import FONTS_DIR, Typography, resolve_fonts
+
+    with open_limelight(_package_with_code(tmp_path)) as opened:
+        runtime = LimelightRuntime(opened, opened.manifest_json())
+    body = StoryTypstRenderer(syntax_style=style_of, code_tokens=runtime.code_tokens).render(
+        f"```forecast {{tokens=source}}\n{CODE}```\n"
+    )
+    assert body.startswith('#ll-code-block[#text(fill: rgb("#cf222e"), weight: 600, "STATE")#" "')
+    assert '#text(fill: rgb("#0550ae"), style: "italic", "cash")' in body
+    preamble = typst_preamble(
+        title="Doc", page=TypstPage(210.0, 297.0, 15.0, 20.0), spacing=TypstSpacing(3.0, 4.5, 5.0, 2.0),
+        typography=Typography(), fonts=resolve_fonts({"story": {}}, None),
+    )
+    source = tmp_path / "story.typ"
+    source.write_text(preamble + "\n" + body, encoding="utf-8")
+    pdf = typst.compile(str(source), font_paths=[str(d) for d in FONTS_DIR.iterdir() if d.is_dir()])
+    assert pdf[:4] == b"%PDF"
+
+
+def test_tokens_that_do_not_fit_the_code_are_dropped() -> None:
+    from limelight.story_syntax import CodeToken, code_block_html
+
+    tokens = [CodeToken(0, 0, 50, "keyword"), CodeToken(0, 0, 1, "keyword"), CodeToken(0, 0, 2, "keyword"), CodeToken(5, 0, 1, "keyword")]
+    assert code_block_html("ab\n", "", tokens, style_of) == (
+        '<pre><code><span style="color: #cf222e; font-weight: 600">a</span>b\n</code></pre>\n'
+    )

@@ -1098,6 +1098,7 @@ def story_markdown_renderer(
         anchor_href,
         runtime.image_display_width,
         syntax_style=runtime.syntax_style,
+        code_tokens=runtime.code_tokens,
     )
 
 

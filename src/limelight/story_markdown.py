@@ -31,7 +31,7 @@ from markdown_it.token import Token
 from mdit_py_plugins.attrs import attrs_plugin
 from mdit_py_plugins.dollarmath import dollarmath_plugin
 
-from .story_syntax import StyleOf, code_html, tex_with_roles
+from .story_syntax import CodeToken, StyleOf, code_block_html, code_html, fence_info, tex_with_roles
 
 # Caption words a cross-reference may use as its link text. The builder
 # replaces the text of such a link with the number of whatever it points at.
@@ -406,9 +406,11 @@ class StoryMarkdownRenderer:
         anchor_href: Callable[[str], str] | None = None,
         image_width: Callable[[str], str | None] | None = None,
         syntax_style: StyleOf | None = None,
+        code_tokens: Callable[[str], list[CodeToken] | None] | None = None,
     ) -> None:
         self.markdown = story_markdown_parser(syntax_style)
         self._syntax_style = syntax_style
+        self._code_tokens = code_tokens
         self._resolve_image = resolve_image
         self._image_number = image_number
         self._image_anchor = image_anchor
@@ -420,9 +422,19 @@ class StoryMarkdownRenderer:
         self.markdown.renderer.rules["paragraph_close"] = self._render_paragraph_close
         self.markdown.renderer.rules["link_open"] = self._render_link_open
         self.markdown.renderer.rules["code_inline"] = self._render_code_inline
+        self._plain_fence = self.markdown.renderer.rules["fence"]
+        self.markdown.renderer.rules["fence"] = self._render_fence
 
     def render(self, markdown: str) -> str:
         return self.markdown.render(markdown)
+
+    def _render_fence(self, tokens: list[Token], index: int, options: Any, env: Any) -> str:
+        token = tokens[index]
+        language, tokens_id = fence_info(token.info)
+        if tokens_id is None:
+            return self._plain_fence(tokens, index, options, env)
+        code_tokens = self._code_tokens(tokens_id) if self._code_tokens is not None else None
+        return code_block_html(token.content, language, code_tokens, self._syntax_style)
 
     def _render_code_inline(self, tokens: list[Token], index: int, options: Any, env: Any) -> str:
         token = tokens[index]
