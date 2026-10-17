@@ -158,12 +158,28 @@ let TextStyle =
 -- with the text they space: `axisLabelPadPt` between an axis's tick labels
 -- and its label, `figureTitlePadPt` between the top of the axes and the
 -- title. matplotlib's own are 4 and 6.
+-- How a kind of name or word in the story's maths and code is set, or one
+-- name in particular, where a tool has labelled them. `name` is dotted,
+-- general to particular: "variable" styles every variable, "variable.state"
+-- a state, "symbol.cash" the one called cash. A token is labelled with names
+-- general to particular ("variable.state symbol.cash"), and each property
+-- comes from the most particular name that sets it; None leaves a property
+-- to a more general one. `colour` is "#rrggbb"; `weight` is a CSS weight.
+-- A reader's limelight-setting.json can override any style by name.
+let SyntaxStyle =
+      { name : Text
+      , colour : Optional Text
+      , weight : Optional Natural
+      , italic : Optional Bool
+      }
+
 let Typography =
       { lineHeight : Double
       , axisLabelPadPt : Double
       , figureTitlePadPt : Double
       , mathsScale : Double
       , mathsFont : Text
+      , syntax : List SyntaxStyle
       , body : TextStyle
       , heading1 : TextStyle
       , heading2 : TextStyle
@@ -204,6 +220,7 @@ in  { Project = Project
     , FontSource = FontSource
     , Font = Font
     , TextStyle = TextStyle
+    , SyntaxStyle = SyntaxStyle
     , Typography = Typography
     , Story = Story
     }

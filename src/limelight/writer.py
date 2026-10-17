@@ -37,6 +37,7 @@ from .signing import DocumentSignature, sign_document
 from .typography import (
     BOLD,
     REGULAR,
+    SyntaxStyle,
     TextStyle,
     Typography,
     builtin_fonts,
@@ -424,6 +425,17 @@ def _render_text_style(style: TextStyle) -> str:
     )
 
 
+def _render_syntax_style(style: SyntaxStyle) -> str:
+    return _record(
+        [
+            ("name", _quote(style.name)),
+            ("colour", _optional_text(style.colour)),
+            ("weight", f"Some {style.weight}" if style.weight is not None else "None Natural"),
+            ("italic", f"Some {_dhall_bool(style.italic)}" if style.italic is not None else "None Bool"),
+        ]
+    )
+
+
 def _render_typography(typography: Typography) -> str:
     return _record(
         [
@@ -432,6 +444,7 @@ def _render_typography(typography: Typography) -> str:
             ("figureTitlePadPt", _dhall_float(typography.figure_title_pad_pt)),
             ("mathsScale", _dhall_float(typography.maths_scale)),
             ("mathsFont", _quote(typography.maths_font)),
+            ("syntax", _list([_render_syntax_style(style) for style in typography.syntax], "Limelight.SyntaxStyle")),
             *[(name, _render_text_style(style)) for name, style in typography.styles().items()],
         ]
     )

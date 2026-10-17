@@ -4298,6 +4298,30 @@ def _typography_page(runtime: LimelightRuntime) -> QWidget:
         _read_only_table(["Style", "Fonts", "Size", "Weight", "On screen", "In figures"], style_rows),
         stretch=1,
     )
+
+    # Each syntax style as it is set: the reader's settings over the document's, property by property.
+    document_syntax = {style.name: style for style in typography.syntax}
+    override_syntax = {style.name: style for style in runtime.syntax_overrides}
+    if document_syntax or override_syntax:
+        syntax_rows: list[list[str]] = []
+        for name in {**document_syntax, **override_syntax}:
+            layers = [layer[name] for layer in (override_syntax, document_syntax) if name in layer]
+            def setting(prop: str) -> Any:
+                return next((getattr(style, prop) for style in layers if getattr(style, prop) is not None), None)
+            colour, weight, italic = setting("colour"), setting("weight"), setting("italic")
+            source = ("Document, overridden by your settings" if name in document_syntax else "Your settings") \
+                if name in override_syntax else "Document"
+            syntax_rows.append([
+                name,
+                colour or "",
+                "" if weight is None else str(weight),
+                "" if italic is None else ("Italic" if italic else "Upright"),
+                source,
+            ])
+        layout.addWidget(_section_label("Syntax styles"))
+        layout.addWidget(
+            _read_only_table(["Style", "Colour", "Weight", "Slant", "From"], syntax_rows, fit_rows=True)
+        )
     return page
 
 

@@ -17,6 +17,7 @@ from limelight.typography import (
     BOLD,
     FONTS_DIR,
     MATHS_FONTS,
+    SyntaxStyle,
     FigureText,
     TextStyle,
     Typography,
@@ -24,6 +25,9 @@ from limelight.typography import (
     default_manifest_fonts,
     register_fonts_with_matplotlib,
     resolve_fonts,
+    resolve_syntax_style,
+    syntax_names,
+    syntax_overrides_from_settings,
     typography_from_story,
     validate_fonts_and_typography,
     verify_fonts,
@@ -158,6 +162,117 @@ def test_the_stylesheet_scales_maths_from_the_text_around_it() -> None:
     fonts = resolve_fonts({"story": {}}, None)
     assert ".math {\n  font-size: 100%;\n}" in story_typography_css(Typography(), fonts)
     assert ".math {\n  font-size: 85%;\n}" in story_typography_css(replace(Typography(), maths_scale=0.85), fonts)
+
+
+# --- Syntax styles ---------------------------------------------------------
+
+
+def test_syntax_styles_round_trip(tmp_path: Path) -> None:
+    syntax = (
+        SyntaxStyle("variable", colour="#1f4e79", italic=True),
+        SyntaxStyle("variable.readonly", italic=False),
+        SyntaxStyle("keyword", weight=700),
+        SyntaxStyle("symbol.cash", colour="#b5651d"),
+    )
+    package = _written(tmp_path, _project(typography=Typography(syntax=syntax)))
+    with open_limelight(package) as opened:
+        assert typography_from_story(opened.manifest_json()["story"]).syntax == syntax
+
+
+def test_a_typography_block_written_before_syntax_styles_has_none(tmp_path: Path) -> None:
+    package = _written(tmp_path, _project())
+    with open_limelight(package) as opened:
+        block = opened.manifest_json()["story"]["typography"]
+    del block["syntax"]
+    assert typography_from_story({"typography": block}).syntax == ()
+
+
+@pytest.mark.parametrize("record, message", [
+    ({"name": "variable state"}, "not a syntax style name"),
+    ({"name": "variable", "colour": "blue"}, "not #rrggbb"),
+    ({"name": "variable", "weight": 1000}, "not between"),
+    ({"name": "variable", "italic": "yes"}, "not true or false"),
+    ({"name": "variable", "underline": True}, "unknown underline"),
+])
+def test_a_syntax_style_is_checked(tmp_path: Path, record: dict, message: str) -> None:
+    package = _written(tmp_path, _project())
+    with open_limelight(package) as opened:
+        block = opened.manifest_json()["story"]["typography"]
+    block["syntax"] = [record]
+    with pytest.raises(LimelightError, match=message):
+        typography_from_story({"typography": block})
+
+
+def test_a_syntax_style_is_named_once(tmp_path: Path) -> None:
+    package = _written(tmp_path, _project())
+    with open_limelight(package) as opened:
+        block = opened.manifest_json()["story"]["typography"]
+    block["syntax"] = [{"name": "keyword", "weight": 700}, {"name": "keyword", "italic": True}]
+    with pytest.raises(LimelightError, match="names a style twice"):
+        typography_from_story({"typography": block})
+
+
+def test_a_label_stands_for_its_names_and_their_prefixes_general_to_particular() -> None:
+    assert syntax_names("variable.state symbol.cash") == ["variable", "variable.state", "symbol", "symbol.cash"]
+    # A prefix keeps its first, most general place:
+    assert syntax_names("variable.state variable.derived") == ["variable", "variable.state", "variable.derived"]
+
+
+def test_each_property_comes_from_the_most_particular_name_that_sets_it() -> None:
+    document = (
+        SyntaxStyle("variable", colour="#111111", weight=400, italic=True),
+        SyntaxStyle("variable.readonly", italic=False),
+        SyntaxStyle("symbol.rate", colour="#222222"),
+    )
+    style = resolve_syntax_style("variable.readonly symbol.rate", document)
+    assert (style.colour, style.weight, style.italic) == ("#222222", 400, False)
+    assert dict(style.sources) == {"colour": "symbol.rate", "italic": "variable.readonly", "weight": "variable"}
+    # A token nothing styles is left to the text around it:
+    assert resolve_syntax_style("comment", document) == resolve_syntax_style("comment")
+
+
+def test_an_override_wins_for_its_own_name_but_not_over_a_more_particular_one() -> None:
+    document = (SyntaxStyle("variable", colour="#111111"), SyntaxStyle("symbol.cash", colour="#222222"))
+    overrides = (SyntaxStyle("variable", colour="#333333", weight=700),)
+    assert resolve_syntax_style("variable.state", overrides, document).colour == "#333333"
+    cash = resolve_syntax_style("variable.state symbol.cash", overrides, document)
+    assert (cash.colour, cash.weight) == ("#222222", 700)
+    overrides += (SyntaxStyle("symbol.cash", colour="#444444"),)
+    assert resolve_syntax_style("variable.state symbol.cash", overrides, document).colour == "#444444"
+
+
+def test_overrides_come_from_the_settings_files_syntax_object() -> None:
+    settings = {"syntax": {"variable.readonly": {"colour": "#7A3E9D"}, "keyword": {"weight": 700}}}
+    assert syntax_overrides_from_settings(settings) == (
+        SyntaxStyle("variable.readonly", colour="#7a3e9d"),
+        SyntaxStyle("keyword", weight=700),
+    )
+    assert syntax_overrides_from_settings({}) == ()
+    with pytest.raises(LimelightError, match="not #rrggbb"):
+        syntax_overrides_from_settings({"syntax": {"keyword": {"colour": "red"}}})
+
+
+def test_the_runtime_resolves_a_token_from_the_settings_then_the_document(tmp_path: Path, monkeypatch) -> None:
+    from limelight import app
+
+    monkeypatch.setattr(app, "load_settings", lambda: {"syntax": {"keyword": {"colour": "#7a3e9d"}}})
+    syntax = (SyntaxStyle("keyword", colour="#111111", weight=700),)
+    package = _written(tmp_path, _project(typography=Typography(syntax=syntax)))
+    with open_limelight(package) as opened:
+        runtime = app.LimelightRuntime(opened, opened.manifest_json())
+    style = runtime.syntax_style("keyword")
+    assert (style.colour, style.weight) == ("#7a3e9d", 700)
+
+
+def test_unusable_settings_syntax_is_set_aside(tmp_path: Path, monkeypatch, caplog) -> None:
+    from limelight import app
+
+    monkeypatch.setattr(app, "load_settings", lambda: {"syntax": {"keyword": {"colour": "red"}}})
+    package = _written(tmp_path, _project())
+    with open_limelight(package) as opened:
+        runtime = app.LimelightRuntime(opened, opened.manifest_json())
+    assert runtime.syntax_overrides == ()
+    assert "Ignoring the syntax styles" in caplog.text
 
 
 # --- System and bundled fonts ---------------------------------------------

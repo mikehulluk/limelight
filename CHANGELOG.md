@@ -18,6 +18,13 @@ versions may break things.
   document without one gets) or `fira`, a sans-serif that sits with the
   default Ubuntu text. Limelight ships Fira Math for the PDF and MathJax's
   build of it for the screen.
+- **Syntax styles.** A story's typography has a `syntax` list styling the
+  names and words a tool has labelled in its maths and code: a colour, a
+  weight and a slant for a kind of token (`variable`, `variable.state`) or
+  one name (`symbol.cash`). Each property comes from the most particular
+  style that sets it. A reader can override any style by name in the
+  `syntax` object of `limelight-setting.json`; File > Document Information
+  lists them and where each comes from. (Drawing labelled tokens follows.)
 
 ### Changed
 

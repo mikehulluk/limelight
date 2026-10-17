@@ -52,6 +52,33 @@ def test_the_typography_tab_lists_the_fonts_and_the_face_each_style_really_gets(
             window.close()
 
 
+def test_the_typography_tab_lists_the_syntax_styles_and_where_each_comes_from(qt_app, tmp_path: Path, monkeypatch) -> None:
+    from PySide6.QtWidgets import QTableWidget
+
+    from limelight import app
+    from limelight.qt_app import LimelightWindow, _typography_page
+    from limelight.typography import SyntaxStyle, Typography
+
+    monkeypatch.setattr(app, "load_settings", lambda: {"syntax": {"keyword": {"colour": "#7a3e9d"}, "comment": {"italic": True}}})
+    syntax = (SyntaxStyle("variable.state", colour="#1f4e79", italic=True), SyntaxStyle("keyword", colour="#111111", weight=700))
+    project = LimelightProject(title="Type", authors=["Test"], typography=Typography(syntax=syntax))
+    project.set_story_markdown("# Heading\n\nBody text.\n", base_dir=Path("."))
+    project.write_folder(tmp_path / "pkg")
+
+    with open_limelight(tmp_path / "pkg") as package:
+        window = LimelightWindow(package, package.manifest_json())
+        try:
+            page = _typography_page(window.runtime)
+            _, _, syntax_table = page.findChildren(QTableWidget)
+            assert _table_rows(syntax_table) == [
+                ["variable.state", "#1f4e79", "", "Italic", "Document"],
+                ["keyword", "#7a3e9d", "700", "", "Document, overridden by your settings"],
+                ["comment", "", "", "Italic", "Your settings"],
+            ]
+        finally:
+            window.close()
+
+
 def test_the_spacing_tab_shows_the_page_and_the_rhythm_in_millimetres(qt_app, tmp_path: Path) -> None:
     from PySide6.QtWidgets import QLabel
 

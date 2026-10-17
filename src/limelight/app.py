@@ -36,7 +36,20 @@ from .semantic import (
     validate_manifest_semantics,
 )
 from .story_markdown import CAPTION_LABEL_CLASS, figure_caption_markup, numbered_story_items, story_image_references
-from .typography import FigureText, ResolvedFont, TextStyle, Typography, font_face_css, resolve_fonts, typography_from_story
+from .settings import load_settings
+from .typography import (
+    FigureText,
+    ResolvedFont,
+    ResolvedSyntaxStyle,
+    SyntaxStyle,
+    TextStyle,
+    Typography,
+    font_face_css,
+    resolve_fonts,
+    resolve_syntax_style,
+    syntax_overrides_from_settings,
+    typography_from_story,
+)
 
 logger = logging.getLogger(__name__)
 timing_logger = logging.getLogger("limelight.timing")
@@ -48,6 +61,16 @@ GUI_MISSING_MESSAGE = (
     "The Limelight desktop app and PDF export need PySide6, which is the `gui` extra: "
     'install with `pip install "limelight-app[gui]"` (or `pip install -e ".[gui]"` from a checkout).'
 )
+
+
+def _syntax_overrides() -> tuple[SyntaxStyle, ...]:
+    """The settings file's syntax styles; a file that cannot be read is reported and set aside."""
+
+    try:
+        return syntax_overrides_from_settings(load_settings())
+    except (LimelightError, ValueError) as error:
+        logger.warning("Ignoring the syntax styles in limelight-setting.json: %s", error)
+        return ()
 
 
 def run_app(path: str | None = None, *, debug_timing: bool = False) -> None:
@@ -646,6 +669,8 @@ class LimelightRuntime:
         self.page_geometry = self.declared_page_geometry
         self.story_spacing = _story_spacing_from_story(story)
         self.typography = typography_from_story(story)
+        # The reader's own syntax styles, which win over the document's name by name.
+        self.syntax_overrides: tuple[SyntaxStyle, ...] = _syntax_overrides()
         self.fonts: dict[str, ResolvedFont] = resolve_fonts(manifest, package)
         self._figure_text: FigureText | None = None
         self.story_markdown = package.read_text(self.story_path)
@@ -1214,6 +1239,11 @@ class LimelightRuntime:
 
     def figure_heading(self, figure_id: str) -> str:
         return self.figure_view_heading(figure_id)
+
+    def syntax_style(self, label: str) -> ResolvedSyntaxStyle:
+        """How a token labelled ``label`` is set: the reader's overrides, then the document's styles."""
+
+        return resolve_syntax_style(label, self.syntax_overrides, self.typography.syntax)
 
     def figure_text(self) -> FigureText:
         """The document's typography as the figure renderer takes it, made once."""

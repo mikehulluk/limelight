@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -238,6 +239,111 @@ DEFAULT_TEXT_FONTS = ("ubuntu", "noto-sans")
 DEFAULT_CODE_FONTS = ("ubuntu-mono", "dejavu-sans-mono")
 
 
+# A syntax style's name: dotted words, each more particular than the last ("variable.state").
+SYNTAX_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*")
+SYNTAX_COLOUR = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+@dataclass(frozen=True)
+class SyntaxStyle:
+    """How a kind of name or word in maths and code is set, or one name in particular.
+
+    ``name`` is dotted, general to particular: "variable" for every
+    variable, "variable.state" for a state, "symbol.cash" for the one called
+    cash. A property left as None is left to a more general style.
+    """
+
+    name: str
+    colour: str | None = None
+    weight: int | None = None
+    italic: bool | None = None
+
+
+@dataclass(frozen=True)
+class ResolvedSyntaxStyle:
+    """A token's style with every property settled, and where each came from."""
+
+    colour: str | None = None
+    weight: int | None = None
+    italic: bool | None = None
+    sources: tuple[tuple[str, str], ...] = ()     # (property, the style name it came from)
+
+
+def syntax_names(label: str) -> list[str]:
+    """Every style name a token's label stands for, general to particular.
+
+    A label lists names general to particular ("variable.state symbol.cash"),
+    and each name also stands for its dotted prefixes ("variable" for
+    "variable.state").
+    """
+
+    names: dict[str, None] = {}
+    for name in label.split():
+        parts = name.split(".")
+        for end in range(1, len(parts) + 1):
+            names.setdefault(".".join(parts[:end]), None)
+    return list(names)
+
+
+def resolve_syntax_style(label: str, *layers: Iterable[SyntaxStyle]) -> ResolvedSyntaxStyle:
+    """The style of a token labelled ``label``, from ``layers`` (overrides first, then the document's).
+
+    Each property comes from the most particular name that sets it; between
+    layers setting the same name, from the first. So a reader's override of
+    "variable" does not undo a document's style for "symbol.cash", and an
+    override of "symbol.cash" does.
+    """
+
+    by_name = [{style.name: style for style in layer} for layer in layers]
+    settled: dict[str, Any] = {}
+    sources: list[tuple[str, str]] = []
+    for name in reversed(syntax_names(label)):
+        for layer in by_name:
+            style = layer.get(name)
+            if style is None:
+                continue
+            for prop in ("colour", "weight", "italic"):
+                value = getattr(style, prop)
+                if value is not None and prop not in settled:
+                    settled[prop] = value
+                    sources.append((prop, name))
+    return ResolvedSyntaxStyle(**settled, sources=tuple(sources))
+
+
+def syntax_style_from_record(name: str, record: Mapping[str, Any], context: str) -> SyntaxStyle:
+    """A syntax style from a manifest's record or a settings file's entry; absent or null properties are None."""
+
+    if not SYNTAX_NAME.fullmatch(name):
+        raise LimelightError(f"{context}: {name!r} is not a syntax style name (dotted words, eg variable.state)")
+    colour = record.get("colour")
+    if colour is not None and not SYNTAX_COLOUR.fullmatch(str(colour)):
+        raise LimelightError(f"{context} {name}: colour {colour!r} is not #rrggbb")
+    weight = record.get("weight")
+    if weight is not None:
+        weight = int(weight)
+        if not MIN_WEIGHT <= weight <= MAX_WEIGHT:
+            raise LimelightError(f"{context} {name}: weight {weight!r} is not between {MIN_WEIGHT} and {MAX_WEIGHT}")
+    italic = record.get("italic")
+    if italic is not None and not isinstance(italic, bool):
+        raise LimelightError(f"{context} {name}: italic {italic!r} is not true or false")
+    unknown = set(record) - {"name", "colour", "weight", "italic"}
+    if unknown:
+        raise LimelightError(f"{context} {name}: unknown {', '.join(sorted(unknown))}")
+    return SyntaxStyle(name, None if colour is None else str(colour).lower(), weight, italic)
+
+
+def syntax_overrides_from_settings(settings: Mapping[str, Any]) -> tuple[SyntaxStyle, ...]:
+    """The reader's own syntax styles: the settings file's "syntax" object, name to properties."""
+
+    block = settings.get("syntax", {})
+    if not isinstance(block, dict):
+        raise LimelightError("Settings syntax must be an object of style names to their properties")
+    return tuple(
+        syntax_style_from_record(name, record, "Settings syntax")
+        for name, record in block.items()
+    )
+
+
 @dataclass(frozen=True)
 class Typography:
     """Every kind of text in the document, each set in full.
@@ -256,6 +362,10 @@ class Typography:
     ``MATHS_FONTS``); ``maths_scale`` is its size as a multiple of the text
     around it, so a document of long equations can set them a little smaller
     than its prose.
+
+    ``syntax`` styles the names and words in its maths and code that a tool
+    has labelled (see ``SyntaxStyle``); a reader's settings can override
+    any of them (``resolve_syntax_style``).
     """
 
     line_height: float = DEFAULT_LINE_HEIGHT
@@ -280,6 +390,7 @@ class Typography:
     table_header: TextStyle = _style(DEFAULT_TEXT_FONTS, 0.86, BOLD)
     table_cell: TextStyle = _style(DEFAULT_TEXT_FONTS, 0.86)
     table_note: TextStyle = _style(DEFAULT_TEXT_FONTS, 0.85)
+    syntax: tuple[SyntaxStyle, ...] = ()
 
     def styles(self) -> dict[str, TextStyle]:
         """Every style by its manifest name (`figureTitle` for `figure_title`)."""
@@ -368,12 +479,21 @@ def typography_from_story(story: dict[str, Any]) -> Typography:
         _field_name(name): text_style_from_manifest(block[name], f"Typography {name}")
         for name in STYLE_NAMES
     }
+    # Syntax styles came later still; a document without them labels nothing.
+    syntax = tuple(
+        syntax_style_from_record(str(record["name"]), record, "Typography syntax")
+        for record in block.get("syntax", [])
+    )
+    names = [style.name for style in syntax]
+    if len(set(names)) != len(names):
+        raise LimelightError(f"Typography syntax names a style twice: {sorted({n for n in names if names.count(n) > 1})}")
     return Typography(
         line_height=line_height,
         axis_label_pad_pt=axis_label_pad_pt,
         figure_title_pad_pt=figure_title_pad_pt,
         maths_scale=maths_scale,
         maths_font=maths_font,
+        syntax=syntax,
         **styles,
     )
 

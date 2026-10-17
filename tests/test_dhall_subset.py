@@ -27,6 +27,7 @@ from limelight.dhall_subset import (
 )
 from limelight.reader import LimelightError, dhall_tool_path, open_limelight
 from limelight.writer import Index, LimelightProject
+from limelight.typography import SyntaxStyle, Typography
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BUILT_EXAMPLES = sorted(REPO_ROOT.glob("_build/examples/*.limelight/project.dhall"))
@@ -77,7 +78,11 @@ def test_matches_dhall_to_json_on_written_package(tmp_path: Path) -> None:
     if tool is None:
         pytest.skip("dhall-to-json is not available for the golden comparison")
 
-    project = LimelightProject(title="Evaluator Test", authors=["Test"], subtitle="With a subtitle")
+    # Syntax styles leave properties out as None, of more than one type:
+    syntax = (SyntaxStyle("variable", colour="#1f4e79"), SyntaxStyle("keyword", weight=700, italic=False))
+    project = LimelightProject(
+        title="Evaluator Test", authors=["Test"], subtitle="With a subtitle", typography=Typography(syntax=syntax)
+    )
     project.add_csv_dataset(
         id="readings",
         arrays={"value": [1.5, 2.0, 3.25], "count": [1, 2, 3]},
