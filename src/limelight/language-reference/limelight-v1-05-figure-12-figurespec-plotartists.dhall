@@ -25,6 +25,14 @@ let TextControlParameterMatch = { controlParameter : Core.ControlParameterId, va
 -- not just a hole in the line; `none` leaves the gap.
 let MissingMarker = < cross | none >
 
+-- `drawStyle` says how a line joins its samples: `straight` (the default)
+-- draws a straight segment from each sample to the next; `stepsPre` holds
+-- each sample's value back to the previous sample, so the jump is at the
+-- earlier x; `stepsPost` holds it forward to the next sample, so the jump is
+-- at the later x. A series that changes only at events (a balance, a rate)
+-- reads correctly only as steps.
+let DrawStyle = < straight | stepsPre | stepsPost >
+
 let LineArtist =
       { id : Core.Id
       , y : Text
@@ -33,6 +41,8 @@ let LineArtist =
       , xOverride : Optional Text
       , color : Optional Text
       , linestyle : Optional Text
+      , linewidth : Optional Double
+      , drawStyle : Optional DrawStyle
       , marker : Optional Text
       , missingMarker : Optional MissingMarker
       , visibleWhen : Optional TextControlParameterMatch
@@ -95,6 +105,7 @@ in  { TextControlParameterMatch = TextControlParameterMatch
     , ScatterArtist = ScatterArtist
     , TimeSeriesArtist = TimeSeriesArtist
     , MissingMarker = MissingMarker
+    , DrawStyle = DrawStyle
     , StemArtist = StemArtist
     , PlotArtist = PlotArtist
     }

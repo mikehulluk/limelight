@@ -7,7 +7,7 @@ import io
 import math
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from threading import RLock
 from time import perf_counter
@@ -35,7 +35,7 @@ from .semantic import (
     optional_field,
     validate_manifest_semantics,
 )
-from .story_markdown import CAPTION_LABEL_CLASS, figure_caption_markup, story_image_references
+from .story_markdown import CAPTION_LABEL_CLASS, figure_caption_markup, numbered_story_items, story_image_references
 from .typography import FigureText, ResolvedFont, TextStyle, Typography, font_face_css, resolve_fonts, typography_from_story
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,52 @@ class TablePreview:
     total_rows: int
     truncated: bool
     column_kinds: list[str]
+    # What each column is headed with: its label and unit where the source
+    # declares them, else its name. `columns` stays the names, which is what
+    # a ColumnFormat or a column filter refers to.
+    headers: list[str] = field(default_factory=list)
+
+
+_NUMERIC_DTYPES = {"integer", "natural", "double"}
+
+
+def _source_array_schemas(source: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Each declared array's ArraySchema, by name."""
+
+    if "yArrays" in source:
+        return {entry["schema"]["name"]: entry["schema"] for entry in source["yArrays"]}
+    return {array["name"]: array for array in source.get("schema") or []}
+
+
+def _typed_cell(value: Any, array_schema: dict[str, Any] | None) -> Any:
+    """A CSV cell as the value its array's dtype says it is.
+
+    CSV cells are read as text, and a format spec such as ",.2f" means nothing
+    to a string, so numbers are made numbers before they are formatted. A cell
+    that does not parse is shown as it is.
+    """
+
+    if array_schema is None or not isinstance(value, str):
+        return value
+    if value == "":
+        return None
+    try:
+        match array_schema["dtype"]:
+            case "integer" | "natural":
+                return int(value)
+            case "double":
+                return float(value)
+    except ValueError:
+        return value
+    return value
+
+
+def _column_header(name: str, array_schema: dict[str, Any] | None) -> str:
+    if array_schema is None:
+        return name
+    header = optional_field(array_schema, "label") or name
+    unit = optional_field(array_schema, "unit")
+    return f"{header} ({unit})" if unit else header
 
 
 def _is_regular_index(index: Any) -> bool:
@@ -161,6 +207,31 @@ def table_view_column_formats(table_view_spec: dict[str, Any] | None) -> dict[st
         for column_format in table_view_spec.get("columnFormats", [])
         if (format_spec := column_format.get("format")) is not None
     }
+
+
+DEFAULT_TABLE_ROW_LIMIT = 2000
+
+
+def table_view_row_limit(table_view_spec: dict[str, Any] | None) -> int:
+    if table_view_spec is None:
+        return DEFAULT_TABLE_ROW_LIMIT
+    row_limit = optional_field(table_view_spec, "rowLimit")
+    return DEFAULT_TABLE_ROW_LIMIT if row_limit is None else int(row_limit)
+
+
+def table_view_column_width(table_view_spec: dict[str, Any] | None, column_name: str) -> tuple[str, float | None]:
+    """A column's width as ("auto", None), ("mm", millimetres) or ("share", share)."""
+
+    if table_view_spec is not None:
+        for column_format in table_view_spec.get("columnFormats", []):
+            if column_format["column"] == column_name:
+                width = optional_field(column_format, "width")
+                if isinstance(width, dict) and "widthMm" in width:
+                    return ("mm", float(width["widthMm"]))
+                if isinstance(width, dict) and "widthShare" in width:
+                    return ("share", float(width["widthShare"]))
+                break
+    return ("auto", None)
 
 
 def table_view_column_alignment(
@@ -350,6 +421,12 @@ def _story_spacing_from_story(story: dict[str, Any]) -> StorySpacing:
     )
 
 
+def figure_spec_label(figure_spec: dict[str, Any]) -> str:
+    """The word a figure spec is numbered under: tables have their own count."""
+
+    return "Table" if figure_spec.get("tableViewSpecs") else "Figure"
+
+
 def figure_view_caption_markup(figure_spec: dict[str, Any], number: int | None, *, label_style: str = "") -> str:
     """The caption under a figure view: its number, then its caption.
 
@@ -357,7 +434,12 @@ def figure_view_caption_markup(figure_spec: dict[str, Any], number: int | None, 
     a cross-reference points at is always printed somewhere a reader can see.
     """
 
-    return figure_caption_markup(number, figure_spec.get("caption") or figure_spec["title"], label_style=label_style)
+    return figure_caption_markup(
+        number,
+        figure_spec.get("caption") or figure_spec["title"],
+        label_style=label_style,
+        label=figure_spec_label(figure_spec),
+    )
 
 
 # Story images are sized to fit rather than filled to the column: a small
@@ -575,6 +657,19 @@ class LimelightRuntime:
             if figure_view_id not in self.figure_views:
                 raise LimelightError(f"Story document {self.story_path!r} references unknown FigureView {figure_view_id!r}")
 
+        # Every "Figure N." and "Table N." is worked out here, from the story,
+        # in the order a reader meets each view and image; the manifest stores
+        # none of them. Tables are counted on their own.
+        table_spec_ids = {spec_id for spec_id, spec in self.figure_specs.items() if spec.get("tableViewSpecs")}
+        self._figure_view_numbers: dict[str, int] = {}
+        self._image_numbers: dict[str, int] = {}
+        for item in numbered_story_items(
+            self.story_markdown,
+            is_table=lambda view_id: (self.figure_views.get(view_id) or {}).get("ref") in table_spec_ids,
+        ):
+            numbers = self._figure_view_numbers if item.kind == "figureView" else self._image_numbers
+            numbers.setdefault(item.key, item.number)
+
         # Packages built before assets existed have no such key at all.
         self.image_assets = {asset["id"]: asset for asset in (manifest.get("assets") or [])}
         self.image_assets_by_path = {
@@ -757,8 +852,17 @@ class LimelightRuntime:
         else:
             columns, rows, total_rows = self._csv_table_rows(source, columns_filter, limit)
 
+        array_schemas = _source_array_schemas(source)
+        column_schemas = [array_schemas.get(name) for name in columns]
+        rows = [[_typed_cell(value, column_schemas[index]) for index, value in enumerate(row)] for row in rows]
+
         column_formats = column_formats or {}
-        column_kinds = [_column_kind([row[index] for row in rows]) for index in range(len(columns))]
+        column_kinds = [
+            _column_kind([row[index] for row in rows])
+            if column_schemas[index] is None
+            else ("numeric" if column_schemas[index]["dtype"] in _NUMERIC_DTYPES else "text")
+            for index in range(len(columns))
+        ]
 
         return TablePreview(
             title=title,
@@ -770,6 +874,7 @@ class LimelightRuntime:
             total_rows=total_rows,
             truncated=total_rows > len(rows),
             column_kinds=column_kinds,
+            headers=[_column_header(name, column_schemas[index]) for index, name in enumerate(columns)],
         )
 
     def _csv_table_rows(
@@ -1016,10 +1121,9 @@ class LimelightRuntime:
         numbered.
         """
 
-        asset = self.image_assets_by_path.get(src)
-        if asset is None:
+        if src not in self.image_assets_by_path:
             return None
-        return optional_field(asset, "storyNumber")
+        return self._image_numbers.get(src)
 
     def image_anchor(self, src: str) -> str | None:
         """The id a cross-reference link navigates to for a story image."""
@@ -1081,20 +1185,14 @@ class LimelightRuntime:
         return data_url
 
     def figure_view_number(self, figure_view: dict[str, Any]) -> int | None:
-        """Resolve the number printed for one figure view.
+        """The number printed for one figure view: its place among the figures,
+        or the tables, as the story shows them. None for a view the story never shows.
 
-        `storyNumber` is assigned by the builder from story order. `index` is
-        the field it supersedes, kept in the chain so packages published before
-        `storyNumber` existed keep the numbering they shipped with.
-
-        Both are optional, and dhall-to-json omits an absent optional rather
-        than writing a null, so neither key can be indexed directly.
+        A package written before numbers were worked out here may still carry
+        `storyNumber` or `index`; they are ignored, so it is numbered like any other.
         """
 
-        story_number = optional_field(figure_view, "storyNumber")
-        if story_number is not None:
-            return story_number
-        return optional_field(figure_view, "index")
+        return self._figure_view_numbers.get(figure_view["id"])
 
     def figure_view_heading(self, figure_spec_id: str, *, index: int | None = None) -> str:
         """How one figure is titled, with its number when it has one.
@@ -1110,7 +1208,7 @@ class LimelightRuntime:
         title = figure_spec["title"]
         if index is None:
             return title
-        return f"Figure {index}. {title}"
+        return f"{figure_spec_label(figure_spec)} {index}. {title}"
 
     def figure_heading(self, figure_id: str) -> str:
         return self.figure_view_heading(figure_id)

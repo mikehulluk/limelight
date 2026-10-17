@@ -27,7 +27,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolb
 from matplotlib.collections import PatchCollection
 from matplotlib.figure import Figure as MatplotlibFigure
 from matplotlib.patches import Polygon, Rectangle
-from matplotlib.ticker import FuncFormatter, MultipleLocator
+from matplotlib.ticker import FuncFormatter, LogLocator, MultipleLocator, NullFormatter
 from PySide6.QtCore import (
     QBuffer,
     QEvent,
@@ -37,6 +37,7 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QProcess,
+    QRect,
     QRunnable,
     Qt,
     QtMsgType,
@@ -60,6 +61,7 @@ from PySide6.QtGui import (
     QFontInfo,
     QGuiApplication,
     QColor,
+    QFontMetrics,
     QIcon,
     QPainter,
     QPalette,
@@ -123,11 +125,14 @@ from .app import (
     axis_scale,
     figure_controls,
     figure_aspect,
+    figure_spec_label,
     figure_width_px,
     table_view_cell_styles,
     table_view_column_alignment,
     table_view_column_formats,
+    table_view_column_width,
     table_view_header_styles,
+    table_view_row_limit,
     story_rhythm_css,
     story_run_edge_css,
     story_typography_css,
@@ -1793,6 +1798,10 @@ def _draw_plot_contents(
     y_axis_binding = axes_spec["yAxis"]
     if axis_scale(x_axis_binding) == "Log":
         axes.set_xscale("log")
+        _label_log_axis(axes.xaxis)
+    if axis_scale(y_axis_binding) == "Log":
+        axes.set_yscale("log")
+        _label_log_axis(axes.yaxis)
     axes_actions = _combined_axes_actions(axes_spec, figure_view_actions)
     x_window, y_window = _axes_action_windows(axes_actions, x_axis_binding, y_axis_binding)
     has_data = False
@@ -1862,7 +1871,8 @@ def _draw_plot_contents(
                 color=artist.get("color"),
                 linestyle=artist.get("linestyle") or "-",
                 marker=artist.get("marker"),
-                linewidth=2.0,
+                linewidth=_to_float(artist.get("linewidth")) or 2.0,
+                drawstyle=_MPL_DRAW_STYLES[artist.get("drawStyle") or "straight"],
                 alpha=1.0 if alpha is None else alpha,
             )
             line_colors[y_name] = line.get_color()
@@ -2483,6 +2493,22 @@ def _axis_is_utc(axis_binding: dict[str, Any]) -> bool:
     return axis_data_type_kind(axis_binding) == "timeSeries" and _axis_calendar(axis_binding) != "monthOrdinal1970"
 
 
+# A line artist's drawStyle, as matplotlib's drawstyle names it.
+_MPL_DRAW_STYLES = {"straight": "default", "stepsPre": "steps-pre", "stepsPost": "steps-post"}
+
+
+def _label_log_axis(axis: Any) -> None:
+    """Label a log axis at 1, 2 and 5 times each power of ten, as plain numbers.
+
+    Matplotlib's default labels only the powers themselves, as 10² and 10³,
+    which leaves a five-fold rise with one label to read it by.
+    """
+
+    axis.set_major_locator(LogLocator(base=10.0, subs=(1.0, 2.0, 5.0)))
+    axis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:,g}"))
+    axis.set_minor_formatter(NullFormatter())
+
+
 def _month_ordinal_axis_step(axes: Any) -> None:
     lower, upper = axes.get_xlim()
     span = abs(upper - lower)
@@ -2898,6 +2924,11 @@ class LimelightWindow(QMainWindow):
         self.figure_view_title: QLabel | None = None
         self.figure_view_panel: InteractiveFigureViewPanel | None = None
         self.figure_view_caption: QLabel | None = None
+        self.table_tree: QTreeWidget | None = None
+        self.table_title: QLabel | None = None
+        self.table_widget: QTableWidget | None = None
+        self.table_caption: QLabel | None = None
+        self._shown_table_id: str | None = None
         self._cache_progress = CacheProgressIndicator()
         self.statusBar().addPermanentWidget(self._cache_progress)
         self._render_progress = RenderProgressIndicator()
@@ -2936,6 +2967,11 @@ class LimelightWindow(QMainWindow):
         self.figure_view_title = None
         self.figure_view_caption = None
         self.figure_view_panel = None
+        self.table_tree = None
+        self.table_title = None
+        self.table_widget = None
+        self.table_caption = None
+        self._shown_table_id = None
 
         runtime = self.runtime
         runtime.cache_progress = self._report_cache_progress
@@ -2946,7 +2982,8 @@ class LimelightWindow(QMainWindow):
         # index, so hiding one moves nothing.
         for widget, title, has_content in (
             (self._build_story_tab(), "Story", bool(runtime.story_blocks)),
-            (self._build_figures_tab(), "Figures", bool(runtime.figure_spec_order)),
+            (self._build_figures_tab(), "Figures", bool(self._plot_spec_ids())),
+            (self._build_tables_tab(), "Tables", bool(self._table_spec_ids())),
             (self._build_data_tab(), "Data", bool(runtime.sources)),
             (self._build_control_parameters_tab(), "Parameters", bool(runtime.control_parameters)),
         ):
@@ -3587,6 +3624,115 @@ class LimelightWindow(QMainWindow):
         self._populate_figure_view_tree()
         return splitter
 
+    def _plot_spec_ids(self) -> list[str]:
+        return [spec_id for spec_id in self.runtime.figure_spec_order if not _is_table_view_figure(self.runtime.figure_specs[spec_id])]
+
+    def _table_spec_ids(self) -> list[str]:
+        return [spec_id for spec_id in self.runtime.figure_spec_order if _is_table_view_figure(self.runtime.figure_specs[spec_id])]
+
+    def _build_tables_tab(self) -> QWidget:
+        """Every table in the package, listed on the left and shown in full on the right."""
+
+        splitter = QSplitter(Qt.Horizontal)
+
+        self.table_tree = QTreeWidget()
+        self.table_tree.setHeaderLabels(["Tables"])
+        self.table_tree.setRootIsDecorated(False)
+        self.table_tree.itemSelectionChanged.connect(self._on_table_selected)
+        # Double-clicking pops the table out into a window of its own, as for a figure.
+        self.table_tree.itemDoubleClicked.connect(self._on_figure_double_clicked)
+        splitter.addWidget(self.table_tree)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        self.table_title = QLabel()
+        self.table_title.setStyleSheet("font-weight: 600; font-size: 14px;")
+        layout.addWidget(self.table_title)
+
+        self.table_widget = QTableWidget()
+        self.table_widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        layout.addWidget(self.table_widget, stretch=1)
+
+        self.table_caption = QLabel()
+        self.table_caption.setWordWrap(True)
+        layout.addWidget(self.table_caption)
+        # What a short table leaves goes below its caption, not into the table.
+        layout.addStretch(0)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        save_button = QPushButton("Save to CSV")
+        save_button.setToolTip("Save the table's data, every row and column, as a CSV file")
+        save_button.clicked.connect(self._on_save_table_csv)
+        buttons.addWidget(save_button)
+        layout.addLayout(buttons)
+
+        splitter.addWidget(content)
+        splitter.setStretchFactor(1, 1)
+
+        self._populate_table_tree()
+        return splitter
+
+    def _populate_table_tree(self) -> None:
+        if self.table_tree is None:
+            return
+        first: QTreeWidgetItem | None = None
+        for spec_id in self._table_spec_ids():
+            # A table is listed under the number the story shows it at, if it shows it.
+            numbers = [self.runtime.figure_view_number(view) for view in self.runtime.figure_views_for_spec(spec_id)]
+            number = next((n for n in numbers if n is not None), None)
+            item = QTreeWidgetItem([self.runtime.figure_view_heading(spec_id, index=number)])
+            item.setData(0, Qt.UserRole, spec_id)
+            self.table_tree.addTopLevelItem(item)
+            first = first or item
+        self.table_tree.resizeColumnToContents(0)
+        if first is not None:
+            blocker = QSignalBlocker(self.table_tree)
+            self.table_tree.setCurrentItem(first)
+            del blocker
+            self._show_table(first.data(0, Qt.UserRole), heading=first.text(0))
+
+    def _on_table_selected(self) -> None:
+        if self.table_tree is None:
+            return
+        items = self.table_tree.selectedItems()
+        if items:
+            self._show_table(items[0].data(0, Qt.UserRole), heading=items[0].text(0))
+
+    def _show_table(self, spec_id: str, *, heading: str) -> None:
+        if self.table_widget is None or self.table_title is None or self.table_caption is None:
+            return
+        figure_spec = self.runtime.figure_specs[spec_id]
+        table_view_spec = figure_spec["tableViewSpecs"][0]
+        preview = self.runtime.table_preview(
+            table_view_spec["data"],
+            table_view_spec.get("columns"),
+            limit=table_view_row_limit(table_view_spec),
+            column_formats=table_view_column_formats(table_view_spec),
+        )
+        self.table_title.setText(heading)
+        caption = figure_spec.get("caption") or ""
+        if preview.truncated:
+            caption = f"{caption}\n\nShowing {len(preview.rows):,} of {preview.total_rows:,} rows.".strip()
+        self.table_caption.setText(caption)
+        _populate_table_widget(self.table_widget, preview, table_view_spec, runtime=self.runtime)
+        self._shown_table_id = spec_id
+
+    def _on_save_table_csv(self) -> None:
+        if self._shown_table_id is None:
+            return
+        source_id = self.runtime.figure_specs[self._shown_table_id]["tableViewSpecs"][0]["data"]
+        path, _ = QFileDialog.getSaveFileName(self, "Save to CSV", f"{source_id}.csv", "CSV Files (*.csv)")
+        if not path:
+            return
+        try:
+            self.runtime.export_table_csv(source_id, None, path)
+        except (OSError, LimelightError) as error:
+            logger.exception("Save to CSV failed for %s", path)
+            QMessageBox.critical(self, "Save to CSV", str(error))
+            return
+        self.statusBar().showMessage(f"Saved to {path}", 4000)
+
     def _build_data_tab(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -3793,7 +3939,8 @@ class LimelightWindow(QMainWindow):
             return
 
         figure_view_tree = self.figure_view_tree
-        self._figure_spec_order = self.runtime.figure_spec_order
+        # Tables have a tab of their own.
+        self._figure_spec_order = self._plot_spec_ids()
         first_selectable: QTreeWidgetItem | None = None
 
         for figure_spec_id in self._figure_spec_order:
@@ -3807,7 +3954,8 @@ class LimelightWindow(QMainWindow):
                 number = self.runtime.figure_view_number(figure_view)
                 # An unnumbered view is one the story never shows, so its id is
                 # the only thing that tells it from its siblings.
-                label = f"Figure {number}" if number is not None else figure_view["id"]
+                word = figure_spec_label(self.runtime.figure_specs[figure_spec_id])
+                label = f"{word} {number}" if number is not None else figure_view["id"]
                 view_item = QTreeWidgetItem([label])
                 view_item.setData(0, Qt.UserRole, figure_spec_id)
                 view_item.setData(0, FIGURE_VIEW_ID_ROLE, figure_view["id"])
@@ -4182,6 +4330,173 @@ def _qt_font(styles: set[str], base: QFont | None = None) -> QFont:
     return font
 
 
+_QWIDGETSIZE_MAX = 16777215  # Qt's QWIDGETSIZE_MAX: no maximum
+# How tall a table in the story grows before it scrolls inside itself.
+_STORY_TABLE_MAX_PX = 480
+
+# The narrowest an auto column is squeezed to, or a share column given, in pixels.
+_TABLE_MIN_COLUMN_PX = 48
+_TABLE_COLUMN_PADDING_PX = 12
+
+
+def _fit_auto_widths(natural: Sequence[int], available: int) -> list[int]:
+    """Auto columns' widths: their natural widths when they fit in ``available``,
+    otherwise the widest are cut to one common width, so the narrow columns
+    keep their content on one line and only the widest wrap. Typst sizes its
+    auto columns the same way, so a table reads alike on screen and on paper.
+    """
+
+    if sum(natural) <= available:
+        return list(natural)
+    # Find the cap: the widest columns are cut to it, the rest stay as they are.
+    remaining, untouched = available, sorted(natural)
+    while untouched:
+        cap = remaining // len(untouched)
+        if untouched[0] > cap:
+            break
+        remaining -= untouched.pop(0)
+    else:
+        return list(natural)
+    cap = max(_TABLE_MIN_COLUMN_PX, remaining // len(untouched))
+    return [min(width, cap) for width in natural]
+
+
+class _TableColumnSizer(QObject):
+    """Sizes a table's columns to the width it is shown at, and again whenever that changes.
+
+    Fixed (mm) columns are set first; auto columns fit their content, the
+    widest wrapping only if the table would not fit otherwise; share columns
+    split whatever is left. Rows are then made tall enough for what wrapped.
+    """
+
+    def __init__(self, table: QTableWidget, widths: Sequence[tuple[str, float | None]], zoom: float) -> None:
+        super().__init__(table)
+        self.table = table
+        self.widths = list(widths)
+        self.zoom = zoom
+        # Measured once: the widths the columns' content and headers ask for,
+        # with a little room either side so text does not touch the grid.
+        table.resizeColumnsToContents()
+        self.natural = [table.columnWidth(index) + _TABLE_COLUMN_PADDING_PX for index in range(table.columnCount())]
+        # The viewport is what the columns fill; the table is watched as well,
+        # since a layout can resize it without the viewport hearing of it.
+        table.viewport().installEventFilter(self)
+        table.installEventFilter(self)
+        self.apply()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self.apply()
+        return False
+
+    def column_widths(self, available: int) -> list[int]:
+        px_per_mm = self.table.logicalDpiX() / 25.4 * self.zoom
+        widths = [0] * len(self.widths)
+        autos = [index for index, (kind, _) in enumerate(self.widths) if kind == "auto"]
+        shares = {index: value for index, (kind, value) in enumerate(self.widths) if kind == "share"}
+
+        for index, (kind, value) in enumerate(self.widths):
+            if kind == "mm":
+                widths[index] = round(value * px_per_mm)
+        fixed = sum(widths)
+
+        fitted = _fit_auto_widths(
+            [self.natural[index] for index in autos],
+            max(0, available - fixed - _TABLE_MIN_COLUMN_PX * len(shares)),
+        )
+        for index, width in zip(autos, fitted):
+            widths[index] = width
+
+        leftover = max(0, available - sum(widths))
+        total_share = sum(shares.values())
+        for index, share in shares.items():
+            widths[index] = max(_TABLE_MIN_COLUMN_PX, int(leftover * share / total_share))
+        return widths
+
+    def apply(self) -> None:
+        available = self.table.viewport().width()
+        if available <= 0:
+            return
+        for index, width in enumerate(self.column_widths(available)):
+            self.table.setColumnWidth(index, width)
+        self.table.resizeRowsToContents()
+        self._fit_header_height()
+        self._fit_to_content()
+        # Sizing can show or hide a scroll bar, which moves the viewport's edge
+        # without always telling us; size once more if it moved.
+        if self.table.viewport().width() != available:
+            QTimer.singleShot(0, self.apply)
+
+    def _fit_header_height(self) -> None:
+        """Make the header row tall enough for its tallest header, wrapped to its column."""
+
+        table = self.table
+        header = table.horizontalHeader()
+        padding = 8
+        heights = []
+        for index in range(table.columnCount()):
+            item = table.horizontalHeaderItem(index)
+            if item is None:
+                continue
+            bounds = QFontMetrics(item.font()).boundingRect(
+                QRect(0, 0, max(1, table.columnWidth(index) - padding), 10_000),
+                int(Qt.AlignCenter | Qt.TextWordWrap),
+                item.text(),
+            )
+            heights.append(bounds.height() + padding)
+        if heights:
+            header.setFixedHeight(max(heights))
+
+    def content_size(self) -> tuple[int, int | None]:
+        """How big the table needs to be to show everything without scrolling:
+        its rows' height, and its columns' natural width - or None for the
+        width when a share column is to take whatever width there is."""
+
+        table = self.table
+        frame = 2 * table.frameWidth()
+        vertical_header = table.verticalHeader().width() if table.verticalHeader().isVisible() else 0
+        height = frame + table.horizontalHeader().height()
+        height += sum(table.rowHeight(row) for row in range(table.rowCount()))
+        if table.horizontalScrollBar().isVisible():
+            height += table.horizontalScrollBar().height()
+        if any(kind == "share" for kind, _ in self.widths):
+            return None, height
+        width = frame + vertical_header + sum(self.natural)
+        if table.verticalScrollBar().isVisible():
+            width += table.verticalScrollBar().width()
+        return width, height
+
+    def _fit_to_content(self) -> None:
+        # Never bigger than what it shows: a short or narrow table is not left
+        # in a box of empty white. It still shrinks, and scrolls, to fit less.
+        width, height = self.content_size()
+        self.table.setMaximumHeight(height)
+        self.table.setMaximumWidth(_QWIDGETSIZE_MAX if width is None else width)
+
+
+# A table's colours: those of the page, as the PDF sets it, never the desktop theme's.
+_TABLE_COLOURS = {
+    QPalette.ColorRole.Base: "#ffffff",
+    QPalette.ColorRole.AlternateBase: "#f8f9fa",
+    QPalette.ColorRole.Window: "#ffffff",
+    QPalette.ColorRole.Text: "#202124",
+    QPalette.ColorRole.WindowText: "#202124",
+    # The header row, as the PDF fills it.
+    QPalette.ColorRole.Button: "#f3f4f6",
+    QPalette.ColorRole.ButtonText: "#202124",
+    QPalette.ColorRole.Highlight: "#cfe3fc",
+    QPalette.ColorRole.HighlightedText: "#202124",
+}
+
+
+def _table_palette(base: QPalette) -> QPalette:
+    palette = QPalette(base)
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive, QPalette.ColorGroup.Disabled):
+        for role, colour in _TABLE_COLOURS.items():
+            palette.setColor(group, role, QColor(colour))
+    return palette
+
+
 def _populate_table_widget(
     table: QTableWidget,
     preview: TablePreview,
@@ -4195,7 +4510,7 @@ def _populate_table_widget(
     table.clear()
     table.setRowCount(len(preview.rows))
     table.setColumnCount(len(preview.columns))
-    table.setHorizontalHeaderLabels(preview.columns)
+    table.setHorizontalHeaderLabels(preview.headers or preview.columns)
     table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
     header_base = cell_base = None
@@ -4214,15 +4529,38 @@ def _populate_table_widget(
             if header_item is not None:
                 header_item.setFont(header_font)
 
+    # A table in the document reads as one: its cells start at the top of
+    # their row, by the text they go with, and it has no row numbers. A
+    # source's raw data keeps both, as a data grid does.
+    is_document_table = table_view_spec is not None
+    table.verticalHeader().setVisible(not is_document_table)
+    # A table is page content, set like the PDF's: dark text on white, under a
+    # light grey header, whatever the desktop's theme. Only the app around it
+    # follows a dark theme.
+    table.setPalette(_table_palette(table.palette()))
+    # A header narrowed to fit wraps onto a second line, as in the PDF,
+    # rather than losing its ends.
+    table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.TextWordWrap)
+    vertical = Qt.AlignTop if is_document_table else Qt.AlignVCenter
+
     for row_index, row in enumerate(preview.rows):
         for column_index, value in enumerate(row):
             item = QTableWidgetItem(value)
             alignment = table_view_column_alignment(table_view_spec, preview, column_index)
-            item.setTextAlignment(_QT_ALIGNMENT[alignment])
+            item.setTextAlignment((_QT_ALIGNMENT[alignment] & ~Qt.AlignVertical_Mask) | vertical)
             cell_styles = table_view_cell_styles(table_view_spec, row_index, column_index)
             if cell_styles or cell_base is not None:
                 item.setFont(_qt_font(cell_styles, cell_base))
             table.setItem(row_index, column_index, item)
+
+    # Filled again at a new zoom: the old sizer is replaced, not stacked.
+    previous = getattr(table, "_ll_column_sizer", None)
+    if previous is not None:
+        table.viewport().removeEventFilter(previous)
+        table.removeEventFilter(previous)
+        previous.deleteLater()
+    widths = [table_view_column_width(table_view_spec, column) for column in preview.columns]
+    table._ll_column_sizer = _TableColumnSizer(table, widths, zoom)
 
 
 def _is_table_view_figure(figure_spec: dict[str, Any]) -> bool:
@@ -4715,9 +5053,14 @@ class StoryFigureViewPanel(QWidget):
         preview = self.runtime.table_preview(
             table_view_spec["data"],
             table_view_spec.get("columns"),
+            limit=table_view_row_limit(table_view_spec),
             column_formats=table_view_column_formats(table_view_spec),
         )
         _populate_table_widget(self.table, preview, table_view_spec, runtime=self.runtime, zoom=self._zoom)
+        # In the scrolling story a table shows all its rows, up to a screenful;
+        # a longer one scrolls inside itself from there.
+        _, content_height = self.table._ll_column_sizer.content_size()
+        self.table.setMinimumHeight(min(content_height, _STORY_TABLE_MAX_PX))
         self.table.show()
 
     def _schedule_static_render(self, delay_ms: int) -> None:
@@ -5449,6 +5792,7 @@ class InteractiveFigureViewPanel(QWidget):
             preview = self.runtime.table_preview(
                 table_view_spec["data"],
                 table_view_spec.get("columns"),
+                limit=table_view_row_limit(table_view_spec),
                 column_formats=table_view_column_formats(table_view_spec),
             )
             _populate_table_widget(self.table, preview, table_view_spec, runtime=self.runtime)

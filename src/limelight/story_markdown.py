@@ -162,14 +162,21 @@ class NumberedStoryItem:
     kind: str
     key: str
     number: int
+    # Which count the number belongs to: "figure" (plots and images) or "table".
+    sequence: str = "figure"
 
 
-def numbered_story_items(markdown: str) -> list[NumberedStoryItem]:
+def numbered_story_items(
+    markdown: str, is_table: Callable[[str], bool] | None = None
+) -> list[NumberedStoryItem]:
     """Figure views and figure images in story order, numbered from one.
 
-    Images and figure views share one sequence. A reader moving through a
-    document has no reason to care which kind a given figure is, and two
-    sequences under one "Figure N." label would produce duplicate numbers.
+    Tables are counted on their own - Table 1, Table 2 - as a document
+    numbers them; ``is_table`` says which figure views show one. Everything
+    else, images and plots alike, shares the figure sequence: a reader moving
+    through a document has no reason to care which kind a given figure is,
+    and two sequences under one "Figure N." label would produce duplicate
+    numbers.
 
     A figure view referenced more than once keeps the number of its first
     appearance rather than consuming another: that is a reader seeing the same
@@ -199,12 +206,14 @@ def numbered_story_items(markdown: str) -> list[NumberedStoryItem]:
 
     items: list[NumberedStoryItem] = []
     numbers: dict[tuple[str, str], int] = {}
+    counts: dict[str, int] = {}
     for _, _, kind, key in sorted(found, key=lambda entry: (entry[0], entry[1])):
+        sequence = "table" if kind == "figureView" and is_table is not None and is_table(key) else "figure"
         number = numbers.get((kind, key))
         if number is None:
-            number = len(numbers) + 1
+            number = counts[sequence] = counts.get(sequence, 0) + 1
             numbers[(kind, key)] = number
-        items.append(NumberedStoryItem(kind=kind, key=key, number=number))
+        items.append(NumberedStoryItem(kind=kind, key=key, number=number, sequence=sequence))
     return items
 
 
@@ -479,7 +488,7 @@ class StoryMarkdownRenderer:
 CAPTION_LABEL_CLASS = "limelight-caption-label"
 
 
-def figure_caption_markup(number: int | None, text: str, *, label_style: str = "") -> str:
+def figure_caption_markup(number: int | None, text: str, *, label_style: str = "", label: str = "Figure") -> str:
     """What is written under a figure: ``<span class="limelight-caption-label">Figure 3.</span> text``.
 
     The number is set in the typography's `captionLabel` style - bold by
@@ -495,8 +504,8 @@ def figure_caption_markup(number: int | None, text: str, *, label_style: str = "
         label = ""
     else:
         style = f' style="{html.escape(label_style, quote=True)}"' if label_style else ""
-        label = f'<span class="{CAPTION_LABEL_CLASS}"{style}>Figure {number}.</span>'
-    return " ".join(part for part in (label, html.escape(text)) if part)
+        caption_label = f'<span class="{CAPTION_LABEL_CLASS}"{style}>{label} {number}.</span>'
+    return " ".join(part for part in (caption_label if number is not None else "", html.escape(text)) if part)
 
 
 def figcaption_html(number: int | None, text: str) -> str:

@@ -652,6 +652,7 @@ ALIGNMENTS = {"Left", "Center", "Right"}
 FONT_STYLES = {"Bold", "Italic"}
 AXIS_SCALES = {"Linear", "Log"}
 MISSING_MARKERS = {"cross", "none"}
+DRAW_STYLES = {"straight", "stepsPre", "stepsPost"}
 TRANSFORMS = {"identity"}
 
 
@@ -1111,7 +1112,6 @@ class ResolvedStory:
     markdown: str
     assets: list["ImageAsset"]
     signatures: list[DocumentSignature]
-    figure_view_numbers: dict[str, int]
 
 
 @dataclass
@@ -1128,7 +1128,6 @@ class ImageAsset:
     source_path: Path
     path: str
     converted: ConvertedImage
-    story_number: int | None = None
     display_width: "ImageWidth | None" = None
     provenance: SourceProvenance | None = None
     signatures: list[DocumentSignature] = field(default_factory=list)
@@ -1155,7 +1154,6 @@ class ImageAsset:
                 ("id", _quote(self.id)),
                 ("path", _quote(self.path)),
                 ("format", _constructor(f"Limelight.ImageFormat.{self.converted.format}")),
-                ("storyNumber", _optional_natural(self.story_number)),
                 ("displayWidth", _optional_image_width(self.display_width)),
                 ("fileFingerprints", _list(
                     [
@@ -1239,6 +1237,9 @@ class LineArtist:
     x_data: str | None = None
     color: str | None = None
     linestyle: str | None = None
+    linewidth: float | None = None
+    # "straight" (default), "stepsPre" or "stepsPost": how samples are joined.
+    draw_style: str | None = None
     marker: str | None = None
     # "cross" (default) or "none": how a missing (null/NaN) sample is shown.
     missing_marker: str | None = None
@@ -1659,6 +1660,8 @@ class FigureSpec:
                     ("xOverride", _optional_text(x_override)),
                     ("color", _optional_text(line.color)),
                     ("linestyle", _optional_text(line.linestyle)),
+                    ("linewidth", _optional_double(line.linewidth)),
+                    ("drawStyle", _optional_enum("DrawStyle", DRAW_STYLES, line.draw_style)),
                     ("missingMarker", _optional_enum("MissingMarker", MISSING_MARKERS, line.missing_marker)),
                     ("marker", _optional_text(line.marker)),
                     ("visibleWhen", _optional_expr("Limelight.TextControlParameterMatch", visible_when)),
@@ -1883,10 +1886,37 @@ class MapSpec:
 
 
 @dataclass(frozen=True)
+class ColumnWidth:
+    """How wide a table column is: fitted to its content, fixed, or a share of what is left."""
+
+    expression: str
+
+    @classmethod
+    def auto(cls) -> "ColumnWidth":
+        return cls("Limelight.ColumnWidth.auto")
+
+    @classmethod
+    def mm(cls, width_mm: float) -> "ColumnWidth":
+        if not width_mm > 0:
+            raise ValueError(f"A column's width must be positive, got {width_mm!r} mm")
+        return cls(_constructor("Limelight.ColumnWidth.mm", _record([("widthMm", _dhall_float(width_mm))])))
+
+    @classmethod
+    def share(cls, share: float = 1.0) -> "ColumnWidth":
+        if not share > 0:
+            raise ValueError(f"A column's share must be positive, got {share!r}")
+        return cls(_constructor("Limelight.ColumnWidth.share", _record([("widthShare", _dhall_float(share))])))
+
+    def render(self) -> str:
+        return self.expression
+
+
+@dataclass(frozen=True)
 class ColumnFormat:
     column: str
     alignment: str | None = None
     format: str | None = None
+    width: ColumnWidth | None = None
 
     def render(self) -> str:
         return _record(
@@ -1894,6 +1924,10 @@ class ColumnFormat:
                 ("column", _quote(self.column)),
                 ("alignment", _optional_enum("Alignment", ALIGNMENTS, self.alignment)),
                 ("format", _optional_text(self.format)),
+                (
+                    "width",
+                    "None Limelight.ColumnWidth" if self.width is None else f"Some ({self.width.render()})",
+                ),
             ]
         )
 
@@ -1932,6 +1966,8 @@ class TableViewSpec:
     title: str | None = None
     caption: str | None = None
     frame: Frame | None = None
+    # How many rows are shown; None leaves the viewer's default (2000).
+    row_limit: int | None = None
     column_formats: list[ColumnFormat] = field(default_factory=list)
     header_style: list[str] = field(default_factory=list)
     cell_styles: list[CellStyleRule] = field(default_factory=list)
@@ -1945,6 +1981,7 @@ class TableViewSpec:
                 ("caption", _optional_display_text(self.caption)),
                 ("data", _quote(self.data)),
                 ("columns", _optional_text_list(self.columns)),
+                ("rowLimit", _optional_natural(self.row_limit)),
                 (
                     "columnFormats",
                     _list([column_format.render() for column_format in self.column_formats], "Limelight.ColumnFormat"),
@@ -1965,11 +2002,6 @@ class TableViewSpec:
 class FigureView:
     id: str | None
     ref: str
-    # The number printed as "Figure N.", assigned from story order. `index` is
-    # the superseded field; nothing written today sets it, but it is still
-    # rendered so manifests keep the shape v1 readers expect.
-    story_number: int | None = None
-    index: int | None = None
     actions: list["FigureViewAction | str"] = field(default_factory=list)
 
     def render(self) -> str:
@@ -1979,8 +2011,6 @@ class FigureView:
             [
                 ("id", _quote(self.id)),
                 ("ref", _quote(self.ref)),
-                ("storyNumber", _optional_natural(self.story_number)),
-                ("index", _optional_integer(self.index)),
                 (
                     "actions",
                     _list(
@@ -2391,15 +2421,11 @@ class LimelightProject:
         *,
         id: str,
         ref: str,
-        story_number: int | None = None,
-        index: int | None = None,
         actions: Sequence[FigureViewAction | str] = (),
     ) -> FigureView:
         figure_view = FigureView(
             id=id,
             ref=ref,
-            story_number=story_number,
-            index=index,
             actions=[_figure_view_action_from_value(value) for value in actions],
         )
         self.figure_views.append(figure_view)
@@ -2410,21 +2436,13 @@ class LimelightProject:
         ref: str,
         *,
         id: str | None = None,
-        number: int | None = None,
         actions: Sequence[FigureViewAction | str] = (),
     ) -> str:
         figure_view_id = id or f"figure-view-{self._story_figure_view_index}"
         self._story_figure_view_index += 1
-        self.add_figure_view(
-            id=figure_view_id,
-            ref=ref,
-            # Left unnumbered on purpose. Numbers are assigned from the finished
-            # document, where figures and images are interleaved, rather than
-            # from the order this happened to be called in. An explicit number
-            # still wins.
-            story_number=number,
-            actions=actions,
-        )
+        # No number is given: a reader numbers views from the finished
+        # document, as they meet them, not from the order of these calls.
+        self.add_figure_view(id=figure_view_id, ref=ref, actions=actions)
         return f"@figure({figure_view_id})"
 
     def set_story_markdown(
@@ -2786,14 +2804,6 @@ class LimelightProject:
         figure_views = [*self.figure_views, *story_figure_views]
         resolved = self.resolve_story()
 
-        # Numbers come from the packaged document rather than from the order
-        # story_figure() happened to be called in, so a figure and an image
-        # interleaved in the prose are numbered as a reader meets them. An
-        # explicitly set number wins, since the author asked for it.
-        for figure_view in figure_views:
-            if figure_view.story_number is None and figure_view.id is not None:
-                figure_view.story_number = resolved.figure_view_numbers.get(figure_view.id)
-
         project = _record(
             [
                 ("title", _quote(self.title)),
@@ -2869,7 +2879,7 @@ class LimelightProject:
         return self._resolved_story
 
     def _resolve_story(self) -> ResolvedStory:
-        authored, _ = self.render_story_markdown()
+        authored, story_figure_views = self.render_story_markdown()
         assets, packaged_paths = self._package_story_images(authored)
         markdown = rewrite_image_destinations(authored, packaged_paths.get)
 
@@ -2878,23 +2888,22 @@ class LimelightProject:
         # just produced.
         figure_view_numbers: dict[str, int] = {}
         image_numbers: dict[str, int] = {}
-        for item in numbered_story_items(markdown):
+        # Tables are numbered in a count of their own.
+        table_spec_ids = {spec.id for spec in self.figure_specs if spec.table_views}
+        view_refs = {view.id: view.ref for view in [*self.figure_views, *story_figure_views] if view.id is not None}
+        for item in numbered_story_items(markdown, is_table=lambda view_id: view_refs.get(view_id) in table_spec_ids):
             if item.kind == "figureView":
                 figure_view_numbers.setdefault(item.key, item.number)
             else:
                 image_numbers.setdefault(item.key, item.number)
 
-        for asset in assets:
-            asset.story_number = image_numbers.get(asset.path)
-
         # Cross-references are resolved into literal text here, so the packaged
-        # prose carries "Figure 3" and no reader has to re-derive it. A number
-        # computed twice is a number that can disagree with itself, and the
-        # document is signed.
+        # prose carries "Figure 3" and the signed document says what it means.
+        # A reader numbering the same document the same way gets the same 3.
         anchors = dict(figure_view_numbers)
         for asset in assets:
-            if asset.story_number is not None:
-                anchors[asset.id] = asset.story_number
+            if asset.path in image_numbers:
+                anchors[asset.id] = image_numbers[asset.path]
         markdown = resolve_cross_references(markdown, anchors.get)
 
         signatures = (
@@ -2904,7 +2913,6 @@ class LimelightProject:
             markdown=markdown,
             assets=assets,
             signatures=signatures,
-            figure_view_numbers=figure_view_numbers,
         )
 
     def _package_story_images(self, markdown: str) -> tuple[list[ImageAsset], dict[str, str]]:

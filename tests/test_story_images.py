@@ -93,10 +93,14 @@ def test_a_figure_image_is_numbered_and_an_inline_one_is_not(tmp_path: Path) -> 
     package = _build(tmp_path, project)
 
     with open_limelight(package) as opened:
-        assets = {asset["id"]: asset for asset in opened.manifest_json()["assets"]}
+        manifest = opened.manifest_json()
+        runtime = LimelightRuntime(opened, manifest)
+        paths = {asset["id"]: asset["path"] for asset in manifest["assets"]}
 
-    assert optional_field(assets["rig"], "storyNumber") == 1
-    assert optional_field(assets["icon"], "storyNumber") is None
+        # Numbered by the reader, from the story; the asset stores no number.
+        assert runtime.image_number(paths["rig"]) == 1
+        assert runtime.image_number(paths["icon"]) is None
+        assert all("storyNumber" not in asset for asset in manifest["assets"])
 
 
 def test_add_image_pins_the_id_and_the_conversion(tmp_path: Path) -> None:

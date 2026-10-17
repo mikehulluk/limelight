@@ -27,11 +27,14 @@ from .app import (
     MM_PER_INCH,
     LimelightRuntime,
     figure_aspect,
+    figure_spec_label,
     figure_width_px,
     table_view_cell_styles,
     table_view_column_alignment,
     table_view_column_formats,
+    table_view_column_width,
     table_view_header_styles,
+    table_view_row_limit,
 )
 from .story_typst import (
     StoryTypstRenderer,
@@ -338,7 +341,9 @@ def _figure_typst(
     if figure_spec is None:
         return _notice_typst(f"Unknown figure {state.figure_id!r}")
 
-    caption = typst_caption(state.index, figure_spec.get("caption") or figure_spec["title"])
+    caption = typst_caption(
+        state.index, figure_spec.get("caption") or figure_spec["title"], label=figure_spec_label(figure_spec)
+    )
     caption_argument = f", caption: [{caption}]" if caption else ""
     heading = runtime.figure_view_heading(state.figure_id, index=state.index)
     try:
@@ -348,9 +353,10 @@ def _figure_typst(
                 f"[#ll-table-heading[{typst_text(figure_spec['title'])}]\n"
                 f"{_table_view_typst(runtime, figure_spec)}]"
             )
-            width = "100%"
-        else:
-            body, width = _figure_image_typst(runtime, renderers, state, figure_spec, column_px, root)
+            # A table may be longer than a page, so it runs on across pages
+            # (repeating its header row) instead of being kept in one piece.
+            return f"#ll-table-figure({body}{caption_argument})"
+        body, width = _figure_image_typst(runtime, renderers, state, figure_spec, column_px, root)
     except Exception as error:
         logger.exception("Could not render figure %s for PDF export", state.figure_id)
         return _notice_typst(f"Could not render {heading}: {error}")
@@ -388,11 +394,30 @@ def _figure_image_typst(
     return f"image({typst_string(relative)}, width: 100%)", f"{percent:.2f}%"
 
 
+def _column_width_typst(kind: str, value: float | None) -> str:
+    """A column's width as a Typst track size: auto, a length, or a fraction of what is left."""
+
+    match kind:
+        case "mm":
+            return f"{value:g}mm"
+        case "share":
+            return f"{value:g}fr"
+    return "auto"
+
+
+def _cell_typst(value: str) -> str:
+    """A cell's text, with each line of a multi-line value set on a line of its own."""
+
+    # In Typst markup a newline is only a space; a backslash before a space breaks the line.
+    return " \\ ".join(typst_text(line) for line in value.split("\n"))
+
+
 def _table_view_typst(runtime: LimelightRuntime, figure_spec: dict[str, Any]) -> str:
     table_view_spec = figure_spec["tableViewSpecs"][0]
     preview = runtime.table_preview(
         table_view_spec["data"],
         table_view_spec.get("columns"),
+        limit=table_view_row_limit(table_view_spec),
         column_formats=table_view_column_formats(table_view_spec),
     )
 
@@ -400,17 +425,20 @@ def _table_view_typst(runtime: LimelightRuntime, figure_spec: dict[str, Any]) ->
         _alignment_typst(table_view_column_alignment(table_view_spec, preview, column_index))
         for column_index in range(len(preview.columns))
     )
+    widths = ", ".join(
+        _column_width_typst(*table_view_column_width(table_view_spec, column)) for column in preview.columns
+    )
     header_styles = table_view_header_styles(table_view_spec)
     header = ", ".join(
-        f"[#ll-table-header[{_styled(typst_text(column), header_styles)}]]" for column in preview.columns
+        f"[#ll-table-header[{_styled(typst_text(header), header_styles)}]]" for header in (preview.headers or preview.columns)
     )
     cells = [
-        f"[#ll-table-cell[{_styled(typst_text(value), table_view_cell_styles(table_view_spec, row_index, column_index))}]]"
+        f"[#ll-table-cell[{_styled(_cell_typst(value), table_view_cell_styles(table_view_spec, row_index, column_index))}]]"
         for row_index, row in enumerate(preview.rows)
         for column_index, value in enumerate(row)
     ]
     table = (
-        f"#table(\n  columns: {len(preview.columns)},\n  align: ({alignments},),\n"
+        f"#table(\n  columns: ({widths},),\n  align: ({alignments},),\n"
         f"  fill: (x, y) => if y == 0 {{ rgb(\"#f3f4f6\") }},\n"
         f"  table.header({header}),\n  "
         + ",\n  ".join(cells)

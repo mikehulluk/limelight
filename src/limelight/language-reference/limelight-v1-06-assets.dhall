@@ -47,16 +47,13 @@ let ImageWidth = { value : Double, unit : ImageWidthUnit }
 
 -- One bundled image.
 --
--- `storyNumber` is the number printed as "Figure N.", shared with FigureView:
--- images and figure views are numbered in one sequence, because a reader
--- moving through a document has no reason to care which kind a given figure
--- is. It is absent for an image that is not a figure - one written inline
--- within a sentence rather than standing alone in its own paragraph.
+-- An image standing alone in its own paragraph is a figure, numbered from
+-- the story along with the plots; one written inline within a sentence is
+-- not. Neither number is stored here.
 let ImageAsset =
       { id : Core.Id
       , path : Text
       , format : ImageFormat
-      , storyNumber : Optional Natural
       -- How wide to draw it when the story does not say. A story can override
       -- this per reference with `{width=80mm}` or `{width="60%"}`; absent from
       -- both, an image draws at its natural size, capped to the column.

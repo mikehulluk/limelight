@@ -82,6 +82,7 @@ class FakeRuntime:
         source_id: str,
         columns: Any = None,
         *,
+        limit: int = 2000,
         column_formats: dict[str, str] | None = None,
     ) -> TablePreview:
         assert self._table_preview is not None
@@ -248,14 +249,18 @@ def test_table_view_figures_render_as_typst_tables(tmp_path):
 
     source = build_story_typst(runtime, make_renderers(), tmp_path)
 
-    assert "#table(\n  columns: 2,\n  align: (left, right,)," in source
+    # Columns with no width are sized to their content.
+    assert "#table(\n  columns: (auto, auto,),\n  align: (left, right,)," in source
     assert "[#ll-table-header[#text(weight: 700)[statistic]]]" in source
     assert "[#ll-table-cell[#emph[min]]]" in source
     assert "[#ll-table-cell[0\\.51]]" in source
     # Tables have no drawn-in title, so they do get a heading; the number
     # stays under the figure with the caption, as for every other kind.
     assert "#ll-table-heading[Prey summary]" in source
-    assert "#ll-caption-label[Figure 1.] Computed at build time." in source
+    assert "#ll-caption-label[Table 1.] Computed at build time." in source
+    # A table may run over several pages, so it is not set in ll-figure's unbreakable block.
+    assert "#ll-table-figure(" in source
+    assert "#ll-figure([#ll-table-heading" not in source
 
 
 def test_unknown_figure_becomes_a_notice_instead_of_raising(tmp_path):

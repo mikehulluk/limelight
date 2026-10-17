@@ -16,16 +16,11 @@ let FigureViewAction = { ref : Types.AxesSpecId, action : AxesSpecs.AxesAction }
 
 -- A FigureView is a story-facing rendered instance of a FigureSpec with
 -- concrete axes actions applied on top of the underlying FigureSpec.
--- `storyNumber` is the number shown for this view ("Figure 3."), assigned by
--- the builder from story order and recorded here so the runtime never has to
--- re-derive it. `index` is the superseded field it replaces; readers fall back
--- to it so packages published before `storyNumber` existed keep the numbering
--- they shipped with.
+-- It carries no number: "Figure 3." and "Table 1." are worked out from the
+-- story, in the order a reader meets each view, by whoever reads it.
 let FigureView =
       { id : Types.FigureViewId
       , ref : Types.FigureSpecId
-      , storyNumber : Optional Natural
-      , index : Optional Integer
       , actions : List FigureViewAction
       }
 

@@ -42,6 +42,7 @@ in  { Frame = Types.Frame
     , TimeSeriesArtist = PlotArtists.TimeSeriesArtist
     , StemArtist = PlotArtists.StemArtist
     , MissingMarker = PlotArtists.MissingMarker
+    , DrawStyle = PlotArtists.DrawStyle
     , PlotArtist = PlotArtists.PlotArtist
     , AxesAction = AxesSpecs.AxesAction
 
@@ -67,5 +68,6 @@ in  { Frame = Types.Frame
     , FontStyle = TableViews.FontStyle
     , CellSelector = TableViews.CellSelector
     , ColumnFormat = TableViews.ColumnFormat
+    , ColumnWidth = TableViews.ColumnWidth
     , CellStyleRule = TableViews.CellStyleRule
     }

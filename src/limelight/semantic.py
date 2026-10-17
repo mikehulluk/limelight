@@ -312,20 +312,8 @@ class _SemanticValidator:
             raise LimelightError(f"{where} frame must lie within the figure (0..1 on each axis)")
 
     def _validate_figure_views(self) -> None:
-        story_numbers: dict[int, str] = {}
         for figure_view in self.manifest["figureViews"]:
             self._validate_figure_view(figure_view)
-            story_number = optional_field(figure_view, "storyNumber")
-            if story_number is None:
-                continue
-            # Two views printing the same "Figure N." would leave a reader with
-            # no way to tell which one a cross-reference meant.
-            claimed_by = story_numbers.get(story_number)
-            if claimed_by is not None:
-                raise LimelightError(
-                    f"FigureView {figure_view['id']!r} and {claimed_by!r} both claim storyNumber {story_number!r}"
-                )
-            story_numbers[story_number] = figure_view["id"]
 
     def _validate_axes_spec(self, figure: dict[str, Any], axes_spec: dict[str, Any]) -> None:
         for action in axes_spec["actions"]:
@@ -453,6 +441,18 @@ class _SemanticValidator:
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
                 f"has unknown missingMarker {missing_marker!r}; expected cross or none"
             )
+        draw_style = artist.get("drawStyle")
+        if draw_style is not None and draw_style not in ("straight", "stepsPre", "stepsPost"):
+            raise LimelightError(
+                f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
+                f"has unknown drawStyle {draw_style!r}; expected straight, stepsPre or stepsPost"
+            )
+        linewidth = artist.get("linewidth")
+        if linewidth is not None and not float(linewidth) > 0.0:
+            raise LimelightError(
+                f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
+                f"linewidth {linewidth!r} must be greater than 0"
+            )
         marker = artist.get("marker")
         if marker is not None and kind in ("line", "scatter") and marker not in _VALID_MARKERS:
             raise LimelightError(
@@ -489,6 +489,11 @@ class _SemanticValidator:
                 f"FigureSpec {figure['id']!r} TableViewSpec {table_view_spec['id']!r} "
                 f"references unknown dataset {source_id!r}"
             )
+        row_limit = optional_field(table_view_spec, "rowLimit")
+        if row_limit is not None and int(row_limit) < 1:
+            raise LimelightError(
+                f"FigureSpec {figure['id']!r} TableViewSpec {table_view_spec['id']!r} rowLimit must be at least 1"
+            )
         columns = optional_field(table_view_spec, "columns")
         if columns is not None:
             for column in columns:
@@ -506,6 +511,14 @@ class _SemanticValidator:
                     f"FigureSpec {figure['id']!r} TableViewSpec {table_view_spec['id']!r} "
                     f"columnFormats references column {column!r} not shown by this table view"
                 )
+            width = optional_field(column_format, "width")
+            if isinstance(width, dict):
+                value = width.get("widthMm", width.get("widthShare"))
+                if value is None or not float(value) > 0:
+                    raise LimelightError(
+                        f"FigureSpec {figure['id']!r} TableViewSpec {table_view_spec['id']!r} "
+                        f"columnFormats has a width {width!r} for column {column!r}; it must be positive"
+                    )
             format_spec = optional_field(column_format, "format")
             if format_spec is not None:
                 try:
@@ -688,7 +701,6 @@ class _SemanticValidator:
             raise LimelightError(f"{context} {path!r} must not escape the package root")
 
     def _validate_assets(self) -> None:
-        story_numbers: dict[int, str] = {}
         paths: dict[str, str] = {}
         for asset in self.manifest.get("assets") or []:
             asset_id = asset["id"]
@@ -701,23 +713,6 @@ class _SemanticValidator:
                 )
             paths[asset["path"]] = asset_id
 
-            story_number = optional_field(asset, "storyNumber")
-            if story_number is None:
-                continue
-            if story_number < 1:
-                raise LimelightError(
-                    f"ImageAsset {asset_id!r} storyNumber {story_number!r} must be one or greater"
-                )
-            # Images and figure views share one sequence, so this only catches
-            # images colliding with each other; the cross-check against figure
-            # views happens once both are loaded.
-            claimed_by = story_numbers.get(story_number)
-            if claimed_by is not None:
-                raise LimelightError(
-                    f"ImageAsset {asset_id!r} and {claimed_by!r} both claim storyNumber {story_number!r}"
-                )
-            story_numbers[story_number] = asset_id
-
     def _validate_story(self) -> None:
         story = self.manifest["story"]
         self._require_safe_package_path(story["documentPath"], "Story documentPath")
@@ -728,14 +723,6 @@ class _SemanticValidator:
         figure_id = figure_view["ref"]
         if figure_id not in self.figures:
             raise LimelightError(f"FigureView {figure_view['id']!r} references unknown FigureSpec {figure_id!r}")
-        index = optional_field(figure_view, "index")
-        if index is not None and index < 0:
-            raise LimelightError(f"FigureView {figure_view['id']!r} index {index!r} must be zero or greater")
-        story_number = optional_field(figure_view, "storyNumber")
-        if story_number is not None and story_number < 1:
-            raise LimelightError(
-                f"FigureView {figure_view['id']!r} storyNumber {story_number!r} must be one or greater"
-            )
         for action_binding in figure_view["actions"]:
             axes_ref = action_binding["ref"]
             if axes_ref not in self.axes_specs:

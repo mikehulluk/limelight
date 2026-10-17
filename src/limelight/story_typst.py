@@ -71,7 +71,7 @@ def typst_label(anchor: str) -> str:
     return f"#label({typst_string(anchor)})"
 
 
-def typst_caption(number: int | None, text: str) -> str:
+def typst_caption(number: int | None, text: str, *, label: str = "Figure") -> str:
     """A figure's caption: its number in the caption label's style, then its text.
 
     The same shape as story_markdown.figure_caption_markup, so a caption
@@ -80,7 +80,7 @@ def typst_caption(number: int | None, text: str) -> str:
 
     parts = []
     if number is not None:
-        parts.append(f"#ll-caption-label[Figure {number}.]")
+        parts.append(f"#ll-caption-label[{label} {number}.]")
     if text:
         parts.append(typst_text(text))
     if not parts:
@@ -498,6 +498,16 @@ def typst_preamble(
             "      if caption != none { block(above: 0.4em, align(left, caption)) }",
             "    }))",
             "  }),",
+            ")",
+            # A table's figure: as ll-figure, but free to break across pages,
+            # since a long table cannot be kept on one. Its header row repeats
+            # on every page it runs onto.
+            "#let ll-table-figure(body, caption: none) = block(",
+            f"  above: {spacing.figure_gap_mm:g}mm, below: {spacing.figure_gap_mm:g}mm,",
+            "  breakable: true, width: 100%, {",
+            "    align(center, body)",
+            "    if caption != none { block(above: 0.4em, caption) }",
+            "  },",
             ")",
         ]
     )

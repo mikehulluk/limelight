@@ -53,7 +53,7 @@ def test_a_figures_only_package_shows_just_the_figures_tab(qt_app, tmp_path: Pat
     window = _open_window(qt_app, tmp_path / "pkg")
     try:
         titles, shown = _tabs(window)
-        assert titles == ["Story", "Figures", "Data", "Parameters"]
+        assert titles == ["Story", "Figures", "Tables", "Data", "Parameters"]
         assert shown == ["Figures", "Data"]
     finally:
         window.close()
@@ -72,6 +72,61 @@ def test_a_package_with_parameters_and_a_story_shows_every_tab(qt_app, tmp_path:
         _, shown = _tabs(window)
         assert shown == ["Story", "Figures", "Data", "Parameters"]
         assert window.help_button.text() == "Help"
+    finally:
+        window.close()
+
+
+def _package_with_a_table(tmp_path: Path, *, with_plot: bool) -> Path:
+    from limelight.writer import TableViewSpec
+
+    project = LimelightProject(title="Tables", authors=["Test"])
+    project.add_csv_dataset(id="src", arrays={"x": [0.0, 1.0, 2.0], "y": [1.0, 2.0, 4.0]})
+    if with_plot:
+        project.add_line_figure(id="fig", title="Fig", data="src", x="x", y=["y"])
+    project.add_figure(
+        id="tbl",
+        title="Values",
+        caption="Every value.",
+        table_views=[TableViewSpec(id="tbl-view", data="src", columns=["x", "y"])],
+    )
+    project.set_story_markdown(f"# Story\n\n{project.story_figure('tbl')}\n", base_dir=tmp_path)
+    project.write_folder(tmp_path / "pkg")
+    return tmp_path / "pkg"
+
+
+def test_tables_have_a_tab_of_their_own_and_plots_keep_the_figures_tab(qt_app, tmp_path: Path) -> None:
+    window = _open_window(qt_app, _package_with_a_table(tmp_path, with_plot=True))
+    try:
+        _, shown = _tabs(window)
+        assert shown == ["Story", "Figures", "Tables", "Data"]
+
+        figures = [window.figure_view_tree.topLevelItem(i).text(0) for i in range(window.figure_view_tree.topLevelItemCount())]
+        tables = [window.table_tree.topLevelItem(i).text(0) for i in range(window.table_tree.topLevelItemCount())]
+        assert figures == ["Fig"]
+        # Listed under the number the story shows it at.
+        assert tables == ["Table 1. Values"]
+    finally:
+        window.close()
+
+
+def test_the_tables_tab_opens_on_the_first_table(qt_app, tmp_path: Path) -> None:
+    window = _open_window(qt_app, _package_with_a_table(tmp_path, with_plot=True))
+    try:
+        table = window.table_widget
+        assert window.table_title.text() == "Table 1. Values"
+        assert window.table_caption.text() == "Every value."
+        assert table.rowCount() == 3
+        assert [table.horizontalHeaderItem(i).text() for i in range(table.columnCount())] == ["x", "y"]
+    finally:
+        window.close()
+
+
+def test_a_package_of_tables_alone_has_no_figures_tab(qt_app, tmp_path: Path) -> None:
+    window = _open_window(qt_app, _package_with_a_table(tmp_path, with_plot=False))
+    try:
+        _, shown = _tabs(window)
+        assert "Figures" not in shown
+        assert "Tables" in shown
     finally:
         window.close()
 
