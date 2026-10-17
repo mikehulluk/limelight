@@ -89,14 +89,17 @@ class FakeRuntime:
         return self._table_preview
 
 
-def plot_figure_spec(figure_id: str, *, caption: str | None = None) -> dict[str, Any]:
-    return {
+def plot_figure_spec(figure_id: str, *, caption: str | None = None, aspect: float | None = None) -> dict[str, Any]:
+    spec = {
         "id": figure_id,
         "title": "Populations over time",
         "caption": caption,
         "tableViewSpecs": [],
         "axesSpecs": [],
     }
+    if aspect is not None:
+        spec["size"] = {"aspect": aspect}
+    return spec
 
 
 def make_renderers(
@@ -192,6 +195,34 @@ def test_figures_are_laid_out_to_the_text_column(tmp_path):
     # 180 mm of column at CSS resolution, so a point in the figure is a point on the page.
     assert calls[0]["width"] == 680
     assert calls[0]["figure_id"] == "populations"
+
+
+def test_a_figure_taller_than_the_page_is_drawn_narrower_to_fit(tmp_path):
+    calls: list[dict[str, Any]] = []
+    runtime = FakeRuntime(
+        story_blocks=[{"figureView": "stack"}],
+        figure_specs={"stack": plot_figure_spec("stack", aspect=2.0)},
+    )
+
+    source = build_story_typst(runtime, make_renderers(calls=calls), tmp_path)
+
+    # A4 with 20 mm margins leaves 257 mm, less 35 mm for the heading and caption: 222 mm,
+    # 839 px at CSS resolution. Drawn at half that width, it is that tall.
+    assert (calls[0]["width"], calls[0]["height"]) == (419, 838)
+    assert '#ll-figure(image("figures/view-stack.pdf", width: 100%), width: 61.62%' in source
+
+
+def test_on_a_continuous_page_a_tall_figure_keeps_the_column(tmp_path):
+    calls: list[dict[str, Any]] = []
+    runtime = FakeRuntime(
+        story_blocks=[{"figureView": "stack"}],
+        figure_specs={"stack": plot_figure_spec("stack", aspect=2.0)},
+        page_geometry=PageGeometry(width_mm=210.0, height_mm=None, margin_lr_mm=15.0, margin_tb_mm=20.0),
+    )
+
+    build_story_typst(runtime, make_renderers(calls=calls), tmp_path)
+
+    assert (calls[0]["width"], calls[0]["height"]) == (680, 1360)
 
 
 def test_a_figure_shown_twice_is_labelled_once(tmp_path):

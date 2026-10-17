@@ -52,6 +52,10 @@ logger = logging.getLogger(__name__)
 # A viewport width has no physical size, so a PDF of one falls back to the
 # default page: A4.
 FALLBACK_PAGE_WIDTH_MM = DEFAULT_PAGE_WIDTH_MM
+
+# A figure can't break across pages, so on a paged story it is kept to the page's height less
+# this much: room for the heading above it, its caption below, and the gaps between.
+FIGURE_PAGE_RESERVE_MM = 35.0
 FALLBACK_PAGE_HEIGHT_MM = DEFAULT_PAGE_HEIGHT_MM
 
 # Where the document keeps what it draws on, beside its source.
@@ -190,6 +194,16 @@ class PrintedPage:
 
         return max(1, int(round(self.content_width_mm / MM_PER_INCH * CSS_PIXELS_PER_INCH)))
 
+    @property
+    def figure_max_height_px(self) -> int | None:
+        """The tallest a figure may be drawn, in CSS pixels, so it fits on a page with its
+        heading and caption; None on a continuous page, which grows to fit."""
+
+        if self.height_mm is None:
+            return None
+        height_mm = self.height_mm - 2 * self.margin_tb_mm - FIGURE_PAGE_RESERVE_MM
+        return max(1, int(height_mm / MM_PER_INCH * CSS_PIXELS_PER_INCH))
+
 
 def printed_page(runtime: LimelightRuntime) -> PrintedPage:
     """Resolve a story's page geometry to something a printer can use.
@@ -227,7 +241,6 @@ def build_story_typst(
     blocks = list(runtime.story_blocks)
     figure_total = sum(1 for block in blocks if not is_story_text_block(block))
     page = printed_page(runtime)
-    column_px = page.content_width_px
 
     states = [
         renderers.figure_view_state_for_block(block)
@@ -263,7 +276,7 @@ def build_story_typst(
         figure_number += 1
         if on_figure_progress is not None and not on_figure_progress(figure_number, figure_total):
             raise PdfExportError("Export cancelled")
-        parts.append(_figure_typst(runtime, renderers, state, column_px, root) + text_renderer.label(state.figure_view_id))
+        parts.append(_figure_typst(runtime, renderers, state, page, root) + text_renderer.label(state.figure_view_id))
 
     preamble = typst_preamble(
         title=runtime.project_title,
@@ -334,7 +347,7 @@ def _figure_typst(
     runtime: LimelightRuntime,
     renderers: StoryPdfRenderers,
     state: Any,
-    column_px: int,
+    page: PrintedPage,
     root: Path,
 ) -> str:
     figure_spec = runtime.figure_specs.get(state.figure_id)
@@ -356,7 +369,7 @@ def _figure_typst(
             # A table may be longer than a page, so it runs on across pages
             # (repeating its header row) instead of being kept in one piece.
             return f"#ll-table-figure({body}{caption_argument})"
-        body, width = _figure_image_typst(runtime, renderers, state, figure_spec, column_px, root)
+        body, width = _figure_image_typst(runtime, renderers, state, figure_spec, page, root)
     except Exception as error:
         logger.exception("Could not render figure %s for PDF export", state.figure_id)
         return _notice_typst(f"Could not render {heading}: {error}")
@@ -369,13 +382,20 @@ def _figure_image_typst(
     renderers: StoryPdfRenderers,
     state: Any,
     figure_spec: dict[str, Any],
-    column_px: int,
+    page: PrintedPage,
     root: Path,
 ) -> tuple[str, str]:
     # Laid out at CSS resolution to the column, so a label drawn at the
     # body's points is the body's size on the page.
+    column_px = page.content_width_px
     width = figure_width_px(figure_spec, column_px, CSS_PIXELS_PER_INCH)
-    height = int(width * figure_aspect(figure_spec))
+    aspect = figure_aspect(figure_spec)
+    # A figure taller than the page leaves it is drawn narrower, to that height: drawn, not
+    # shrunk, so its labels stay the body's size. (It can't break across pages.)
+    max_height = page.figure_max_height_px
+    if max_height is not None and width * aspect > max_height:
+        width = max(1, int(max_height / aspect))
+    height = int(width * aspect)
     relative = f"{FIGURES_DIR}/{state.figure_view_id}.pdf"
     output_path = root / relative
     output_path.parent.mkdir(parents=True, exist_ok=True)
