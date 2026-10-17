@@ -517,6 +517,8 @@ def story_typography_css(typography: Typography, fonts: dict[str, ResolvedFont])
             rule("table.limelight-table", styles["tableCell"]),
             rule("table.limelight-table thead th", styles["tableHeader"]),
             rule(".limelight-table-note, .limelight-notice", styles["tableNote"]),
+            # MathJax sizes its output from the text around it:
+            f".math {{\n  font-size: {typography.maths_scale * 100:g}%;\n}}",
         ]
     )
 

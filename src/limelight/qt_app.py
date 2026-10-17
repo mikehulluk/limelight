@@ -4269,7 +4269,8 @@ def _typography_page(runtime: LimelightRuntime) -> QWidget:
     summary = QLabel(
         f"Line height: {typography.line_height:g} × the body size. "
         f"Axis labels sit {typography.axis_label_pad_pt:g}pt from the axis, "
-        f"figure titles {typography.figure_title_pad_pt:g}pt above the axes.\n"
+        f"figure titles {typography.figure_title_pad_pt:g}pt above the axes. "
+        f"Maths is set at {typography.maths_scale:g} × the size of the text around it.\n"
         f"In use on screen: {', '.join(screen_families)}.\n"
         f"In use in figures: {', '.join(figure_families)}."
     )

@@ -430,6 +430,7 @@ def _render_typography(typography: Typography) -> str:
             ("lineHeight", _dhall_float(typography.line_height)),
             ("axisLabelPadPt", _dhall_float(typography.axis_label_pad_pt)),
             ("figureTitlePadPt", _dhall_float(typography.figure_title_pad_pt)),
+            ("mathsScale", _dhall_float(typography.maths_scale)),
             *[(name, _render_text_style(style)) for name, style in typography.styles().items()],
         ]
     )

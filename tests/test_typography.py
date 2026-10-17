@@ -81,6 +81,7 @@ def test_a_custom_typography_round_trips(tmp_path: Path) -> None:
         line_height=1.35,
         axis_label_pad_pt=9.0,
         figure_title_pad_pt=12.0,
+        maths_scale=0.85,
         heading1=TextStyle(fonts=("noto-sans",), size_pt=24.0, weight=800, italic=True),
         code=TextStyle(fonts=("dejavu-sans-mono",), size_pt=9.0),
     )
@@ -109,6 +110,29 @@ def test_a_typography_block_written_before_the_pads_reads_them_as_matplotlib_has
     del block["axisLabelPadPt"], block["figureTitlePadPt"]
     read = typography_from_story({"typography": block})
     assert (read.axis_label_pad_pt, read.figure_title_pad_pt) == (4.0, 6.0)
+
+
+def test_a_typography_block_written_before_the_maths_scale_sets_maths_at_the_text_size(tmp_path: Path) -> None:
+    package = _written(tmp_path, _project())
+    with open_limelight(package) as opened:
+        block = opened.manifest_json()["story"]["typography"]
+    del block["mathsScale"]
+    assert typography_from_story({"typography": block}).maths_scale == 1.0
+
+
+def test_a_maths_scale_must_be_positive(tmp_path: Path) -> None:
+    package = _written(tmp_path, _project())
+    with open_limelight(package) as opened:
+        block = opened.manifest_json()["story"]["typography"]
+    block["mathsScale"] = 0.0
+    with pytest.raises(LimelightError, match="mathsScale"):
+        typography_from_story({"typography": block})
+
+
+def test_the_stylesheet_scales_maths_from_the_text_around_it() -> None:
+    fonts = resolve_fonts({"story": {}}, None)
+    assert ".math {\n  font-size: 100%;\n}" in story_typography_css(Typography(), fonts)
+    assert ".math {\n  font-size: 85%;\n}" in story_typography_css(replace(Typography(), maths_scale=0.85), fonts)
 
 
 # --- System and bundled fonts ---------------------------------------------

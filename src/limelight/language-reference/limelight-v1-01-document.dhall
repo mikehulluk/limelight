@@ -146,8 +146,9 @@ let TextStyle =
 -- (decorator labels, point and arrow annotations) and `badge` (the
 -- large-series corner mark). Tables: `tableHeading` (a table figure's
 -- title above it), `tableHeader` (column headers), `tableCell`, `tableNote`
--- (notes and notices under a table). Mathematics is set by MathJax in its
--- own face, at the size of the text around it. The application's own
+-- (notes and notices under a table). Mathematics is set in its own face (by
+-- MathJax on screen, by Typst in a PDF), at `mathsScale` times the size of
+-- the text around it; 1.0 unless a document says. The application's own
 -- controls - toolbars, the sidebar, dialogs - are not the document's and
 -- keep the platform's font.
 --
@@ -159,6 +160,7 @@ let Typography =
       { lineHeight : Double
       , axisLabelPadPt : Double
       , figureTitlePadPt : Double
+      , mathsScale : Double
       , body : TextStyle
       , heading1 : TextStyle
       , heading2 : TextStyle

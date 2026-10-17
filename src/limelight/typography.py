@@ -46,6 +46,9 @@ DEFAULT_LINE_HEIGHT = 1.5
 DEFAULT_AXIS_LABEL_PAD_PT = 4.0
 DEFAULT_FIGURE_TITLE_PAD_PT = 6.0
 
+# Mathematics is set in its own face, at this multiple of the size of the text around it.
+DEFAULT_MATHS_SCALE = 1.0
+
 # Weights are CSS weights, 100 to 900.
 MIN_WEIGHT = 100
 MAX_WEIGHT = 900
@@ -224,11 +227,16 @@ class Typography:
     Two of the figures' distances are set here too, in points, since they
     are set with the text they space: ``axis_label_pad_pt`` between an axis
     and its label, ``figure_title_pad_pt`` between the axes and the title.
+
+    Mathematics keeps its own face; ``maths_scale`` is its size as a multiple
+    of the text around it, so a document of long equations can set them a
+    little smaller than its prose.
     """
 
     line_height: float = DEFAULT_LINE_HEIGHT
     axis_label_pad_pt: float = DEFAULT_AXIS_LABEL_PAD_PT
     figure_title_pad_pt: float = DEFAULT_FIGURE_TITLE_PAD_PT
+    maths_scale: float = DEFAULT_MATHS_SCALE
     body: TextStyle = _style(DEFAULT_TEXT_FONTS, 1.0)
     heading1: TextStyle = _style(DEFAULT_TEXT_FONTS, 1.7, BOLD)
     heading2: TextStyle = _style(DEFAULT_TEXT_FONTS, 1.32, BOLD)
@@ -322,6 +330,10 @@ def typography_from_story(story: dict[str, Any]) -> Typography:
     # The pads came after the block did; a document without them has matplotlib's.
     axis_label_pad_pt = float(block.get("axisLabelPadPt", DEFAULT_AXIS_LABEL_PAD_PT))
     figure_title_pad_pt = float(block.get("figureTitlePadPt", DEFAULT_FIGURE_TITLE_PAD_PT))
+    # As did the maths scale; a document without it sets maths at the size of its text.
+    maths_scale = float(block.get("mathsScale", DEFAULT_MATHS_SCALE))
+    if maths_scale <= 0:
+        raise LimelightError(f"Typography mathsScale {maths_scale!r} must be positive")
     styles = {
         _field_name(name): text_style_from_manifest(block[name], f"Typography {name}")
         for name in STYLE_NAMES
@@ -330,6 +342,7 @@ def typography_from_story(story: dict[str, Any]) -> Typography:
         line_height=line_height,
         axis_label_pad_pt=axis_label_pad_pt,
         figure_title_pad_pt=figure_title_pad_pt,
+        maths_scale=maths_scale,
         **styles,
     )
 

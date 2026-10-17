@@ -467,6 +467,7 @@ def typst_preamble(
             f"below: {spacing.heading_gap_after_mm:g}mm)",
             *headings,
             f"#show raw: set text({text(typography.code)})",
+            f"#show math.equation: set text(size: {typography.maths_scale:g}em)",
             f"#show raw.where(block: true): set block(fill: rgb(\"{CODE_BACKGROUND}\"), "
             "inset: 0.7em, radius: 6pt, width: 100%, breakable: false)",
             f"#show raw.where(block: false): box.with(fill: rgb(\"{CODE_BACKGROUND}\"), "

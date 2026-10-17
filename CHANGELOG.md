@@ -7,6 +7,13 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- **A maths size.** A story's typography has a `mathsScale`: maths is set at
+  that multiple of the size of the text around it, by MathJax on screen and
+  by Typst in a PDF, so a document of long equations can set them smaller
+  than its prose. A document without one sets maths at its text's size.
+
 ## [0.0.20] - 2026-09-29
 
 ### Changed
