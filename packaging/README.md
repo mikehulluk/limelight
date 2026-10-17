@@ -99,6 +99,7 @@ can.
 | `limelight.spec` | PyInstaller build definition |
 | `limelight_entry.py` | Frozen entry point; fixes the matplotlib cache directory |
 | `make_icons.py` | Renders `limelight-icon.svg` into `.ico`, `.icns` and `.png` |
+| `vendor_mathjax.py` | Copies the MathJax the story view uses, and its maths fonts, into `src/limelight/assets/mathjax` |
 | `windows/limelight.iss` | Inno Setup installer, with `.limelight` file association |
 | `macos/build_dmg.sh` | Drag-to-Applications disk image |
 | `linux/build_linux_packages.sh` | `.deb` and AppImage |

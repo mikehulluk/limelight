@@ -19,6 +19,13 @@ versions may break things.
   default Ubuntu text. Limelight ships Fira Math for the PDF and MathJax's
   build of it for the screen.
 
+### Changed
+
+- **Maths is set without a network.** The story view used to load MathJax
+  from a CDN, so a document's maths was not set offline. MathJax 4.1.3 and
+  its fonts now ship with Limelight (`src/limelight/assets/mathjax`, about
+  20 MB, written by `packaging/vendor_mathjax.py`).
+
 ## [0.0.20] - 2026-09-29
 
 ### Changed

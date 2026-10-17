@@ -193,7 +193,11 @@ except ImportError:
     dollarmath_plugin = None
     StoryMarkdownRenderer = None
 
-MATHJAX_SCRIPT = "https://cdn.jsdelivr.net/npm/mathjax@4/tex-svg.js"
+# MathJax ships with Limelight, with the fonts it sets maths in, so a story's
+# maths is set without a network (see assets/mathjax/README.md).
+MATHJAX_DIR = Path(__file__).resolve().parent / "assets" / "mathjax"
+MATHJAX_SCRIPT = (MATHJAX_DIR / "mathjax" / "tex-svg.js").as_uri()
+MATHJAX_FONTS = (MATHJAX_DIR / "fonts").as_uri()
 STORY_TEXT_MIN_HEIGHT = 44
 
 # A package is a folder while it is being authored and an archive once it is
@@ -762,9 +766,8 @@ class StoryTextPanel(QWidget):
             self._install_wheel_filter()
             # Stories inline their images as data URLs, and setHtml cannot
             # carry more than about 2 MB, so the document is loaded from a file
-            # instead. That makes it local content, which cannot reach the
-            # MathJax CDN unless it is allowed to - the same trade the PDF
-            # exporter makes.
+            # instead. That makes it local content, which cannot reach a
+            # remote image a story links to unless it is allowed to.
             settings = self.web_view.page().settings()
             settings.setAttribute(
                 QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
@@ -1128,6 +1131,7 @@ window.MathJax = {{
     displayMath: [['\\\\[', '\\\\]']],
     processEscapes: true
   }},
+  loader: {{ paths: {{ fonts: '{MATHJAX_FONTS}' }} }},
   output: {{ font: '{MATHS_FONTS[runtime.typography.maths_font].mathjax}' }},
   svg: {{ fontCache: 'global' }}
 }};

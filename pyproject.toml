@@ -89,4 +89,4 @@ where = ["src"]
 include-package-data = false
 
 [tool.setuptools.package-data]
-limelight = ["assets/*.svg", "language-reference/*.dhall", "fonts/*/*.ttf", "fonts/*/*.otf", "fonts/*/*.txt"]
+limelight = ["assets/*.svg", "assets/mathjax/**/*", "language-reference/*.dhall", "fonts/*/*.ttf", "fonts/*/*.otf", "fonts/*/*.txt"]

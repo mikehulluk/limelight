@@ -68,7 +68,9 @@ every machine, on screen and in its PDF. The block also sets two of the
 figures' distances, in points: `axisLabelPadPt` between an axis and its
 label and `figureTitlePadPt` between the axes and the title. Maths is set in
 its own face, `mathsFont` - `new-computer-modern` (the default) or `fira`, a
-sans-serif - at `mathsScale` times the size of the text around it. The writer
+sans-serif - at `mathsScale` times the size of the text around it; both
+faces ship with Limelight, for the screen and the PDF, so a document's maths
+is set the same way on every machine, with or without a network. The writer
 fills the block in; `Typography` and `TextStyle` change it. File › Document
 Information shows what a document is set in, and which face each style
 really gets on this machine.
