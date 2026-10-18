@@ -7,8 +7,22 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.21] - 2026-10-18
+
 ### Added
 
+- **Tables read as part of the document.** A table view takes a `rowLimit`,
+  and a `ColumnFormat` a width - auto, millimetres or a share of what is
+  left - set as Typst tracks in the PDF and sized to the view in the app.
+  Cells are typed by their array's dtype, so format specs apply and numbers
+  align right; headers show each array's label and unit. In the PDF a table
+  runs across pages, repeating its header. In the app a table is no bigger
+  than its content, has no row numbers when it is part of the document, and
+  keeps the page's colours under a dark desktop theme. Tables are numbered
+  on their own, as Table N, and listed in a Tables tab of their own.
+- **Line artists** take a `linewidth` and a `drawStyle` (straight,
+  `stepsPre`, `stepsPost`). A log y-axis is drawn on a log scale, labelled
+  at 1, 2 and 5 times each power of ten.
 - **A maths size.** A story's typography has a `mathsScale`: maths is set at
   that multiple of the size of the text around it, by MathJax on screen and
   by Typst in a PDF, so a document of long equations can set them smaller
@@ -40,6 +54,14 @@ versions may break things.
 
 ### Changed
 
+- **Figure and table numbers are worked out from the story** when a package
+  is read; `FigureView` and `ImageAsset` no longer store `storyNumber` or
+  `index`.
+- **A figure taller than the page is drawn narrower** on a paged story, so
+  its height fits the page with room for its heading and caption, its
+  labels still at the body's size. It was cut off at its top and bottom.
+- **A large series is not requeried** for the range and bucket count it is
+  already drawn at, when its axes, or axes shared with them, are set again.
 - **Maths is set without a network.** The story view used to load MathJax
   from a CDN, so a document's maths was not set offline. MathJax 4.1.3 and
   its fonts now ship with Limelight (`src/limelight/assets/mathjax`, about
@@ -482,7 +504,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.20...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.21...HEAD
+[0.0.21]: https://github.com/mikehulluk/limelight/compare/v0.0.20...v0.0.21
 [0.0.20]: https://github.com/mikehulluk/limelight/compare/v0.0.19...v0.0.20
 [0.0.19]: https://github.com/mikehulluk/limelight/compare/v0.0.18...v0.0.19
 [0.0.18]: https://github.com/mikehulluk/limelight/compare/v0.0.17...v0.0.18
