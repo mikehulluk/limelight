@@ -160,11 +160,15 @@ let TextStyle =
 -- title. matplotlib's own are 4 and 6.
 -- How a kind of name or word in the story's maths and code is set, or one
 -- name in particular, where a tool has labelled them. `name` is dotted,
--- general to particular: "variable" styles every variable, "variable.state"
--- a state, "symbol.cash" the one called cash. A token is labelled with names
--- general to particular ("variable.state symbol.cash"), and each property
--- comes from the most particular name that sets it; None leaves a property
--- to a more general one. `colour` is "#rrggbb"; `weight` is a CSS weight.
+-- general to particular: "variable" styles every variable,
+-- "variable.readonly" a constant, "symbol.velocity" the one called
+-- velocity. The names are the labelling tool's (LSP semantic tokens,
+-- TextMate scopes, Pygments token types), not Limelight's. A token is
+-- labelled with names general to particular ("variable symbol.velocity"),
+-- and each property comes from the most particular name that sets it: a
+-- later name in the label over an earlier one, a dotted name over its
+-- prefixes. None leaves a property to a more general one. `colour` is
+-- "#rrggbb"; `weight` is a CSS weight.
 -- A reader's limelight-setting.json can override any style by name.
 let SyntaxStyle =
       { name : Text

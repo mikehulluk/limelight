@@ -3,8 +3,8 @@
 A tool labels a token with style names, general to particular (see
 ``typography.SyntaxStyle``), in one of two places:
 
-- in maths, ``\\llrole{variable.state symbol.cash}{\\text{cash}}``;
-- on inline code, ``\\`cash\\`{role="variable.state symbol.cash"}``.
+- in maths, ``\\llrole{variable symbol.velocity}{v}``;
+- on inline code, ``\\`velocity\\`{role="variable symbol.velocity"}``.
 
 The story's renderers look each label up (``LimelightRuntime.syntax_style``)
 and set the token in its colour, weight and slant: MathJax through TeX's own
@@ -183,9 +183,11 @@ def typst_syntax_settings(style: ResolvedSyntaxStyle) -> str:
 #
 # A code block's tokens travel in a file of their own (a CodeTokens asset,
 # story/code/<id>.json), so the code stays as written; the fence names it:
-# ```forecast {tokens=source}. The file is {"tokens": [[line, start, length,
-# label], ...]}, lines and columns counting from 0, in characters, over the
-# block's text.
+# ```python {tokens=listing}, the language being whatever the code is in.
+# The file is {"tokens": [[line, start, length, label], ...]}, lines and
+# columns counting from 0, in Unicode code points (a Python str's indices,
+# not LSP's UTF-16 units or tree-sitter's bytes), over the block's text.
+# Any lexer can make them; a token that does not fit its line is dropped.
 
 CODE_TOKENS_DIR = "story/code"
 CODE_TOKENS_ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")

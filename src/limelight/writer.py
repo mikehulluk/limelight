@@ -2613,9 +2613,10 @@ class LimelightProject:
         """Label a story code block's tokens, for setting it in the document's syntax styles.
 
         Each token is ``(line, start, length, label)`` over the block's text,
-        lines and columns from 0, and ``label`` syntax style names general to
-        particular ("variable.state symbol.cash"). The story's fence names
-        the tokens by id: ```forecast {tokens=source}. Returns the id.
+        lines and columns from 0 in Unicode code points, and ``label``
+        syntax style names general to particular ("variable
+        symbol.velocity"). The story's fence names the tokens by id, after
+        the code's language: ```python {tokens=listing}. Returns the id.
         """
 
         from .story_syntax import CODE_TOKENS_ID, parse_code_tokens

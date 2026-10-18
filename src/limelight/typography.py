@@ -239,7 +239,7 @@ DEFAULT_TEXT_FONTS = ("ubuntu", "noto-sans")
 DEFAULT_CODE_FONTS = ("ubuntu-mono", "dejavu-sans-mono")
 
 
-# A syntax style's name: dotted words, each more particular than the last ("variable.state").
+# A syntax style's name: dotted words, each more particular than the last ("variable.readonly").
 SYNTAX_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*")
 SYNTAX_COLOUR = re.compile(r"#[0-9a-fA-F]{6}")
 
@@ -249,8 +249,11 @@ class SyntaxStyle:
     """How a kind of name or word in maths and code is set, or one name in particular.
 
     ``name`` is dotted, general to particular: "variable" for every
-    variable, "variable.state" for a state, "symbol.cash" for the one called
-    cash. A property left as None is left to a more general style.
+    variable, "variable.readonly" for a constant, "symbol.velocity" for the
+    one called velocity. The names are the labelling tool's own, not
+    Limelight's: LSP semantic tokens ("variable", "function"), TextMate
+    scopes ("keyword.control") or Pygments token types ("name.builtin") all
+    serve. A property left as None is left to a more general style.
     """
 
     name: str
@@ -272,9 +275,9 @@ class ResolvedSyntaxStyle:
 def syntax_names(label: str) -> list[str]:
     """Every style name a token's label stands for, general to particular.
 
-    A label lists names general to particular ("variable.state symbol.cash"),
-    and each name also stands for its dotted prefixes ("variable" for
-    "variable.state").
+    A label lists names general to particular ("variable.readonly
+    symbol.velocity"), and each name also stands for its dotted prefixes,
+    which come before it ("variable" for "variable.readonly").
     """
 
     names: dict[str, None] = {}
@@ -288,10 +291,14 @@ def syntax_names(label: str) -> list[str]:
 def resolve_syntax_style(label: str, *layers: Iterable[SyntaxStyle]) -> ResolvedSyntaxStyle:
     """The style of a token labelled ``label``, from ``layers`` (overrides first, then the document's).
 
-    Each property comes from the most particular name that sets it; between
-    layers setting the same name, from the first. So a reader's override of
-    "variable" does not undo a document's style for "symbol.cash", and an
-    override of "symbol.cash" does.
+    Each property comes from the most particular name that sets it: the
+    last in ``syntax_names(label)``, so a later name in a label wins over an
+    earlier one whatever their depth, and a dotted name over its prefixes.
+    The labelling tool decides the order; with several modifiers it lists
+    the one that should win last. Between layers setting the same name, a
+    property comes from the first. So a reader's override of "variable"
+    does not undo a document's style for "symbol.velocity", and an override
+    of "symbol.velocity" does.
     """
 
     by_name = [{style.name: style for style in layer} for layer in layers]
@@ -314,7 +321,7 @@ def syntax_style_from_record(name: str, record: Mapping[str, Any], context: str)
     """A syntax style from a manifest's record or a settings file's entry; absent or null properties are None."""
 
     if not SYNTAX_NAME.fullmatch(name):
-        raise LimelightError(f"{context}: {name!r} is not a syntax style name (dotted words, eg variable.state)")
+        raise LimelightError(f"{context}: {name!r} is not a syntax style name (dotted words, eg variable.readonly)")
     colour = record.get("colour")
     if colour is not None and not SYNTAX_COLOUR.fullmatch(str(colour)):
         raise LimelightError(f"{context} {name}: colour {colour!r} is not #rrggbb")

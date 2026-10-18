@@ -86,7 +86,7 @@ def story_markdown_parser(syntax_style: StyleOf | None = None) -> MarkdownIt:
         dollarmath_plugin,
         renderer=lambda content, options: _render_math(content, options, syntax_style),
     )
-    # `![alt](rig.png){width=80mm}`, and `` `cash`{role="variable.state"} `` on
+    # `![alt](rig.png){width=80mm}`, and `` `velocity`{role="variable"} `` on
     # inline code. Only those are honoured; anything else an author attaches
     # is parsed and then ignored rather than reaching the page, which keeps
     # this from becoming a way to write arbitrary HTML attributes.
