@@ -7,6 +7,15 @@ versions may break things.
 
 ## [Unreleased]
 
+### Changed
+
+- **Syntax styles are explained without forecast's names.** The README has
+  a section on them, the docstrings and the Dhall reference use neutral
+  examples and say a later name in a label wins over an earlier one, and
+  code token positions are documented as Unicode code points. The signal
+  filters example labels its maths and a Python listing, with tokens from
+  Python's own `tokenize`. `SyntaxStyle` is exported from `limelight`.
+
 ## [0.0.21] - 2026-10-18
 
 ### Added

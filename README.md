@@ -75,6 +75,39 @@ fills the block in; `Typography` and `TextStyle` change it. File › Document
 Information shows what a document is set in, and which face each style
 really gets on this machine.
 
+### Syntax styles
+
+A tool that writes a document can label the names and words in its maths and
+code, and the document says how each kind is set: the `syntax` list in its
+typography gives a colour, a weight and a slant to a style name. Names are
+dotted, general to particular, and are the labelling tool's own - LSP
+semantic token types (`variable`, `function`, `variable.readonly`), TextMate
+scopes (`keyword.control`), Pygments token types (`name.builtin`) - plus any
+of its own, such as `symbol.velocity` for one name in particular. A label is
+a list of names, general to particular; each name also stands for its dotted
+prefixes, and each property comes from the last name in that order that sets
+it, so `variable symbol.velocity` takes the variables' style unless
+`symbol.velocity` sets its own. A label with no style is set plain.
+
+Tokens are labelled in three places:
+
+- in maths, `\llrole{variable symbol.velocity}{v}`;
+- on inline code, `` `velocity`{role="variable symbol.velocity"} ``;
+- in a code block, by a file of tokens beside the story, so the code stays as
+  written. The fence names it after the code's language,
+  ```` ```python {tokens=listing} ````, and the file,
+  `story/code/listing.json`, is `{"tokens": [[line, start, length, label],
+  ...]}`, lines and columns from 0 in Unicode code points. It is declared in
+  the manifest's `codeTokens` list; `Project.add_code_tokens` writes both,
+  and any lexer can make them - `examples/create_example02_signal_filters.py`
+  uses Python's own `tokenize`. A fence without tokens is set plain on
+  screen; in the PDF Typst highlights it by its language.
+
+A reader can override any style by name in the `syntax` object of their
+`limelight-setting.json`, for instance `{"syntax": {"keyword": {"colour":
+"#d73a49", "weight": 700}}}`; File › Document Information lists every style
+and where each property came from.
+
 Fonts are declared in the manifest's `fonts` list. Limelight ships Ubuntu,
 Ubuntu Mono, Noto Sans, and matplotlib's DejaVu Sans and DejaVu Sans Mono,
 so a document that names only those (the default: Ubuntu, falling back to
