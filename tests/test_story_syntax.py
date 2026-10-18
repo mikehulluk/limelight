@@ -234,3 +234,46 @@ def test_tokens_that_do_not_fit_the_code_are_dropped() -> None:
     assert code_block_html("ab\n", "", tokens, style_of) == (
         '<pre><code><span style="color: #cf222e; font-weight: 600">a</span>b\n</code></pre>\n'
     )
+
+
+# --- Labels from other tools ------------------------------------------------
+#
+# Nothing above is particular to one tool's names; these use a physics
+# paper's maths and a Python listing labelled by any lexer.
+
+PHYSICS = DOCUMENT + (SyntaxStyle("symbol.velocity", colour="#1a7f37"),)
+
+
+def test_a_later_name_in_a_label_wins_over_an_earlier_one_whatever_its_depth() -> None:
+    styles = (SyntaxStyle("variable.readonly", colour="#8250df"), SyntaxStyle("symbol", colour="#1a7f37"))
+    assert resolve_syntax_style("variable.readonly symbol.rate", styles).colour == "#1a7f37"
+    assert resolve_syntax_style("symbol.rate variable.readonly", styles).colour == "#8250df"
+    # A dotted name wins over its own prefixes:
+    assert resolve_syntax_style("variable.readonly", DOCUMENT).colour == "#8250df"
+
+
+def test_a_physics_symbol_is_styled_on_screen_and_on_paper() -> None:
+    def physics_style(label: str) -> ResolvedSyntaxStyle:
+        return resolve_syntax_style(label, PHYSICS)
+
+    tex = r"\llrole{variable symbol.velocity}{\vec{v}} = \frac{d \llrole{variable}{x}}{dt}"
+    assert tex_with_roles(tex, physics_style).startswith(r"{\textcolor{#1a7f37}{\vec{v}}}")
+    paper = typst_maths(tex, physics_style)
+    assert paper.startswith('#text(fill: rgb("#1a7f37"))[$')
+    assert "arrow(v)" in paper
+
+
+def test_a_python_block_labelled_in_code_points_is_set_in_its_styles() -> None:
+    from limelight.story_syntax import CodeToken, code_block_html
+
+    styles = DOCUMENT + (SyntaxStyle("string", colour="#0a3069"), SyntaxStyle("comment", colour="#6e7781"))
+    code = 'name = "café"  # π\nprint(name)\n'
+    tokens = [
+        CodeToken(0, 0, 4, "variable"), CodeToken(0, 7, 6, "string"), CodeToken(0, 15, 3, "comment"),
+        CodeToken(1, 0, 5, "function"), CodeToken(1, 6, 4, "variable"),
+    ]
+    screen = code_block_html(code, "python", tokens, lambda label: resolve_syntax_style(label, styles))
+    assert screen.startswith('<pre><code class="language-python">')
+    assert '<span style="color: #0a3069">"café"</span>' in screen
+    assert '<span style="color: #6e7781"># π</span>' in screen
+    assert '<span style="color: #953800; font-style: normal">print</span>' in screen
