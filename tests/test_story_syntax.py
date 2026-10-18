@@ -59,7 +59,7 @@ def test_for_typst_each_token_is_converted_then_styled_with_maths_functions() ->
     tex = rf"\begin{{aligned}} {CASH} &= \frac{{{RATE}}}{{12}} + \llrole{{function}}{{\operatorname{{grow}}}}\left( x \right) \end{{aligned}}"
     assert typst_maths(tex, style_of) == (
         '#text(fill: rgb("#0550ae"))[$italic("cash")$] &= #text(fill: rgb("#8250df"))[$"rate"$]/12'
-        ' + #text(fill: rgb("#953800"))[$op("grow")$] (x)'
+        ' + #text(fill: rgb("#953800"))[$upright(op("grow"))$] (x)'
     )
     assert typst_maths(rf"{CASH} + 1", None) == '"cash" + 1'
 
@@ -277,3 +277,21 @@ def test_a_python_block_labelled_in_code_points_is_set_in_its_styles() -> None:
     assert '<span style="color: #0a3069">"café"</span>' in screen
     assert '<span style="color: #6e7781"># π</span>' in screen
     assert '<span style="color: #953800; font-style: normal">print</span>' in screen
+
+
+@pytest.mark.parametrize("inner, italic, screen, paper", [
+    # Upright: the whole token, lower-case Greek as Unicode, which MathJax's \mathrm sets upright.
+    (r"\alpha", False, r"\mathrm{α}", "upright(alpha)"),
+    (r"\hat{\theta}", False, r"\mathrm{\hat{θ}}", "upright(hat(theta))"),
+    (r"\vec{v}", False, r"\mathrm{\vec{v}}", "upright(arrow(v))"),
+    # Italic: what is not maths italic already; a letter keeps its maths italic.
+    (r"\Gamma", True, r"\mathit{\Gamma}", "italic(Gamma)"),
+    (r"\alpha", True, r"\alpha", "italic(alpha)"),
+    (r"\vec{v}", True, r"\vec{v}", "italic(arrow(v))"),
+    # Text is upright already:
+    (r"\text{rate}", False, r"\text{rate}", '"rate"'),
+])
+def test_a_slant_applies_to_the_whole_token_alike_on_screen_and_on_paper(inner, italic, screen, paper) -> None:
+    style = ResolvedSyntaxStyle(italic=italic)
+    assert styled_tex(inner, style) == screen
+    assert typst_maths(rf"\llrole{{x}}{{{inner}}}", lambda label: style) == paper

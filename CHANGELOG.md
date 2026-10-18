@@ -16,6 +16,14 @@ versions may break things.
   filters example labels its maths and a Python listing, with tokens from
   Python's own `tokenize`. `SyntaxStyle` is exported from `limelight`.
 
+### Fixed
+
+- **A syntax style's slant applies to the whole token, alike on screen and
+  in the PDF.** Upright now straightens lower-case Greek and accented
+  letters (`\alpha`, `\vec{v}`) on screen too, and italic slants capital
+  Greek and other maths on screen as it already did in the PDF; a letter
+  that is maths italic already keeps its glyph.
+
 ## [0.0.21] - 2026-10-18
 
 ### Added

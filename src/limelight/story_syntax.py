@@ -27,8 +27,21 @@ ROLE_MACRO = "\\llrole"
 # A weight from which a token is set bold; maths has only regular and bold.
 BOLD_FROM = 600
 
-_TEXT = re.compile(r"\\text\{(.*)\}", re.S)
-_LETTER = re.compile(r"[A-Za-z]")
+# TeX's lower-case Greek, which stays italic under \mathrm in MathJax as in
+# TeX; the Unicode letter takes the upright variant.
+_GREEK = {
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ϵ", "varepsilon": "ε",
+    "zeta": "ζ", "eta": "η", "theta": "θ", "vartheta": "ϑ", "iota": "ι", "kappa": "κ",
+    "lambda": "λ", "mu": "μ", "nu": "ν", "xi": "ξ", "pi": "π", "varpi": "ϖ", "rho": "ρ",
+    "varrho": "ϱ", "sigma": "σ", "varsigma": "ς", "tau": "τ", "upsilon": "υ", "phi": "ϕ",
+    "varphi": "φ", "chi": "χ", "psi": "ψ", "omega": "ω",
+}
+_GREEK_MACRO = re.compile(r"\\(" + "|".join(sorted(_GREEK, key=len, reverse=True)) + r")(?![A-Za-z])")
+# Maths italic already: a Latin or lower-case Greek letter, perhaps under an accent.
+_ITALIC_LETTER = r"(?:[A-Za-z]|" + _GREEK_MACRO.pattern + ")"
+_ITALIC = re.compile(
+    _ITALIC_LETTER + r"|\\(?:vec|hat|bar|tilde|dot|ddot|check|breve|acute|grave)\s*\{\s*" + _ITALIC_LETTER + r"\s*\}"
+)
 
 
 @dataclass(frozen=True)
@@ -92,19 +105,35 @@ def _bold(style: ResolvedSyntaxStyle) -> bool:
     return style.weight is not None and style.weight >= BOLD_FROM
 
 
+def _text_words(body: str) -> str | None:
+    """The words of ``body`` when it is one ``\\text{...}`` and nothing else."""
+
+    if not body.startswith("\\text") or body[5:6].isalpha():
+        return None
+    try:
+        words, end = _group(body, 5)
+    except ValueError:
+        return None
+    return words if end == len(body) else None
+
+
 def styled_tex(inner: str, style: ResolvedSyntaxStyle) -> str:
     """``inner`` in ``style``, as TeX MathJax sets.
 
-    Upright text (``\\text{cash}``) is slanted with ``\\textit`` and made
-    bold with ``\\textbf``; a single letter, italic in maths, is made
-    upright with ``\\mathrm``; anything else is made bold with
-    ``\\boldsymbol`` and keeps its slant.
+    The slant applies to the whole token, as Typst's ``italic`` and
+    ``upright`` do (``styled_typst``), so screen and paper agree. Text
+    (``\\text{rate}``), upright already, is slanted with ``\\textit`` and
+    made bold with ``\\textbf``. Other maths is slanted with ``\\mathit``,
+    which slants capital Greek too, unless it is maths italic already (a
+    letter, perhaps accented, whose maths italic ``\\mathit`` would swap
+    for text italic), and made upright with ``\\mathrm``, its
+    lower-case Greek written as Unicode letters, since ``\\mathrm{\\alpha}``
+    stays italic; it is made bold with ``\\boldsymbol``.
     """
 
     body = inner.strip()
-    text = _TEXT.fullmatch(body)
-    if text is not None:
-        words = text.group(1)
+    words = _text_words(body)
+    if words is not None:
         if style.italic:
             words = f"\\textit{{{words}}}"
         if _bold(style):
@@ -112,8 +141,10 @@ def styled_tex(inner: str, style: ResolvedSyntaxStyle) -> str:
         if style.italic or _bold(style):
             body = words
     else:
-        if style.italic is False and _LETTER.fullmatch(body):
-            body = f"\\mathrm{{{body}}}"
+        if style.italic and not _ITALIC.fullmatch(body):
+            body = f"\\mathit{{{body}}}"
+        elif style.italic is False:
+            body = "\\mathrm{" + _GREEK_MACRO.sub(lambda m: _GREEK[m.group(1)], body) + "}"
         if _bold(style):
             body = f"\\boldsymbol{{{body}}}"
     if style.colour:
@@ -132,11 +163,11 @@ def tex_with_roles(tex: str, style_of: StyleOf | None) -> str:
 
 
 def styled_typst(typst: str, inner_tex: str, style: ResolvedSyntaxStyle) -> str:
-    """Typst maths ``typst`` (converted from ``inner_tex``) in ``style``."""
+    """Typst maths ``typst`` (converted from ``inner_tex``) in ``style``; see ``styled_tex``."""
 
     if style.italic:
         typst = f"italic({typst})"
-    elif style.italic is False and _LETTER.fullmatch(inner_tex.strip()):
+    elif style.italic is False and _text_words(inner_tex.strip()) is None:
         typst = f"upright({typst})"
     if _bold(style):
         typst = f"bold({typst})"
