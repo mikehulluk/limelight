@@ -13,7 +13,7 @@ from .signing import (
     verify_manifest_signatures,
 )
 
-from .typography import TextStyle, Typography
+from .typography import SyntaxStyle, TextStyle, Typography
 from .writer import (
     ArraySpec,
     AxisDataType,
@@ -108,6 +108,7 @@ __all__ = [
     "StorySpacing",
     "BundledFontFace",
     "Font",
+    "SyntaxStyle",
     "TextStyle",
     "Typography",
     "TableViewSpec",

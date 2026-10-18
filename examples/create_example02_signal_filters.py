@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import inspect
+import io
+import keyword
 import sys
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,7 +25,9 @@ from limelight import (
     Panel,
     SliderCtrlSpec,
     StemArtist,
+    SyntaxStyle,
     TextControlParameterMatch,
+    Typography,
     array,
     axes_action_add_axis_window_decorator,
     figure_view_action,
@@ -60,6 +66,61 @@ def lowpass_response(config: FilterConfig, frequencies_hz: np.ndarray) -> np.nda
     if config.family == "critical":
         return 1.0 / (1.0 + s) ** 2
     raise ValueError(f"Unknown filter family {config.family!r}")
+
+
+# How the story sets the names and words it labels, in its maths and in the
+# listing below. The names are LSP's semantic token types; "symbol.x" styles
+# the one name x, wherever it is labelled.
+SYNTAX = (
+    SyntaxStyle("keyword", colour="#cf222e", weight=600),
+    SyntaxStyle("function", colour="#8250df"),
+    SyntaxStyle("parameter", colour="#953800", italic=True),
+    SyntaxStyle("variable", colour="#24292f"),
+    SyntaxStyle("number", colour="#0550ae"),
+    SyntaxStyle("string", colour="#0a3069"),
+    SyntaxStyle("comment", colour="#6e7781", italic=True),
+    SyntaxStyle("symbol.x", colour="#1a7f37"),
+)
+
+
+def python_tokens(source: str) -> list[tuple[int, int, int, str]]:
+    """Label a Python listing's tokens with Python's own tokenizer.
+
+    Any lexer serves: Limelight wants only (line, start, length, label), lines
+    and columns from 0. A name after ``def`` is a function and a name in its
+    parentheses a parameter; other names are variables.
+    """
+
+    labelled = []
+    previous = ""
+    in_signature = False
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        (row, col), (end_row, end_col) = token.start, token.end
+        if row != end_row:
+            continue
+        label = None
+        if token.type == tokenize.NAME:
+            if keyword.iskeyword(token.string):
+                label = "keyword"
+            elif previous == "def":
+                label, in_signature = "function", True
+            elif in_signature and previous in ("(", ","):
+                label = "parameter"
+            else:
+                label = "variable"
+        elif token.type == tokenize.NUMBER:
+            label = "number"
+        elif token.type == tokenize.STRING:
+            label = "string"
+        elif token.type == tokenize.COMMENT:
+            label = "comment"
+        elif token.string == ")":
+            in_signature = False
+        if label:
+            labelled.append((row - 1, col, end_col - col, label))
+        if token.type not in (tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT):
+            previous = token.string
+    return labelled
 
 
 def build_signal(
@@ -168,7 +229,10 @@ def build_project() -> LimelightProject:
         authors=["Limelight examples"],
         page=PageGeometry.paged(margin_lr_mm=10.0),
         document_version="0.1",
+        typography=Typography(syntax=SYNTAX),
     )
+    listing = inspect.getsource(lowpass_response)
+    project.add_code_tokens("lowpass-response", python_tokens(listing))
 
     project.add_discrete_control_parameter(
         id="filter-design",
@@ -332,7 +396,7 @@ def build_project() -> LimelightProject:
 The input signal is a sum of three sinusoids:
 
 $$
-x(t) = \\sin(2\\pi 2t) + 0.55\\sin(2\\pi 13t + 0.35) + 0.28\\sin(2\\pi 45t + 0.8)
+\\llrole{{variable symbol.x}}{{x}}(\\llrole{{parameter}}{{t}}) = \\sin(2\\pi 2\\llrole{{parameter}}{{t}}) + 0.55\\sin(2\\pi 13\\llrole{{parameter}}{{t}} + 0.35) + 0.28\\sin(2\\pi 45\\llrole{{parameter}}{{t}} + 0.8)
 $$
 
 The sampled signal uses an exact relative time basis: 400 Hz is represented as a 2500 microsecond step from `t = 0`, without inventing a wall-clock epoch.
@@ -358,6 +422,13 @@ The original signal has a discrete spectrum: energy at the three sinusoidal comp
 {project.story_figure("input-bode", actions=component_frequency_markers("input-bode"))}
 
 {project.story_figure("bode-response", actions=component_frequency_markers("bode-response"))}
+
+## The Filters in Code
+
+Each filter's response is a function of `frequencies_hz`{{role="parameter"}}, the frequencies relative to its cutoff. The listing's tokens come from Python's own `tokenize` module and travel beside the story, so the code stays as written; Limelight sets each in its style.
+
+```python {{tokens=lowpass-response}}
+{listing}```
 """,
         base_dir=Path(__file__).parent,
     )
