@@ -7,6 +7,8 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.22] - 2026-10-27
+
 ### Added
 
 - **A discrete y-axis.** Line and scatter artists can draw text values
@@ -542,7 +544,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.21...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.22...HEAD
+[0.0.22]: https://github.com/mikehulluk/limelight/compare/v0.0.21...v0.0.22
 [0.0.21]: https://github.com/mikehulluk/limelight/compare/v0.0.20...v0.0.21
 [0.0.20]: https://github.com/mikehulluk/limelight/compare/v0.0.19...v0.0.20
 [0.0.19]: https://github.com/mikehulluk/limelight/compare/v0.0.18...v0.0.19
