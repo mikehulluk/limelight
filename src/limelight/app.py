@@ -138,6 +138,10 @@ def _category_or_none(value: Any) -> str | None:
     return None if value is None or value == "" else str(value)
 
 
+class CategoryError(LimelightError):
+    """A value drawn on a discrete axis is not one of the categories it declares."""
+
+
 class CategoryAxis:
     """The categories of one discrete axis, numbered 0, 1, 2... in order.
 
@@ -165,7 +169,7 @@ class CategoryAxis:
         index = self._index.get(category)
         if index is None:
             if self.fixed:
-                raise LimelightError(
+                raise CategoryError(
                     f"Value {category!r} is not one of the categories of discrete axis {self.axis_id!r}: {self.categories!r}"
                 )
             index = self._index[category] = len(self.categories)

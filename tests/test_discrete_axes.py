@@ -125,11 +125,12 @@ def test_a_declared_category_nothing_draws_still_has_its_row(tmp_path: Path) -> 
     assert _y_ticks(axes) == [(0.0, "pay"), (1.0, "fee"), (2.0, "interest")]
 
 
-def test_a_value_outside_the_declared_categories_is_an_error(tmp_path: Path) -> None:
-    folder = _event_package(tmp_path, categories=["pay"])
+def test_a_value_outside_the_declared_categories_leaves_the_panel_saying_so(tmp_path: Path) -> None:
+    axes = _drawn_axes(_event_package(tmp_path, categories=["pay"]))
 
-    with pytest.raises(LimelightError, match="'interest' is not one of the categories"):
-        _drawn_axes(folder)
+    assert not axes.get_lines()
+    [message] = axes.texts
+    assert "'interest' is not one of the categories" in message.get_text()
 
 
 def test_a_stem_artist_cannot_use_a_discrete_y_axis(tmp_path: Path) -> None:

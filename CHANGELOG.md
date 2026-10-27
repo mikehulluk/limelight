@@ -13,8 +13,8 @@ versions may break things.
   against a discrete y-axis, one row per category, as a raster of events.
 - **A discrete axis can declare its categories.**
   `AxisDataType.discrete(categories=[...])` fixes the order of its rows (or
-  columns), keeps a row for a category nothing draws, and refuses a value
-  outside them. Left out, categories follow first appearance. The
+  columns) and keeps a row for a category nothing draws; a panel with a
+  value outside them says so in place of its plot. Left out, categories follow first appearance. The
   manifest's `discrete` now carries `{ categories : List Text }`; a bare
   `discrete` from an older package still reads.
 - **A line artist can draw its markers alone,** with `linestyle="none"`

@@ -121,6 +121,7 @@ from .app import (
     TablePreview,
     TimingProbe,
     CategoryAxis,
+    CategoryError,
     _to_float,
     axis_label,
     axis_scale,
@@ -1849,13 +1850,25 @@ def _draw_plot_contents(
     if x_categories is None:
         x_categories = CategoryAxis.for_axis(x_axis_binding)
     y_categories = CategoryAxis.for_axis(y_axis_binding)
-    for action in axes_actions:
-        artist = _axes_action_plot_artist(action)
-        if artist is None:
-            continue
-        if not _artist_visible(artist, active_parameter_values):
-            continue
-        if _is_timeseries_artist(artist):
+    visible_artists = [
+        artist
+        for action in axes_actions
+        if (artist := _axes_action_plot_artist(action)) is not None and _artist_visible(artist, active_parameter_values)
+    ]
+    # Every artist's points before any is drawn, so a value outside a
+    # discrete axis's categories leaves the panel saying so, not half drawn:
+    try:
+        all_series = [
+            None if _is_timeseries_artist(artist) else runtime.plot_series(artist, x_categories=x_categories, y_categories=y_categories)
+            for artist in visible_artists
+        ]
+    except CategoryError as error:
+        logger.warning("Figure %r panel %r not drawn: %s", figure_id, axes_spec["id"], error)
+        axes.text(0.5, 0.5, str(error), ha="center", va="center", wrap=True, fontproperties=text.body)
+        axes.set_axis_off()
+        return [], []
+    for artist, series in zip(visible_artists, all_series):
+        if series is None:
             artist_start_time = runtime.timing.start()
             zoom_sync = _install_timeseries_artist(runtime, axes, artist)
             if zoom_sync is not None:
@@ -1872,7 +1885,6 @@ def _draw_plot_contents(
                 )
                 has_data = True
             continue
-        series = runtime.plot_series(artist, x_categories=x_categories, y_categories=y_categories)
         if not series.points:
             continue
         artist_start_time = runtime.timing.start()
