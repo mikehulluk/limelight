@@ -24,6 +24,8 @@ from limelight import (
 )
 
 REGIONS = ["North", "South", "East", "West"]
+# The rows of the discrete y-axis, from the bottom up; "audit" never happens.
+SCHEDULED_EVENTS = {"payment": range(0, 24), "interest": range(0, 24, 3), "review": [5, 17], "audit": []}
 MONTH_2024_ORDINAL = (2024 - 1) * 12  # months since the proleptic-Gregorian epoch, 0-based
 
 
@@ -120,6 +122,20 @@ def build_project() -> LimelightProject:
         },
         index=Index.no_index(),
     )
+
+    # Each kind of event is a series of its own, at the months it happened:
+    for event, months in SCHEDULED_EVENTS.items():
+        if not months:
+            continue
+        project.add_csv_dataset(
+            id=f"event-{event}",
+            title=f"Event: {event}",
+            arrays={
+                "month": array([float(month) for month in months], dtype="double", label="Month"),
+                "event": array([event] * len(months), dtype="category", label="Event"),
+            },
+            index=Index.irregular_index_array(coordinate_array="month", unit="month"),
+        )
 
     project.add_csv_dataset(
         id="monthly-revenue",
@@ -223,6 +239,23 @@ def build_project() -> LimelightProject:
     )
 
     project.add_line_figure(
+        id="discrete-event-axis",
+        title="Scheduled events",
+        data="event-payment",
+        x="month",
+        y=[
+            LineArtist("event", data=f"event-{event}", label=event, linestyle="none", marker="x")
+            for event, months in SCHEDULED_EVENTS.items() if months
+        ],
+        caption=(
+            "A discrete y-axis gives each event a row, in the order its categories are declared; "
+            "a declared category nothing draws keeps its row. The lines draw their markers alone."
+        ),
+        x_axis=AxisDataType.continuous(label="Month"),
+        y_axis=AxisDataType.discrete(label="Event", categories=list(SCHEDULED_EVENTS)),
+    )
+
+    project.add_line_figure(
         id="monthly-revenue-over-time",
         title="Monthly revenue",
         data="monthly-revenue",
@@ -295,6 +328,14 @@ A discrete x-axis places one point per named category (in first-appearance order
 numeric coordinate. The first figure above also shows a titled control panel above its plot.
 
 {project.story_figure("discrete-region-axis")}
+
+## Discrete y-axis
+
+A discrete y-axis gives each category a row. Its categories can be declared, which fixes the order
+of the rows and refuses any other value; otherwise they follow first appearance across the panel's
+artists. With `linestyle="none"`, a line artist draws its markers alone, as a raster of events.
+
+{project.story_figure("discrete-event-axis")}
 
 ## Calendar month axis with UTC-time limits
 

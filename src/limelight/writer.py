@@ -9,6 +9,7 @@ import math
 import re
 import shutil
 import zipfile
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -824,8 +825,8 @@ class AxisDataType:
     """An axis of a panel: the manifest's AxisSpec, with its dataType inside it.
 
     `label`, `share_group` and `id` are the AxisSpec's own; `kind`, `unit`,
-    `calendar` and `scale` are the AxisDataType it carries. An `id` left
-    unset is named after the figure and the panel's place in it.
+    `calendar`, `scale` and `categories` are the AxisDataType it carries. An
+    `id` left unset is named after the figure and the panel's place in it.
     """
 
     kind: str
@@ -835,6 +836,7 @@ class AxisDataType:
     share_group: str | None = None
     scale: str = "Linear"
     id: str | None = None
+    categories: tuple[str, ...] | None = None
 
     @classmethod
     def continuous(
@@ -856,8 +858,19 @@ class AxisDataType:
         unit: str | None = None,
         share_group: str | None = None,
         id: str | None = None,
+        categories: Sequence[str] | None = None,
     ) -> "AxisDataType":
-        return cls("discrete", label=label, unit=unit, share_group=share_group, id=id)
+        """A discrete axis. `categories` fixes the order of its rows (or
+        columns), and every value drawn on it must be one of them; left out,
+        categories follow first appearance across the axes' artists."""
+        if categories is not None:
+            categories = tuple(categories)
+            if not categories:
+                raise ValueError("A discrete axis's categories must not be empty")
+            duplicates = sorted(category for category, count in Counter(categories).items() if count > 1)
+            if duplicates:
+                raise ValueError(f"A discrete axis's categories repeat {duplicates!r}")
+        return cls("discrete", label=label, unit=unit, share_group=share_group, id=id, categories=categories)
 
     @classmethod
     def time_series(
@@ -880,7 +893,8 @@ class AxisDataType:
             )
             return _constructor("Limelight.AxisDataType.continuous", payload)
         if self.kind == "discrete":
-            return "Limelight.AxisDataType.discrete"
+            payload = _record([("categories", _list([_quote(category) for category in self.categories or ()], "Text"))])
+            return _constructor("Limelight.AxisDataType.discrete", payload)
         if self.kind == "timeSeries":
             payload = _record([("calendar", f"Some {_quote(self.calendar or '')}")])
             return _constructor("Limelight.AxisDataType.timeSeries", payload)
@@ -1258,6 +1272,7 @@ class LineArtist:
     x: str | None = None
     x_data: str | None = None
     color: str | None = None
+    # "-" (default), "--", "-." or ":"; or "none", to draw the markers alone.
     linestyle: str | None = None
     linewidth: float | None = None
     # "straight" (default), "stepsPre" or "stepsPost": how samples are joined.

@@ -27,7 +27,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolb
 from matplotlib.collections import PatchCollection
 from matplotlib.figure import Figure as MatplotlibFigure
 from matplotlib.patches import Polygon, Rectangle
-from matplotlib.ticker import FuncFormatter, LogLocator, MultipleLocator, NullFormatter
+from matplotlib.ticker import FixedFormatter, FixedLocator, FuncFormatter, LogLocator, MultipleLocator, NullFormatter
 from PySide6.QtCore import (
     QBuffer,
     QEvent,
@@ -120,6 +120,7 @@ from .app import (
     StorySpacing,
     TablePreview,
     TimingProbe,
+    CategoryAxis,
     _to_float,
     axis_label,
     axis_scale,
@@ -169,6 +170,7 @@ from .metadata import metadata_entries
 from .reader import PACKAGE_SUFFIXES, LimelightError, LimelightPackage, open_limelight
 from .semantic import (
     axis_data_type_kind,
+    axis_data_type_signature,
     axis_limit_shape,
     is_axis_limit_payload,
     optional_field,
@@ -1443,7 +1445,8 @@ class _HoverPoint:
     label: str
     x: Any
     y: Any
-    x_categories: list[str] | None
+    x_categories: CategoryAxis | None
+    y_categories: CategoryAxis | None
     # "day": a date; "utc": a UTC instant (the axis is in matplotlib date
     # numbers either way); None: a plain number.
     x_time: str | None
@@ -1452,11 +1455,10 @@ class _HoverPoint:
 _HOVER_PIXEL_THRESHOLD_SQ = 15.0**2
 
 
-def _format_hover_x(x_value: float, x_categories: list[str] | None, x_time: str | None) -> str:
-    if x_categories:
-        index = round(x_value)
-        if 0 <= index < len(x_categories):
-            return x_categories[index]
+def _format_hover_x(x_value: float, x_categories: CategoryAxis | None, x_time: str | None) -> str:
+    category = x_categories.label(x_value) if x_categories is not None else None
+    if category is not None:
+        return category
     if x_time == "day":
         return mdates.num2date(x_value).strftime("%Y-%m-%d")
     if x_time == "utc":
@@ -1635,6 +1637,13 @@ def _render_figure_view_to_matplotlib_figure(
     panels = _add_panels(figure, axes_specs)
     _share_x_axes(panels, axes_specs)
     labels_x = _panels_labelling_x(panels, axes_specs)
+    # Panels sharing an x-axis share its tick labels, so they share its
+    # categories too: a category has one place whichever panel draws it.
+    x_categories_by_group: dict[Any, CategoryAxis | None] = {}
+    for axes_spec in axes_specs:
+        group = _x_share_group(axes_spec)
+        if group not in x_categories_by_group:
+            x_categories_by_group[group] = CategoryAxis.for_axis(axes_spec["xAxis"])
 
     for index, (axes, axes_spec) in enumerate(zip(panels, axes_specs)):
         _draw_plot_contents(
@@ -1649,6 +1658,7 @@ def _render_figure_view_to_matplotlib_figure(
             show_title=index == 0,
             show_x_axis=index in labels_x,
             hover_sink=hover_sink,
+            x_categories=x_categories_by_group[_x_share_group(axes_spec)],
         )
     # Stacked panels' y labels sit at one x whatever width their tick labels
     # take, so the column reads as one. A placed panel is where its frame put it.
@@ -1687,7 +1697,7 @@ def _panels_labelling_x(panels: Sequence[Any], axes_specs: Sequence[dict[str, An
     it; a panel sharing with nothing labels its own.
     """
     bottoms = [axes.get_position().y0 for axes in panels]
-    groups = [spec["xAxis"].get("shareGroup") for spec in axes_specs]
+    groups = [_x_share_group(spec) for spec in axes_specs]
     labelling: set[int] = set()
     for index, group in enumerate(groups):
         siblings = [other for other in range(len(panels)) if other != index and groups[other] == group]
@@ -1697,16 +1707,31 @@ def _panels_labelling_x(panels: Sequence[Any], axes_specs: Sequence[dict[str, An
     return labelling
 
 
+def _x_share_group(axes_spec: dict[str, Any]) -> Any:
+    """The group of panels whose x-axes are linked: the xAxis's shareGroup.
+
+    Panels with no shareGroup are linked to each other, except that a
+    discrete x-axis links only with one of the same categories: linked
+    panels share their tick labels, which would otherwise name one panel's
+    categories under another's points.
+    """
+    x_axis = axes_spec["xAxis"]
+    group = x_axis.get("shareGroup")
+    if group is None and axis_data_type_kind(x_axis) == "discrete":
+        return ("discrete", axis_data_type_signature(x_axis))
+    return group
+
+
 def _share_x_axes(panels: Sequence[Any], axes_specs: Sequence[dict[str, Any]]) -> None:
     """Links the x-axes of panels whose xAxis specs name the same shareGroup.
 
     Panels with no shareGroup are still linked to each other: a stack of
     panels reads as one figure, and a package written before shareGroup was
-    honoured expects to pan and zoom them together.
+    honoured expects to pan and zoom them together. See _x_share_group.
     """
-    leaders: dict[str | None, Any] = {}
+    leaders: dict[Any, Any] = {}
     for axes, axes_spec in zip(panels, axes_specs):
-        group = axes_spec["xAxis"].get("shareGroup")
+        group = _x_share_group(axes_spec)
         leader = leaders.get(group)
         if leader is None:
             leaders[group] = axes
@@ -1801,7 +1826,11 @@ def _draw_plot_contents(
     show_title: bool = True,
     show_x_axis: bool = True,
     hover_sink: list[_HoverPoint] | None = None,
+    x_categories: CategoryAxis | None = None,
 ) -> tuple[list[Any], list[str]]:
+    """Draws one panel. `x_categories` is the discrete x-axis's categories
+    when the panel shares them with others; left out, a discrete x-axis
+    gets its own."""
     active_parameter_values = runtime.control_parameter_values if parameter_values is None else parameter_values
     text = runtime.figure_text()
     x_axis_binding = axes_spec["xAxis"]
@@ -1816,6 +1845,10 @@ def _draw_plot_contents(
     x_window, y_window = _axes_action_windows(axes_actions, x_axis_binding, y_axis_binding)
     has_data = False
     line_colors: dict[str, str] = {}
+    # Shared by the axes' artists, so each category has one place on a discrete axis:
+    if x_categories is None:
+        x_categories = CategoryAxis.for_axis(x_axis_binding)
+    y_categories = CategoryAxis.for_axis(y_axis_binding)
     for action in axes_actions:
         artist = _axes_action_plot_artist(action)
         if artist is None:
@@ -1839,15 +1872,12 @@ def _draw_plot_contents(
                 )
                 has_data = True
             continue
-        series = runtime.plot_series(artist, axis_data_type_kind(x_axis_binding))
+        series = runtime.plot_series(artist, x_categories=x_categories, y_categories=y_categories)
         if not series.points:
             continue
         artist_start_time = runtime.timing.start()
         x_values = _plot_x_values([x for x, _ in series.points], x_axis_binding)
         y_values = [y for _, y in series.points]
-        if series.x_categories:
-            axes.set_xticks(range(len(series.x_categories)))
-            axes.set_xticklabels(series.x_categories)
         alpha = _to_float(artist.get("alpha"))
         y_name = artist.get("y") or ""
         if _is_scatter_artist(artist):
@@ -1905,7 +1935,8 @@ def _draw_plot_contents(
                     label=hover_label,
                     x=np.asarray(x_values, dtype=float),
                     y=np.asarray(y_values, dtype=float),
-                    x_categories=series.x_categories,
+                    x_categories=x_categories,
+                    y_categories=y_categories,
                     x_time=_hover_x_time(x_axis_binding),
                 )
             )
@@ -1925,6 +1956,21 @@ def _draw_plot_contents(
         axes.text(0.5, 0.5, "No plottable data", ha="center", va="center", fontproperties=text.body)
         axes.set_axis_off()
         return [], []
+
+    # Every category gets a tick, a declared one too when nothing draws it,
+    # and half a row's margin beyond the first and last. Panels sharing the
+    # x-axis share its ticks, so the last panel drawn labels every category
+    # its siblings numbered. The margin is data, not a limit, so an x window
+    # set on any of the linked panels still wins:
+    if x_categories is not None and x_categories.categories:
+        # Not set_xticks, which would widen the view to every tick:
+        axes.xaxis.set_major_locator(FixedLocator(range(len(x_categories.categories))))
+        axes.xaxis.set_major_formatter(FixedFormatter(x_categories.categories))
+        axes.update_datalim([(-0.5, 0.0), (len(x_categories.categories) - 0.5, 0.0)], updatey=False)
+        axes.set_xmargin(0)
+    if y_categories is not None and y_categories.categories:
+        axes.set_yticks(range(len(y_categories.categories)), y_categories.categories)
+        axes.set_ylim(-0.5, len(y_categories.categories) - 0.5)
 
     if show_x_axis and x_window is not None:
         axes.set_xlim(*_plot_window(x_window, x_axis_binding))
@@ -5891,7 +5937,9 @@ class InteractiveFigureViewPanel(QWidget):
         x_value = float(best_point.x[best_index])
         y_value = float(best_point.y[best_index])
         x_display = _format_hover_x(x_value, best_point.x_categories, best_point.x_time)
-        text = f"{best_point.label}\nx: {x_display}\ny: {y_value:.4g}"
+        y_category = best_point.y_categories.label(y_value) if best_point.y_categories is not None else None
+        y_display = y_category if y_category is not None else f"{y_value:.4g}"
+        text = f"{best_point.label}\nx: {x_display}\ny: {y_display}"
         QToolTip.showText(QCursor.pos(), text, self.canvas)
 
     def dispose(self) -> None:

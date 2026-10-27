@@ -12,7 +12,8 @@ from .reader import LimelightError
 from .typography import validate_fonts_and_typography
 
 _VALID_MARKERS = ("o", "s", "^", "v", "D", "x", "+", "*", "p", "h", "<", ">")
-_VALID_LINESTYLES = ("-", "--", "-.", ":")
+# "none" draws a line artist's markers alone, as a raster of events.
+_VALID_LINESTYLES = ("-", "--", "-.", ":", "none")
 
 
 @dataclass(frozen=True)
@@ -56,14 +57,27 @@ AXIS_SCALES = {"Linear", "Log"}
 
 def axis_data_type_kind(axis_spec: dict[str, Any]) -> str:
     data_type = axis_spec["dataType"]
+    # A bare "discrete" is how packages written before categories spell it.
     if data_type == "discrete":
         return "discrete"
     keys = set(data_type.keys())
+    if keys == {"categories"}:
+        return "discrete"
     if keys == {"calendar"}:
         return "timeSeries"
     if keys == {"unit", "scale"}:
         return "continuous"
     raise LimelightError(f"AxisSpec {axis_spec.get('id', '?')!r} has unrecognized dataType shape {data_type!r}")
+
+
+def axis_categories(axis_spec: dict[str, Any]) -> list[str] | None:
+    """The categories a discrete axis fixes, in order, or None to take them in
+    order of first appearance (an empty list, or a package from before
+    categories)."""
+    data_type = axis_spec["dataType"]
+    if isinstance(data_type, dict):
+        return data_type["categories"] or None
+    return None
 
 
 def control_parameter_data_type_kind(control_parameter: dict[str, Any]) -> str:
@@ -192,6 +206,10 @@ class _SemanticValidator:
             scale = axis_spec["dataType"]["scale"]
             if scale not in AXIS_SCALES:
                 raise LimelightError(f"AxisSpec {axis_spec['id']!r} has unknown scale {scale!r}")
+        if kind == "discrete":
+            categories = axis_categories(axis_spec)
+            if categories is not None and len(set(categories)) != len(categories):
+                raise LimelightError(f"AxisSpec {axis_spec['id']!r} repeats a category")
 
     def _collect_dataset_arrays(self) -> None:
         for source in self.manifest["sources"]:
@@ -360,6 +378,11 @@ class _SemanticValidator:
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
                 f"cannot use a discrete x-axis; only line/scatter/stem artists support it"
             )
+        if axis_data_type_kind(axes_spec["yAxis"]) == "discrete" and kind not in ("line", "scatter"):
+            raise LimelightError(
+                f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
+                f"cannot use a discrete y-axis; only line/scatter artists support it"
+            )
         if kind == "line" and axis_data_type_kind(axes_spec["xAxis"]) == "timeSeries" and artist.get("xOverride") is None:
             # A line's x is its source's index. On a time axis that index has
             # to be a time or calendar one; noIndex would plot row numbers,
@@ -465,6 +488,11 @@ class _SemanticValidator:
             raise LimelightError(
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
                 f"has an unsupported linestyle {linestyle!r}; expected one of {_VALID_LINESTYLES}"
+            )
+        if linestyle == "none" and kind == "line" and marker is None:
+            raise LimelightError(
+                f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
+                f"has linestyle 'none' and no marker, so it would draw nothing"
             )
         if kind == "scatter":
             for field in ("colorBy", "sizeBy"):

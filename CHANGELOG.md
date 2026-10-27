@@ -7,6 +7,19 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- **A discrete y-axis.** Line and scatter artists can draw text values
+  against a discrete y-axis, one row per category, as a raster of events.
+- **A discrete axis can declare its categories.**
+  `AxisDataType.discrete(categories=[...])` fixes the order of its rows (or
+  columns), keeps a row for a category nothing draws, and refuses a value
+  outside them. Left out, categories follow first appearance. The
+  manifest's `discrete` now carries `{ categories : List Text }`; a bare
+  `discrete` from an older package still reads.
+- **A line artist can draw its markers alone,** with `linestyle="none"`
+  and a `marker`.
+
 ### Changed
 
 - **Syntax styles are explained without forecast's names.** The README has
@@ -18,6 +31,14 @@ versions may break things.
 
 ### Fixed
 
+- **A discrete axis numbers its categories once for the whole panel.** Each
+  artist used to number its own, so two artists showing different
+  categories drew them on top of each other, under one artist's tick labels.
+  Stacked panels sharing a discrete x-axis number its categories once too,
+  so one panel's tick labels no longer name another's points. Panels with
+  no `shareGroup` link a discrete x-axis only with one of the same
+  categories, and a row that draws nothing numbers no category.
+- **An axis with no label no longer stops a figure drawing.**
 - **A syntax style's slant applies to the whole token, alike on screen and
   in the PDF.** Upright now straightens lower-case Greek and accented
   letters (`\alpha`, `\vec{v}`) on screen too, and italic slants capital

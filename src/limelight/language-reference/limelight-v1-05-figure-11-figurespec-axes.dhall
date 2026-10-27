@@ -10,7 +10,15 @@ let PlotArtists = ./limelight-v1-05-figure-12-figurespec-plotartists.dhall
 
 let AxisScale = < Linear | Log >
 
-let AxisDataType = < continuous : { unit : Optional Text, scale : AxisScale } | discrete | timeSeries : { calendar : Optional Text } >
+-- A discrete axis places one row (or column) per category. Non-empty,
+-- `categories` fixes their order, and every value drawn on the axis must be
+-- one of them; empty, categories follow first appearance across the axes'
+-- artists.
+let AxisDataType =
+      < continuous : { unit : Optional Text, scale : AxisScale }
+      | discrete : { categories : List Text }
+      | timeSeries : { calendar : Optional Text }
+      >
 
 let AxisSpec =
       { id : Types.AxisSpecId

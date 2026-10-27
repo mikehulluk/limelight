@@ -29,6 +29,8 @@ from . import refs
 from .logging_config import configure_logging
 from .reader import LimelightError, LimelightPackage, open_limelight
 from .semantic import (
+    axis_categories,
+    axis_data_type_kind,
     control_parameter_data_type_kind,
     control_parameter_data_type_payload,
     control_parameter_default_min_max,
@@ -129,7 +131,50 @@ class PlotSeries:
     colors: list[Any] | None = None
     color_kind: str | None = None
     color_label: str | None = None
-    x_categories: list[str] | None = None
+
+
+def _category_or_none(value: Any) -> str | None:
+    """A value on a discrete axis as its category, or None when it is missing."""
+    return None if value is None or value == "" else str(value)
+
+
+class CategoryAxis:
+    """The categories of one discrete axis, numbered 0, 1, 2... in order.
+
+    One is shared by every artist on the axes, so a category has the same
+    place whichever artist draws it. An axis that declares its categories
+    fixes them, and a value outside them is an error; otherwise a category
+    is numbered when it first appears.
+    """
+
+    def __init__(self, axis_spec: dict[str, Any]) -> None:
+        declared = axis_categories(axis_spec)
+        self.axis_id: str = axis_spec["id"]
+        self.categories: list[str] = list(declared) if declared is not None else []
+        self.fixed = declared is not None
+        self._index = {category: index for index, category in enumerate(self.categories)}
+
+    @classmethod
+    def for_axis(cls, axis_spec: dict[str, Any]) -> "CategoryAxis | None":
+        return cls(axis_spec) if axis_data_type_kind(axis_spec) == "discrete" else None
+
+    def coordinate(self, value: Any) -> float | None:
+        if value is None or value == "":
+            return None
+        category = str(value)
+        index = self._index.get(category)
+        if index is None:
+            if self.fixed:
+                raise LimelightError(
+                    f"Value {category!r} is not one of the categories of discrete axis {self.axis_id!r}: {self.categories!r}"
+                )
+            index = self._index[category] = len(self.categories)
+            self.categories.append(category)
+        return float(index)
+
+    def label(self, coordinate: float) -> str | None:
+        index = round(coordinate)
+        return self.categories[index] if 0 <= index < len(self.categories) else None
 
 
 @dataclass(frozen=True)
@@ -1038,12 +1083,25 @@ class LimelightRuntime:
                         row = [_regular_index_value_at(source["index"], start + offset), *row]
                     writer.writerow([_format_cell(value) for value in row])
 
-    def plot_series(self, artist: dict[str, Any], x_axis_kind: str | None = None) -> PlotSeries:
+    def plot_series(
+        self,
+        artist: dict[str, Any],
+        *,
+        x_categories: CategoryAxis | None = None,
+        y_categories: CategoryAxis | None = None,
+    ) -> PlotSeries:
+        """The points an artist draws. On a discrete axis, given its
+        `CategoryAxis`, each value becomes its category's number."""
         start_time = self.timing.start()
         kind = refs.artist_kind(artist)
         y_table, y_column = refs.parse_column_ref(artist["y"])
         y_rows = self.rows_for_source(y_table)
-        y_values = [_to_float(row.get(y_column)) for row in y_rows]
+        # On a discrete axis a value stays text until its point is known to
+        # be drawn, so a row left out never numbers (or refuses) a category:
+        if y_categories is not None:
+            y_values = [_category_or_none(row.get(y_column)) for row in y_rows]
+        else:
+            y_values = [_to_float(row.get(y_column)) for row in y_rows]
 
         x_override = artist.get("xOverride")
         if kind in ("scatter", "stem"):
@@ -1058,20 +1116,8 @@ class LimelightRuntime:
             source = self.sources[y_table]
             raw_x_values = refs.resolve_index_x(source["index"], y_rows, len(y_rows))
 
-        x_categories: list[str] | None = None
-        if x_axis_kind == "discrete":
-            x_categories = []
-            category_index: dict[str, int] = {}
-            x_values: list[float | None] = []
-            for value in raw_x_values:
-                if value is None:
-                    x_values.append(None)
-                    continue
-                category = str(value)
-                if category not in category_index:
-                    category_index[category] = len(x_categories)
-                    x_categories.append(category)
-                x_values.append(float(category_index[category]))
+        if x_categories is not None:
+            x_values = [_category_or_none(value) for value in raw_x_values]
         else:
             x_values = [_to_plot_coordinate(value) for value in raw_x_values]
 
@@ -1113,6 +1159,10 @@ class LimelightRuntime:
             x = x_values[index]
             y = y_values[index]
             if x is not None and y is not None:
+                if x_categories is not None:
+                    x = x_categories.coordinate(x)
+                if y_categories is not None:
+                    y = y_categories.coordinate(y)
                 points.append((x, y))
                 if sizes is not None:
                     sizes.append(size_values[index] or 24.0)
@@ -1126,7 +1176,6 @@ class LimelightRuntime:
             colors=colors,
             color_kind=color_kind,
             color_label=color_label,
-            x_categories=x_categories,
         )
         self.timing.log(
             "data.plot_series",
@@ -1415,7 +1464,7 @@ def figure_controls(figure_spec: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def axis_label(axis_binding: dict[str, Any]) -> str:
-    label = axis_binding["label"] or ""
+    label = axis_binding.get("label") or ""
     data_type = axis_binding["dataType"]
     unit = data_type.get("unit") if isinstance(data_type, dict) else None
     return f"{label} ({unit})" if unit else label
