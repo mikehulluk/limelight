@@ -35,26 +35,97 @@ logger = logging.getLogger("limelight.cli")
 
 # The subcommands, in the order they are shown. `LL` uses these to tell a
 # request for the CLI from a package to open in the app.
-COMMANDS = ("json", "summary", "verify", "pdf", "meta", "desktop-entry")
+COMMANDS = ("json", "summary", "verify", "pdf", "meta", "login", "logout", "desktop-entry")
 
 
 _ALLOW_DOWNLOADS_HELP = (
-    "Download any hdf file a package names by URL. Without this, only files from the hosts "
-    "trusted in Settings (or trustedDownloadHosts in limelight-setting.json) are fetched."
+    "Download hdf files a package names by URL from hosts not yet Allowed in Settings. "
+    "Hosts Blocked in Settings are refused even with this. A sign-in made with `LL login` is used."
 )
 
 
 def _download_policy(allow_all: bool) -> Callable[[Any], bool]:
-    from .remote_files import format_size, host_is_trusted
-    from .settings import trusted_download_hosts
+    """Whether the CLI may fetch a remote file; fetches it (with any stored token) if so.
+
+    Blocked hosts are refused even with --allow-downloads. Progress and every
+    URL go to stderr.
+    """
+    from .remote_files import NeedsSignIn, RemoteFileError, fetch, format_size
+    from .settings import ALLOWED, BLOCKED, host_decision
 
     def allow(remote: Any) -> bool:
-        if not (allow_all or host_is_trusted(remote.host, trusted_download_hosts())):
+        decision = host_decision(remote.host)
+        if decision == BLOCKED:
+            print(f"Not downloading {remote.url}: {remote.host} is Blocked in Settings", file=sys.stderr)
+            return False
+        if not (allow_all or decision == ALLOWED):
             return False
         print(f"Downloading {remote.url} ({format_size(remote.size_bytes)})", file=sys.stderr)
+        last = [-1]
+
+        def progress(done: int, total: int) -> None:
+            tenth = 10 * done // max(total, 1)
+            if tenth != last[0]:
+                last[0] = tenth
+                print(f"  {10 * tenth}% of {remote.url}", file=sys.stderr)
+
+        def waiting(seconds: float, attempt: int) -> None:
+            print(f"  {remote.host} is busy; trying again in {seconds:.0f} s (try {attempt + 1})", file=sys.stderr)
+
+        try:
+            fetch(remote, progress=progress, on_wait=waiting)
+        except NeedsSignIn as need:
+            raise RemoteFileError(f"{need}; run: LL login {remote.url}") from None
+        except RemoteFileError:
+            raise
         return True
 
     return allow
+
+
+def _run_login(url: str) -> int:
+    from . import remote_auth
+
+    store = remote_auth.default_store()
+    if not store.keychain_available():
+        print("login: there is no keychain on this computer, so there is nowhere safe to keep a sign-in", file=sys.stderr)
+        return 1
+    try:
+        plan = remote_auth.discover(url, None)
+        authorization = remote_auth.start_device_authorization(plan)
+        print(f"Sign in to {plan.host} at {authorization.verification_uri}", file=sys.stderr)
+        print(f"and type this code: {authorization.user_code}", file=sys.stderr)
+        print("Only type it on that site. Waiting for you to approve...", file=sys.stderr)
+        token = remote_auth.poll_for_token(plan, authorization)
+    except KeyboardInterrupt:
+        print("login: cancelled", file=sys.stderr)
+        return 1
+    except remote_auth.SignInError as error:
+        print(f"login: {error}", file=sys.stderr)
+        return 1
+    if not store.put(token, remember=True):
+        print("login: the keychain would not keep the sign-in", file=sys.stderr)
+        return 1
+    who = f" as {token.account}" if token.account else ""
+    print(f"Signed in{who} for {plan.resource}", file=sys.stderr)
+    return 0
+
+
+def _run_logout(resource: str) -> int:
+    from . import remote_auth
+
+    store = remote_auth.default_store()
+    try:
+        signed_out = store.sign_out(resource)
+    except remote_auth.SignInError as error:
+        print(f"logout: {error}", file=sys.stderr)
+        return 1
+    if not signed_out:
+        known = ", ".join(token.resource for token in store.sign_ins()) or "none"
+        print(f"logout: no sign-in for {resource} (signed in: {known})", file=sys.stderr)
+        return 1
+    print(f"Signed out of {resource}", file=sys.stderr)
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -121,6 +192,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     meta_parser.add_argument("package", help="Path to a .limelight or .ll folder or archive")
 
+    login_parser = subparsers.add_parser(
+        "login",
+        help="Sign in to a site that holds a package's data, keeping the sign-in in the keychain",
+    )
+    login_parser.add_argument("url", help="An https URL of the data (or of the site's API) to sign in for")
+
+    logout_parser = subparsers.add_parser("logout", help="Sign out: revoke and forget a stored sign-in")
+    logout_parser.add_argument("resource", help="The resource signed in to, as `LL login` printed it")
+
     desktop_parser = subparsers.add_parser(
         "desktop-entry",
         help="Install a Linux desktop entry for this install, so the app has a taskbar icon and owns .limelight and .ll files",
@@ -133,6 +213,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "desktop-entry":
         return _run_desktop_entry(remove=args.remove)
+    if args.command == "login":
+        return _run_login(args.url)
+    if args.command == "logout":
+        return _run_logout(args.resource)
     if args.command == "verify":
         return _run_verify(args.packages, allow_download=_download_policy(args.allow_downloads))
     if args.command == "pdf":

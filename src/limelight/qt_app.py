@@ -97,6 +97,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QTextBrowser,
+    QToolBar,
     QToolButton,
     QToolTip,
     QTreeWidget,
@@ -164,7 +165,7 @@ from .pdf_export import (
     rasterize_large_artists,
     write_story_pdf,
 )
-from .qt_downloads import SettingsDialog, fetch_remote_files
+from .qt_downloads import RemoteDataBar, SettingsDialog, fetch_remote_files
 from .remote_files import RemoteFileNotDownloaded
 from .date_axis import format_date_axis, format_month_ordinal_axis
 from .settings import load_settings
@@ -2952,8 +2953,11 @@ class LimelightWindow(QMainWindow):
         self.debug_timing = debug_timing
         self.runtime = LimelightRuntime(package, manifest, debug_timing=debug_timing)
         register_document_fonts(self.runtime)
-        # Before anything is drawn, so figures from downloaded data draw at once.
-        fetch_remote_files(None, self.runtime)
+        # Remote data is fetched once the window is shown (showEvent), never
+        # before: the reader sees the window, and the bar says where the data
+        # comes from, before anything leaves the machine (RSI §4.3, RV-1).
+        self._shown_once = False
+        self._fetching_remote_data = False
         self.setWindowIcon(_application_icon())
         self.figure_view_windows: dict[tuple[str, int | None], FigureViewWindow] = {}
         self.table_view_windows: dict[tuple[str, str | None], "TableViewWindow"] = {}
@@ -2981,7 +2985,50 @@ class LimelightWindow(QMainWindow):
         self._build_menus()
         self._add_recent_path(package.path)
 
+        self.remote_bar = RemoteDataBar(self)
+        self.remote_bar.sign_out_requested.connect(self._sign_out_of)
+        self._remote_bar_toolbar = QToolBar("Data from the internet", self)
+        self._remote_bar_toolbar.setObjectName("remote-data-toolbar")
+        self._remote_bar_toolbar.setMovable(False)
+        self._remote_bar_toolbar.setFloatable(False)
+        self._remote_bar_toolbar.toggleViewAction().setVisible(False)
+        self._remote_bar_toolbar.addWidget(self.remote_bar)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._remote_bar_toolbar)
+        self._remote_bar_toolbar.setVisible(bool(self.runtime.remote_files()))
+
         self._build_central_tabs()
+
+    def showEvent(self, event: Any) -> None:
+        super().showEvent(event)
+        if not self._shown_once:
+            self._shown_once = True
+            QTimer.singleShot(0, self, self._fetch_remote_data)
+
+    def _fetch_remote_data(self) -> None:
+        """Fetch the open package's remote files (asking first), then redraw if any arrived."""
+        has_remote = bool(self.runtime.remote_files())
+        self._remote_bar_toolbar.setVisible(has_remote)
+        if not has_remote or self._fetching_remote_data:
+            return
+        self._fetching_remote_data = True
+        runtime = self.runtime
+        try:
+            downloaded = fetch_remote_files(self, runtime, bar=self.remote_bar)
+        finally:
+            self._fetching_remote_data = False
+        if downloaded and self.runtime is runtime:
+            self._build_central_tabs()
+
+    def _sign_out_of(self, resource: str) -> None:
+        from . import remote_auth
+        from .qt_downloads import run_off_gui_thread, summarize
+
+        store = remote_auth.default_store()
+        try:
+            run_off_gui_thread(lambda: store.sign_out(resource))
+        except remote_auth.SignInError as error:
+            QMessageBox.warning(self, "Sign Out", str(error))
+        self.remote_bar.show_summary(summarize(self.runtime, store))
 
     def _report_cache_progress(self, source_id: str, column: str, done: int, total: int) -> None:
         # Runs on whichever thread is building the cache; only the signal crosses.
@@ -3139,6 +3186,9 @@ class LimelightWindow(QMainWindow):
 
     def _open_package_path(self, path: str | Path, *, error_title: str = "Open Limelight Package") -> None:
         logger.info("%s: %s", error_title, path)
+        if self._fetching_remote_data:
+            QMessageBox.information(self, error_title, "Wait for the data being downloaded, or cancel it, first.")
+            return
         try:
             package = open_limelight(path)
             manifest = package.manifest_json()
@@ -3153,7 +3203,6 @@ class LimelightWindow(QMainWindow):
         try:
             new_runtime = LimelightRuntime(package, manifest, debug_timing=self.debug_timing)
             register_document_fonts(new_runtime)
-            fetch_remote_files(self, new_runtime)
             self.runtime = new_runtime
             self._update_window_title()
             self._build_central_tabs()
@@ -3175,6 +3224,9 @@ class LimelightWindow(QMainWindow):
 
         if old_runtime.package is not package:
             old_runtime.close()
+
+        # The new document is on screen first; then its data is fetched (RV-1).
+        self._fetch_remote_data()
 
     def _add_recent_path(self, path: str | Path) -> None:
         self._recent_paths = add_recent_package(path)

@@ -30,6 +30,8 @@ or inspect one from the command line (the second, as limelight-cli).
   LL verify example.limelight   validate one or more packages
   LL pdf example.limelight      render a package's story to PDF
   LL meta example.limelight     print a package's metadata as JSON
+  LL login https://host/data    sign in to a site that holds a package's data
+  LL logout https://host/api    sign out of it again
 
 Run `LL <command> --help` or `LL --gui-help` for the details of either form.
 """
