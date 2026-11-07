@@ -12,9 +12,10 @@ import zipfile
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from typing import Any, Iterable, Mapping, Sequence
+from urllib.parse import urlsplit
 
 from .images import (
     DEFAULT_MAX_WIDTH,
@@ -33,8 +34,9 @@ from .geometry import (
 )
 from .largeseries import DEFAULT_CHUNK_SIZE
 from .metadata import METADATA_TYPES, MetadataError, parse_metadata_value
-from .reader import PACKAGE_SUFFIXES
-from .signing import DocumentSignature, sign_document
+from .reader import PACKAGE_SUFFIXES, LimelightError
+from .remote_files import RemoteFile
+from .signing import DocumentSignature, sign_digest, sign_document
 from .story_syntax import code_tokens_json
 from .typography import (
     BOLD,
@@ -499,6 +501,10 @@ def _render_signatures(signatures: Sequence[DocumentSignature]) -> str:
 
 def _sign_all(content: bytes, signers: Sequence[tuple[str, bytes]]) -> list[DocumentSignature]:
     return [sign_document(content, signer=name, private_key_bytes=private_key) for name, private_key in signers]
+
+
+def _sign_all_digest(digest: bytes, signers: Sequence[tuple[str, bytes]]) -> list[DocumentSignature]:
+    return [sign_digest(digest, signer=name, private_key_bytes=private_key) for name, private_key in signers]
 
 
 def _optional_double(value: float | None) -> str:
@@ -1277,7 +1283,8 @@ class HdfDataset:
     id: str
     title: str | None
     path: str
-    hdf5_source_path: Path
+    # None for a remote file the writer has no copy of (see add_hdf_dataset).
+    hdf5_source_path: Path | None
     y_arrays: list[HdfArraySpec]
     index: Index
     chunk_size: int
@@ -1291,7 +1298,11 @@ class HdfDataset:
     size_bytes: int | None = None
 
     def file_fingerprints(self) -> list[tuple[str, str]]:
-        digest = self.sha256 or _file_sha256(self.hdf5_source_path)
+        if self.sha256 is not None:
+            digest = self.sha256
+        else:
+            assert self.hdf5_source_path is not None
+            digest = _file_sha256(self.hdf5_source_path)
         return [(self.path, digest[:8])]
 
     def _render_remote(self) -> str:
@@ -1309,6 +1320,7 @@ class HdfDataset:
     def write_source_file(self, package_root: Path) -> None:
         if self.url is not None:
             return
+        assert self.hdf5_source_path is not None
         target = package_root / self.path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(self.hdf5_source_path, target)
@@ -2796,7 +2808,7 @@ class LimelightProject:
         self,
         *,
         id: str,
-        hdf5_path: str | Path,
+        hdf5_path: str | Path | None = None,
         y_arrays: Sequence[HdfArraySpec | tuple[str, str]],
         index: Index | None = None,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -2806,6 +2818,8 @@ class LimelightProject:
         signers: Sequence[tuple[str, bytes]] = (),
         url: str | None = None,
         status_codes: Sequence[StatusCode] = (),
+        remote: RemoteFile | None = None,
+        shapes: Mapping[str, tuple[str, Sequence[int]]] | None = None,
     ) -> HdfDataset:
         """An hdf source, bundled in the package or, given a `url`, not.
 
@@ -2815,16 +2829,33 @@ class LimelightProject:
         URL must be byte for byte the same. The viewer asks the reader
         before downloading it.
 
+        A writer with no copy of the file gives `remote` (its URL, SHA-256
+        and size) instead of `hdf5_path`, and `shapes`, each dataset's numpy
+        dtype and shape: `{"/values": ("f8", (T, R)), "/time_us": ("i8", (T,))}`.
+        The bindings are checked against those, and signatures are over the
+        declared SHA-256; the manifest is the one `hdf5_path` + `url` would
+        give. Only the codes in the status datasets go unchecked until
+        `LL verify` checks the real file once it is downloaded.
+
         `status_codes` say what the codes in the arrays' `status` datasets
         mean (see `StatusCode`); one table serves the whole source. A file
         whose status datasets give one code different meanings is two
         sources over the same file.
         """
+        context = f"hdf dataset {id!r}"
+        if (hdf5_path is None) == (remote is None):
+            raise ValueError(f"{context}: give exactly one of hdf5_path and remote")
+        if remote is not None and url is not None:
+            raise ValueError(f"{context}: url goes with hdf5_path; a remote file's URL is in `remote`")
+        if remote is not None and shapes is None:
+            raise ValueError(f"{context}: a remote file needs `shapes`, the dtype and shape of each dataset")
+        if remote is None and shapes is not None:
+            raise ValueError(f"{context}: `shapes` is only for a remote file; the bindings are checked against hdf5_path")
         dataset = HdfDataset(
             id=id,
             title=title,
             path=path or f"data/{id}.h5",
-            hdf5_source_path=Path(hdf5_path),
+            hdf5_source_path=Path(hdf5_path) if hdf5_path is not None else None,
             y_arrays=[_normalize_hdf_array(entry) for entry in y_arrays],
             index=index or Index.no_index(),
             chunk_size=chunk_size,
@@ -2832,33 +2863,43 @@ class LimelightProject:
             status_codes=list(status_codes),
         )
         # Check the codes and the bindings against the file now, where the mistake is made.
-        from .hdf_sources import check_hdf_bindings, check_status_codes
+        from .hdf_sources import check_declared_bindings, check_hdf_bindings, check_status_codes, declared_datasets
+        from .remote_files import validate_remote
 
+        if remote is not None:
+            if isinstance(remote.size_bytes, bool) or not isinstance(remote.size_bytes, int):
+                raise LimelightError(f"{context}: remote size_bytes must be a whole number, got {remote.size_bytes!r}")
+            validate_remote({"url": remote.url, "sha256": remote.sha256, "sizeBytes": remote.size_bytes}, context)
         codes_payload = [{"code": c.code, "meaning": c.meaning, "label": c.label, "color": c.color} for c in dataset.status_codes]
-        check_status_codes(codes_payload, f"hdf dataset {id!r}")
-        check_hdf_bindings(
-            dataset.hdf5_source_path,
-            [
-                {
-                    "schema": {"name": a.name},
-                    "dataset": a.dataset,
-                    "column": a.column,
-                    **({"status": {"dataset": a.status, "column": a.status_column}} if a.status is not None else {}),
-                }
-                for a in dataset.y_arrays
-            ],
-            f"hdf dataset {id!r}",
-            status_codes=codes_payload,
-        )
+        check_status_codes(codes_payload, context)
+        bindings = [
+            {
+                "schema": {"name": a.name},
+                "dataset": a.dataset,
+                "column": a.column,
+                **({"status": {"dataset": a.status, "column": a.status_column}} if a.status is not None else {}),
+            }
+            for a in dataset.y_arrays
+        ]
+        if remote is not None:
+            assert shapes is not None
+            file_name = PurePosixPath(urlsplit(remote.url).path).name or remote.url
+            check_declared_bindings(
+                declared_datasets(shapes, context), file_name, bindings, context, status_codes=codes_payload
+            )
+            dataset.url = remote.url
+            dataset.sha256 = remote.sha256
+            dataset.size_bytes = remote.size_bytes
+            dataset.signatures = _sign_all_digest(bytes.fromhex(remote.sha256), signers) if signers else []
+            self.hdf_datasets.append(dataset)
+            return dataset
+        assert dataset.hdf5_source_path is not None
+        check_hdf_bindings(dataset.hdf5_source_path, bindings, context, status_codes=codes_payload)
         if url is not None:
-            from .remote_files import validate_remote
-
             dataset.url = url
             dataset.sha256 = _file_sha256(dataset.hdf5_source_path)
             dataset.size_bytes = dataset.hdf5_source_path.stat().st_size
-            validate_remote(
-                {"url": url, "sha256": dataset.sha256, "sizeBytes": dataset.size_bytes}, f"hdf dataset {id!r}"
-            )
+            validate_remote({"url": url, "sha256": dataset.sha256, "sizeBytes": dataset.size_bytes}, context)
         dataset.signatures = _sign_all(dataset.hdf5_source_path.read_bytes(), signers) if signers else []
         self.hdf_datasets.append(dataset)
         return dataset

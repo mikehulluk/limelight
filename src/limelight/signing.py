@@ -77,7 +77,23 @@ def sign_document(
     private_key_bytes: bytes,
     signed_at: str | None = None,
 ) -> DocumentSignature:
-    digest = hashlib.sha256(content).digest()
+    return sign_digest(hashlib.sha256(content).digest(), signer=signer, private_key_bytes=private_key_bytes, signed_at=signed_at)
+
+
+def sign_digest(
+    digest: bytes,
+    *,
+    signer: str,
+    private_key_bytes: bytes,
+    signed_at: str | None = None,
+) -> DocumentSignature:
+    """As sign_document, given the document's SHA-256 rather than its bytes.
+
+    A signature is over the digest, so a remote file the writer has no copy
+    of is signed from the digest its manifest declares.
+    """
+    if len(digest) != 32:
+        raise SigningError("a SHA-256 digest is 32 bytes")
     private_key = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
     signature_bytes = private_key.sign(digest)
     public_bytes = private_key.public_key().public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)

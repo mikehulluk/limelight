@@ -9,12 +9,18 @@ is reported where it is made rather than by the viewer at first draw.
 An hdf source's file is either in the package, at its `path`, or - with a
 `remote` entry - at a URL, downloaded into the reader's cache (see
 remote_files); `hdf_file_path` says where it is either way.
+
+A writer describing a remote file it has no copy of declares each dataset's
+dtype and shape instead (`check_declared_bindings`): the same checks run
+against those, except that the status codes in the file cannot be read;
+`verify` checks the real file once it is downloaded.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 
 import h5py
 import numpy as np
@@ -64,17 +70,60 @@ def check_status_codes(codes: list[dict[str, Any]], context: str) -> None:
         raise LimelightError(f"{context}: {missing} status codes mean absent; at most {MAX_MISSING_CODES} can")
 
 
+@dataclass(frozen=True)
+class DeclaredDataset:
+    """A dataset of a file the writer has no copy of: its dtype and shape, as declared."""
+
+    dtype: np.dtype
+    shape: tuple[int, ...]
+
+    @property
+    def ndim(self) -> int:
+        return len(self.shape)
+
+
+def declared_datasets(
+    shapes: Mapping[str, tuple[Any, Sequence[int]]], context: str
+) -> dict[str, DeclaredDataset]:
+    """Parse `{dataset: (dtype, shape)}`, keyed by absolute dataset path."""
+    parsed: dict[str, DeclaredDataset] = {}
+    for dataset_path, declared in shapes.items():
+        where = f"{context}: declared dataset {dataset_path!r}"
+        if not isinstance(declared, (tuple, list)) or len(declared) != 2:
+            raise LimelightError(f"{where} must be (dtype, shape), got {declared!r}")
+        dtype_text, shape = declared
+        try:
+            dtype = np.dtype(dtype_text)
+        except (TypeError, ValueError):
+            raise LimelightError(f"{where} has dtype {dtype_text!r}, which is not a numpy dtype") from None
+        if dtype.kind not in "biuf":
+            raise LimelightError(f"{where} is {dtype}; an hdf source's datasets are numeric")
+        if isinstance(shape, (int, np.integer)):
+            shape = (shape,)
+        dims = tuple(shape)
+        if not dims or any(isinstance(n, bool) or not isinstance(n, (int, np.integer)) or n < 0 for n in dims):
+            raise LimelightError(f"{where} has shape {shape!r}; a shape is one or more whole numbers, none negative")
+        key = "/" + dataset_path.lstrip("/")
+        if key in parsed:
+            raise LimelightError(f"{where} is declared twice")
+        parsed[key] = DeclaredDataset(dtype=dtype, shape=tuple(int(n) for n in dims))
+    return parsed
+
+
 def _check_status_binding(
-    handle: h5py.File, hdf5_path: Path, name: str, status: dict[str, Any], length: int,
+    lookup: Callable[[str], Any], file_name: str, name: str, status: dict[str, Any], length: int,
     declared: set[int], context: str,
 ) -> None:
-    """The status dataset exists, is integer, is as long as its array, and uses only declared codes."""
+    """The status dataset exists, is integer, is as long as its array, and uses only declared codes.
+
+    The codes are only read from a real file; a declared dataset has none to read.
+    """
     dataset_path = status["dataset"]
     column = status.get("column")
-    dataset = handle.get(dataset_path)
+    dataset = lookup(dataset_path)
     where = f"{context}: array {name!r} status {dataset_path!r}"
-    if not isinstance(dataset, h5py.Dataset):
-        raise LimelightError(f"{where} is not in {hdf5_path.name}")
+    if dataset is None:
+        raise LimelightError(f"{where} is not in {file_name}")
     if dataset.dtype.kind not in "iu":
         raise LimelightError(f"{where} is {dataset.dtype}; a status dataset holds integer codes")
     if column is None and dataset.ndim != 1:
@@ -86,6 +135,8 @@ def _check_status_binding(
             raise LimelightError(f"{where} names column {column}, but has {dataset.shape[1]} columns")
     if int(dataset.shape[0]) != length:
         raise LimelightError(f"{where} has {dataset.shape[0]} rows; the array has {length}")
+    if not isinstance(dataset, h5py.Dataset):
+        return
     undeclared: set[int] = set()
     for start in range(0, length, _STATUS_SCAN_BLOCK):
         block = dataset[start : start + _STATUS_SCAN_BLOCK] if column is None else dataset[start : start + _STATUS_SCAN_BLOCK, column]
@@ -96,49 +147,75 @@ def _check_status_binding(
         raise LimelightError(f"{where} holds codes the source's statusCodes do not declare: {shown}{more}")
 
 
+def _check_bindings(
+    lookup: Callable[[str], Any], file_name: str, y_arrays: list[dict[str, Any]], context: str,
+    status_codes: list[dict[str, Any]] | None,
+) -> int:
+    declared = {int(entry["code"]) for entry in status_codes or []}
+    lengths: dict[str, int] = {}
+    for entry in y_arrays:
+        name = entry["schema"]["name"]
+        dataset_path = entry["dataset"]
+        column = entry.get("column")
+        dataset = lookup(dataset_path)
+        if dataset is None:
+            raise LimelightError(f"{context}: array {name!r} names dataset {dataset_path!r}, which is not in {file_name}")
+        if column is None:
+            if dataset.ndim != 1:
+                raise LimelightError(
+                    f"{context}: array {name!r} names dataset {dataset_path!r}, which is {dataset.ndim}-D; "
+                    f"a 2-D dataset needs a column"
+                )
+        else:
+            if dataset.ndim != 2:
+                raise LimelightError(
+                    f"{context}: array {name!r} names column {column} of dataset {dataset_path!r}, "
+                    f"which is {dataset.ndim}-D, not 2-D"
+                )
+            if not 0 <= column < dataset.shape[1]:
+                raise LimelightError(
+                    f"{context}: array {name!r} names column {column} of dataset {dataset_path!r}, "
+                    f"which has {dataset.shape[1]} columns"
+                )
+        lengths[name] = int(dataset.shape[0])
+        status = entry.get("status")
+        if status:
+            if not declared:
+                raise LimelightError(f"{context}: array {name!r} has a status dataset, but the source declares no statusCodes")
+            _check_status_binding(lookup, file_name, name, status, lengths[name], declared, context)
+    if len(set(lengths.values())) > 1:
+        described = ", ".join(f"{name}: {length}" for name, length in lengths.items())
+        raise LimelightError(f"{context}: arrays differ in length ({described}); every array of a source shares its index")
+    return next(iter(lengths.values()), 0)
+
+
 def check_hdf_bindings(
     hdf5_path: Path, y_arrays: list[dict[str, Any]], context: str, *, status_codes: list[dict[str, Any]] | None = None
 ) -> int:
     """Raise LimelightError on a binding the file cannot honour; return the row count."""
     if not hdf5_path.is_file():
         raise LimelightError(f"{context}: no such HDF5 file {hdf5_path}")
-    declared = {int(entry["code"]) for entry in status_codes or []}
-    lengths: dict[str, int] = {}
     with h5py.File(hdf5_path, "r") as handle:
-        for entry in y_arrays:
-            name = entry["schema"]["name"]
-            dataset_path = entry["dataset"]
-            column = entry.get("column")
+
+        def lookup(dataset_path: str) -> h5py.Dataset | None:
             dataset = handle.get(dataset_path)
-            if not isinstance(dataset, h5py.Dataset):
-                raise LimelightError(f"{context}: array {name!r} names dataset {dataset_path!r}, which is not in {hdf5_path.name}")
-            if column is None:
-                if dataset.ndim != 1:
-                    raise LimelightError(
-                        f"{context}: array {name!r} names dataset {dataset_path!r}, which is {dataset.ndim}-D; "
-                        f"a 2-D dataset needs a column"
-                    )
-            else:
-                if dataset.ndim != 2:
-                    raise LimelightError(
-                        f"{context}: array {name!r} names column {column} of dataset {dataset_path!r}, "
-                        f"which is {dataset.ndim}-D, not 2-D"
-                    )
-                if not 0 <= column < dataset.shape[1]:
-                    raise LimelightError(
-                        f"{context}: array {name!r} names column {column} of dataset {dataset_path!r}, "
-                        f"which has {dataset.shape[1]} columns"
-                    )
-            lengths[name] = int(dataset.shape[0])
-            status = entry.get("status")
-            if status:
-                if not declared:
-                    raise LimelightError(f"{context}: array {name!r} has a status dataset, but the source declares no statusCodes")
-                _check_status_binding(handle, hdf5_path, name, status, lengths[name], declared, context)
-    if len(set(lengths.values())) > 1:
-        described = ", ".join(f"{name}: {length}" for name, length in lengths.items())
-        raise LimelightError(f"{context}: arrays differ in length ({described}); every array of a source shares its index")
-    return next(iter(lengths.values()), 0)
+            return dataset if isinstance(dataset, h5py.Dataset) else None
+
+        return _check_bindings(lookup, hdf5_path.name, y_arrays, context, status_codes)
+
+
+def check_declared_bindings(
+    datasets: Mapping[str, DeclaredDataset], file_name: str, y_arrays: list[dict[str, Any]], context: str,
+    *, status_codes: list[dict[str, Any]] | None = None,
+) -> int:
+    """As check_hdf_bindings, against declared dtypes and shapes rather than a file.
+
+    Everything is checked but the codes a status dataset holds, which only
+    the file can say; `verify` checks those once the file is downloaded.
+    """
+    return _check_bindings(
+        lambda dataset_path: datasets.get("/" + dataset_path.lstrip("/")), file_name, y_arrays, context, status_codes
+    )
 
 
 def verify_hdf_sources(
