@@ -7,6 +7,18 @@ versions may break things.
 
 ## [Unreleased]
 
+### Changed
+
+- **Date axes fit their width and say only what each tick needs.** A date
+  axis now has as many ticks as its labels leave room for - fewer in a
+  narrow column, more in a wide window, recounted on every zoom - so labels
+  no longer run into each other. Ticks are labelled at their own
+  resolution: `2028` for years, `Jan 2025 · Apr · Jul` for months, `7 Nov`
+  for days, `12:00` for times. The larger unit is said under the first tick
+  and wherever it changes, not on every tick. Dates read day-month-year
+  (`5 Nov 2026`). Monthly calendar axes follow the same rules, and are no
+  longer slanted.
+
 ### Fixed
 
 - **Several time series in one panel all show.** Each series used to set

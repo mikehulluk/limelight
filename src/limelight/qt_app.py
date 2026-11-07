@@ -7,7 +7,6 @@ import json
 import logging
 import signal
 import sys
-from calendar import month_abbr
 from dataclasses import dataclass
 from datetime import date, datetime
 from contextlib import contextmanager
@@ -167,6 +166,7 @@ from .pdf_export import (
 )
 from .qt_downloads import SettingsDialog, fetch_remote_files
 from .remote_files import RemoteFileNotDownloaded
+from .date_axis import format_date_axis, format_month_ordinal_axis
 from .settings import load_settings
 from . import updates
 from .metadata import metadata_entries
@@ -2603,73 +2603,19 @@ def _label_log_axis(axis: Any) -> None:
     axis.set_minor_formatter(NullFormatter())
 
 
-def _month_ordinal_axis_step(axes: Any) -> None:
-    lower, upper = axes.get_xlim()
-    span = abs(upper - lower)
-
-    if span <= 24:
-        major_step = 1
-        label_mode = "month"
-    elif span <= 72:
-        major_step = 3
-        label_mode = "quarter"
-    else:
-        major_step = 12
-        label_mode = "year"
-
-    axes.xaxis.set_major_locator(MultipleLocator(major_step))
-    axes.xaxis.set_minor_locator(MultipleLocator(1))
-    axes.xaxis.set_major_formatter(
-        FuncFormatter(lambda value, _: _month_ordinal_label(value, label_mode))
-    )
-
-
 def _format_month_ordinal_axis(axes: Any) -> None:
-    _month_ordinal_axis_step(axes)
-    axes.tick_params(axis="x", labelrotation=35)
+    """A monthly calendar axis (months since January 1970): see date_axis."""
+    format_month_ordinal_axis(axes.xaxis)
+    axes.xaxis.set_minor_locator(MultipleLocator(1))
     axes.grid(True, which="minor", axis="x", color="#eeeeee", linewidth=0.45)
-    axes.callbacks.connect("xlim_changed", _month_ordinal_axis_step)
 
 
 def _format_matplotlib_date_axis(axes: Any) -> None:
-    """A UTC axis: each tick labelled on two lines, the time above the date.
-
-    Every tick carries its time and its date, so a label reads on its own
-    wherever the view is scrolled to, rather than relying on the corner
-    offset text and a first tick that happens to say the day. The time is as
-    long as the ticks need: HH:MM when every tick is on a whole minute,
-    HH:MM:SS when one is not, milliseconds when one is off a whole second;
-    and when every tick falls on midnight the time line is dropped.
-    """
-    locator = mdates.AutoDateLocator(minticks=5, maxticks=9)
-    axes.xaxis.set_major_locator(locator)
-    axes.xaxis.set_major_formatter(FuncFormatter(lambda value, _: _utc_tick_label(value, axes)))
+    """A UTC axis: as many ticks as fit, each labelled at its own resolution
+    (the year, the month, the day, the time), with the larger unit said where
+    it starts or changes rather than on every tick. See date_axis."""
+    format_date_axis(axes.xaxis)
     axes.tick_params(axis="x", labelrotation=0)
-
-
-def _utc_tick_label(value: float, axes: Any) -> str:
-    when = mdates.num2date(value)
-    lower, upper = axes.get_xlim()
-    span_seconds = abs(upper - lower) * 86_400.0
-    # The precision is the ticks', not this value's: every label on the axis
-    # is the same length, and none carries a ":00" no tick needs.
-    ticks = [mdates.num2date(tick) for tick in axes.xaxis.get_majorticklocs()]
-    if not ticks:
-        ticks = [when]
-    date = when.strftime("%Y-%m-%d")
-    if all(_is_midnight(tick) for tick in ticks) and span_seconds >= 86_400.0:
-        return date
-    if any(tick.microsecond for tick in ticks):
-        time = when.strftime("%H:%M:%S.%f")[:-3]
-    elif any(tick.second for tick in ticks):
-        time = when.strftime("%H:%M:%S")
-    else:
-        time = when.strftime("%H:%M")
-    return f"{time}\n{date}"
-
-
-def _is_midnight(when: datetime) -> bool:
-    return when.hour == 0 and when.minute == 0 and when.second == 0 and when.microsecond == 0
 
 
 def _shortcuts(standard: QKeySequence.StandardKey, *extras: str) -> list[QKeySequence]:
@@ -6258,22 +6204,6 @@ def _install_timeseries_artist(runtime: LimelightRuntime, axes: Any, artist: dic
         indicator_font=runtime.figure_text().badge,
         timing=runtime.timing,
     )
-
-
-def _month_ordinal_label(value: float, mode: str) -> str:
-    ordinal = round(value)
-    if abs(value - ordinal) > 1e-6:
-        return ""
-
-    year = 1970 + ordinal // 12
-    month = ordinal % 12 + 1
-    if mode == "year":
-        return str(year) if month == 1 else ""
-    if mode == "quarter":
-        return f"{month_abbr[month]} {year}" if month == 1 else month_abbr[month]
-    if month == 1:
-        return f"{month_abbr[month]}\n{year}"
-    return month_abbr[month]
 
 
 _DEFAULT_DECORATOR_COLOR = "#1f5f73"
