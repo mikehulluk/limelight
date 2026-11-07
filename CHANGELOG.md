@@ -31,6 +31,20 @@ versions may break things.
   (Forget), sign-ins (Sign out, which revokes the token) and can delete
   the downloaded data.
 
+- **Writing a package for a remote file without a copy of it.**
+  `add_hdf_dataset(remote=RemoteFile(url, sha256, size_bytes), shapes=...)`
+  describes an HDF5 file the writer never downloads: `shapes` gives each
+  dataset's numpy dtype and shape, as
+  `{"/values": ("f8", (T, R)), "/status": ("u1", (T, R)), "/time_us": ("i8", (T,))}`.
+  The bindings - datasets, columns, status datasets, row counts, an
+  irregular index's coordinate array - are checked against those, with the
+  messages a file would give; signatures are over the declared SHA-256. The
+  manifest is byte for byte the one `hdf5_path` + `url` writes for the same
+  file. Only the codes inside a status dataset go unchecked until `LL verify`
+  checks the real file, which it does once the file is downloaded. Give one
+  of `hdf5_path` and `remote`, not both. `sign_digest` signs a document from
+  its SHA-256.
+
 ### Changed
 
 - **Remembered hosts are exact hosts, Allowed or Blocked.** The download

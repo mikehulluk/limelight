@@ -1,6 +1,7 @@
 """Helpers for creating and reading Limelight packages."""
 
 from .reader import LimelightError, LimelightPackage, open_limelight
+from .remote_files import RemoteFile
 
 from .signing import (
     DocumentSignature,
@@ -8,6 +9,7 @@ from .signing import (
     generate_ed25519_keypair,
     private_key_from_pem,
     private_key_to_pem,
+    sign_digest,
     sign_document,
     verify_document_signature,
     verify_manifest_signatures,
@@ -98,6 +100,7 @@ __all__ = [
     "MapAction",
     "MapSpec",
     "MetadataEntry",
+    "RemoteFile",
     "StatusCode",
     "PageGeometry",
     "Panel",
@@ -136,6 +139,7 @@ __all__ = [
     "open_limelight",
     "private_key_from_pem",
     "private_key_to_pem",
+    "sign_digest",
     "sign_document",
     "summary_statistics",
     "verify_document_signature",
