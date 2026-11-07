@@ -76,18 +76,30 @@ project.add_hdf_dataset(
 The file at the URL must be byte for byte that local copy: a download is kept
 only if its digest and size match. Only `https://` URLs are accepted.
 
-The app asks before downloading, showing each URL and its size, and can be
-told to always allow a domain (which covers its subdomains); File › Settings
-lists those domains for adding and removing. A file that isn't downloaded
-leaves the figures and tables drawn from it saying so; reloading asks again.
-Downloads are kept by digest in the user's cache folder (or
-`LIMELIGHT_DOWNLOAD_DIR`), so each file is fetched once.
+The app shows the window first, then asks before anything leaves the machine:
+one row per host, with its files and sizes. The decision can be remembered
+for that exact host (never its subdomains), as Allowed or Blocked; File ›
+Settings lists those hosts, and Blocked wins. A bar in the window says where
+the data comes from for as long as the package is open. A file that isn't
+downloaded leaves the figures and tables drawn from it saying so; reloading
+asks again. Downloads are kept by digest in the user's cache folder (or
+`LIMELIGHT_DOWNLOAD_DIR`), so each file is fetched once; Settings can delete
+them.
 
-`LL verify` and `LL pdf` download only from trusted domains, or from anywhere
-with `--allow-downloads`; `verify` reports a file it didn't download as
-`UNCHECKED`. A hand-written `limelight-setting.json` can trust domains too,
-under `trustedDownloadHosts`. Signatures on a remote file are checked against
-the digest the manifest declares, so they need no download.
+Private data needs no secret in the URL: a host that answers `401` with a
+Bearer challenge (RFC 6750 / RFC 9728) is signed in to with the device flow
+(RFC 8628) - Limelight shows a code and opens the site's page to type it in.
+The sign-in server must be on the data's own registrable domain, and a token
+goes only to the resource it was issued for. A sign-in can be remembered in
+the OS keychain; without one it lasts until Limelight quits.
+
+`LL verify` and `LL pdf` download only from Allowed hosts, or from any host
+that isn't Blocked with `--allow-downloads`; `verify` reports a file it didn't
+download as `UNCHECKED`. They use sign-ins made with `LL login <url>` (kept in
+the keychain; `LL logout <resource>` revokes it), or, in CI, one token given
+by `LIMELIGHT_BEARER_TOKEN` for the resource `LIMELIGHT_BEARER_RESOURCE`.
+Signatures on a remote file are checked against the digest the manifest
+declares, so they need no download.
 
 ## Sample status
 

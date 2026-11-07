@@ -7,6 +7,44 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- **Signing in to fetch remote data.** A host that answers `401` with a
+  Bearer challenge is signed in to with the device flow: Limelight shows a
+  code, opens the site's own page (never a pre-filled link) and waits for
+  the reader to approve, off the GUI thread. Discovery follows RFC 9728 and
+  RFC 8414, and the token is asked for one resource only (RFC 8707). It is
+  tight on purpose: https only, a redirect to http is refused, the sign-in
+  server must be on the data's registrable domain (no override), and a
+  token goes only to its resource - dropped on a redirect to another origin.
+  A sign-in can be remembered in the OS keychain (`keyring`); with no
+  keychain it lasts until Limelight quits, and is never written to a file.
+  403/404 say the account cannot read the data, 409 that it has changed,
+  and 429/503 with `Retry-After` are waited out (up to 120 s, 3 tries).
+- **The window says where its data comes from.** A bar shows "Loading data
+  from <host>…" while fetching, then "Data from <host> · signed in as …"
+  with Sign out, for as long as the package is open.
+- **`LL login <url>` and `LL logout <resource>`.** `verify` and `pdf` use
+  the stored sign-in, and print progress and every URL to stderr. In CI,
+  `LIMELIGHT_BEARER_TOKEN` gives one token for `LIMELIGHT_BEARER_RESOURCE`.
+- **File › Settings › Data from the internet** lists remembered hosts
+  (Forget), sign-ins (Sign out, which revokes the token) and can delete
+  the downloaded data.
+
+### Changed
+
+- **Remembered hosts are exact hosts, Allowed or Blocked.** The download
+  prompt now comes after the window is shown, has no default button, shows
+  each host with its registrable domain in bold (IDN hosts as punycode and
+  Unicode), and remembers Download as Allowed and Don't download as Blocked.
+  Each `trustedDownloadHosts` entry in the app's settings becomes an Allowed
+  host **for itself only: its subdomains are no longer covered**. A
+  `limelight-setting.json` (in the working folder or elsewhere) can no
+  longer allow a host.
+- **`--allow-downloads` no longer reaches Blocked hosts.** It consents to
+  hosts not yet decided; a host Blocked in Settings is refused even with it.
+- `keyring` and `publicsuffixlist` are new dependencies.
+
 ## [0.0.24] - 2026-11-07
 
 ### Changed
