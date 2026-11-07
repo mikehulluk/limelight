@@ -135,6 +135,10 @@ class MissingMarks:
                 zorder=4,
                 clip_on=False,
             )
+            # Marks sit inside the axes; they must not move its layout (and an
+            # empty, unclipped line would give tight_layout nonsense bounds).
+            points.set_in_layout(False)
+            rug.set_in_layout(False)
             self.points[kind] = points
             self.rugs[kind] = rug
 
@@ -155,11 +159,12 @@ class MissingMarks:
                 points.set_data([], [])
                 bucket_x = result.x[has_kind]
                 rug.set_data(bucket_x, np.full(bucket_x.shape, RUG_Y))
-            points.set_visible(result.raw)
-            rug.set_visible(not result.raw)
+            # Both stay visible, holding no data when not in use: a hidden
+            # line would also hide its symbol in the legend.
 
     def get_visible(self) -> bool:
-        return any(line.get_visible() and len(line.get_xdata()) for line in [*self.points.values(), *self.rugs.values()])
+        """Whether anything is marked now."""
+        return any(len(line.get_xdata()) for line in [*self.points.values(), *self.rugs.values()])
 
 
 def missing_kind_marks(x: np.ndarray, y: np.ndarray, is_kind: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

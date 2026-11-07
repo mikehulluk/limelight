@@ -37,7 +37,8 @@ def test_plot_envelope_creates_exactly_four_artists(tmp_path: Path) -> None:
         assert line_min in ax.lines
         assert line_max in ax.lines
         assert fill in ax.collections
-        assert marks in ax.lines and not marks.get_visible()  # envelope view: nothing to mark
+        # A series with nothing missing gets no marks at all.
+        assert marks.points == {} and not marks.get_visible()
     finally:
         plt.close(fig)
         close_cache(handle)
@@ -66,14 +67,14 @@ def test_zoom_sync_creates_one_artist_set_and_updates_in_place(tmp_path: Path) -
     fig, ax = plt.subplots()
     try:
         sync = ZoomSync(ax=ax, handle=handle, spec=spec, target_buckets=50)
-        assert len(ax.lines) == 3  # min, max, missing-sample marks
+        assert len(ax.lines) == 2  # min, max; nothing missing, so no marks
         assert len(ax.collections) == 1
 
         ax.set_xlim(0, 500)
         ax.set_xlim(1000, 4000)
         ax.set_xlim(2000, 2100)
 
-        assert len(ax.lines) == 3  # min, max, missing-sample marks
+        assert len(ax.lines) == 2  # min, max; nothing missing, so no marks
         assert len(ax.collections) == 1
     finally:
         sync.disconnect()
@@ -223,7 +224,7 @@ def test_missing_sample_marks_sit_at_the_last_good_value() -> None:
     assert missing_sample_marks(x, np.ones(8))[0].size == 0
 
 
-def test_marks_appear_only_in_the_raw_view(tmp_path: Path) -> None:
+def test_missing_samples_are_ticked_zoomed_out_and_marked_zoomed_in(tmp_path: Path) -> None:
     h5 = tmp_path / "gaps.h5"
     y = np.sin(np.arange(20_000) / 50.0)
     y[::30] = np.nan
@@ -235,18 +236,22 @@ def test_marks_appear_only_in_the_raw_view(tmp_path: Path) -> None:
     try:
         envelope = query_range(handle, spec, 0, 19_999, target_buckets=20)
         line_min, line_max, fill, marks = plot_envelope(ax, envelope)
-        assert not envelope.raw and not marks.get_visible()
+        [points] = marks.points.values()
+        [rug] = marks.rugs.values()
+        # Zoomed out: every bucket holds a NaN, so every bucket gets a tick.
+        assert not envelope.raw and len(rug.get_xdata()) and not len(points.get_xdata())
+        np.testing.assert_array_equal(rug.get_xdata(), envelope.x)
 
         raw = query_range(handle, spec, 0, 100, target_buckets=500)
         update_envelope_artists(line_min, line_max, fill, raw, marks)
-        assert raw.raw and marks.get_visible()
-        np.testing.assert_array_equal(marks.get_xdata(), [0.0, 30.0, 60.0, 90.0])
+        assert raw.raw and len(points.get_xdata()) and not len(rug.get_xdata())
+        np.testing.assert_array_equal(points.get_xdata(), [0.0, 30.0, 60.0, 90.0])
         # The first miss is sample 0: it takes the first good value after it.
-        np.testing.assert_allclose(marks.get_ydata()[0], y[1])
-        np.testing.assert_allclose(marks.get_ydata()[1], y[29])
+        np.testing.assert_allclose(points.get_ydata()[0], y[1])
+        np.testing.assert_allclose(points.get_ydata()[1], y[29])
 
-        line_min2, line_max2, fill2, marks2 = plot_envelope(ax, raw, missing_marker="none")
-        assert not marks2.get_visible()
+        _, _, _, marks2 = plot_envelope(ax, raw, missing_marker="none")
+        assert marks2.points == {} and not marks2.get_visible()
     finally:
         plt.close(fig)
         close_cache(handle)

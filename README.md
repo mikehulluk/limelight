@@ -89,6 +89,40 @@ with `--allow-downloads`; `verify` reports a file it didn't download as
 under `trustedDownloadHosts`. Signatures on a remote file are checked against
 the digest the manifest declares, so they need no download.
 
+## Sample status
+
+An HDF5 source can say, sample by sample, why a value is or isn't there.
+Each array names an integer status dataset beside its values (or a column of
+a 2-D one), and the source declares what each code means:
+
+```python
+from limelight import StatusCode
+
+project.add_hdf_dataset(
+    id="recording",
+    hdf5_path="recording.h5",
+    status_codes=[
+        StatusCode(0, "valid", "Valid"),
+        StatusCode(1, "absent", "Bad read", marker="cross", color="#d62728"),
+        StatusCode(2, "skip", "Not scheduled"),
+        StatusCode(3, "absent", "Row gap", marker="none"),
+    ],
+    y_arrays=[hdf_array(f"ch{j}", "/values", column=j, status="/status", status_column=j) for j in range(3)],
+)
+```
+
+- `valid`: the sample is its value. A NaN is still drawn as missing.
+- `skip`: no sample was expected, as with a channel read on every tenth tick.
+  The line joins the samples either side, and nothing is marked.
+- `absent`: a sample was expected and isn't there. The line breaks. Zoomed
+  in, the gap gets the code's marker; zoomed out, a tick at the foot of the
+  axes shows where. The label names it in the legend and in table cells.
+
+Status decides: a value under a code that isn't `valid` is ignored. One table
+serves a whole source; a file whose status datasets give a code different
+meanings is declared as two sources over the same file. A code the table
+doesn't declare is refused by the writer and fails `LL verify`.
+
 ## Type
 
 A document says how every kind of its text is set - body, headings, code,

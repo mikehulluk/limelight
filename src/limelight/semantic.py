@@ -218,6 +218,16 @@ class _SemanticValidator:
                     from .remote_files import validate_remote
 
                     validate_remote(source["remote"], f"Source {source['id']!r}")
+                from .hdf_sources import check_status_codes
+
+                codes = source.get("statusCodes") or []
+                check_status_codes(codes, f"Source {source['id']!r}")
+                for y_array in source["yArrays"]:
+                    if y_array.get("status") and not codes:
+                        raise LimelightError(
+                            f"Source {source['id']!r}: array {y_array['schema']['name']!r} has a status dataset, "
+                            "but the source declares no statusCodes"
+                        )
                 self.hdf_source_ids.add(source["id"])
                 self.dataset_arrays[source["id"]] = {
                     y_array["schema"]["name"] for y_array in source["yArrays"]

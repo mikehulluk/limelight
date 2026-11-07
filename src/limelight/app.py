@@ -360,6 +360,34 @@ def _hdf_array_slice(dataset: Any, entry: dict[str, Any], start: int, end: int) 
     return dataset[start:end, column]
 
 
+UNKNOWN_STATUS_LABEL = "Unknown status"
+
+
+def _hdf_cells(handle: Any, source: dict[str, Any], entry: dict[str, Any], start: int, end: int, *, labels: bool) -> list[Any]:
+    """Rows start:end of a yArrays entry as cells, read through its status if it has one.
+
+    A valid sample is its value; a skipped one is an empty cell; a missing
+    one is its code's label when `labels` (a table a reader looks at), and
+    empty otherwise (a CSV, whose numeric columns stay numeric).
+    """
+    values = _hdf_array_slice(handle[entry["dataset"]], entry, start, end).tolist()
+    status = entry.get("status")
+    if not status:
+        return values
+    codes = _hdf_array_slice(handle[status["dataset"]], status, start, end).tolist()
+    meanings = {int(code["code"]): (code["meaning"], code["label"]) for code in source.get("statusCodes") or []}
+    cells: list[Any] = []
+    for value, code in zip(values, codes):
+        meaning, label = meanings.get(int(code), ("absent", UNKNOWN_STATUS_LABEL))
+        if meaning == "valid":
+            cells.append(value)
+        elif meaning == "absent" and labels:
+            cells.append(label)
+        else:
+            cells.append(None)
+    return cells
+
+
 def _regular_index_value_at(index: Any, row_index: int) -> Any:
     if index == "noIndex":
         return row_index
@@ -1031,7 +1059,7 @@ class LimelightRuntime:
             for entry in entries:
                 dataset = handle[entry["dataset"]]
                 total_rows = max(total_rows, dataset.shape[0])
-                columns_data.append(_hdf_array_slice(dataset, entry, 0, limit).tolist())
+                columns_data.append(_hdf_cells(handle, source, entry, 0, limit, labels=True))
 
         row_count = min(limit, total_rows)
         table_rows = [
@@ -1113,7 +1141,7 @@ class LimelightRuntime:
             for start in range(0, total_rows, _HDF_EXPORT_BLOCK_SIZE):
                 end = min(start + _HDF_EXPORT_BLOCK_SIZE, total_rows)
                 block_columns = [
-                    _hdf_array_slice(dataset, entry, start, end).tolist() for dataset, entry in zip(datasets, entries)
+                    _hdf_cells(handle, source, entry, start, end, labels=False) for entry in entries
                 ]
                 for offset in range(end - start):
                     row = [column_values[offset] for column_values in block_columns]

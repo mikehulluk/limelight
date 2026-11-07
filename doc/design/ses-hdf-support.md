@@ -339,7 +339,7 @@ See SES-Q3.
 can then name a status dataset (or a column of one) alongside its values.
 
 ```dhall
-let StatusMeaning = < valid | skip | missing >
+let StatusMeaning = < valid | skip | absent >
 
 let StatusCode =
       { code : Natural
@@ -363,9 +363,9 @@ Writer, as the BigO exporter would use it:
 ```python
 codes = [
     StatusCode(0, "valid",   "Valid"),
-    StatusCode(1, "missing", "Bad read",      marker="cross"),
+    StatusCode(1, "absent",  "Bad read",      marker="cross"),
     StatusCode(2, "skip",    "Not scheduled"),
-    StatusCode(3, "missing", "Row gap",       marker="none"),
+    StatusCode(3, "absent",  "Row gap",       marker="none"),
 ]
 project.add_hdf_dataset(
     id="recording", …, status_codes=codes,
@@ -411,8 +411,9 @@ authoritative (see the comments in `bigoHdfConv.c`).
 
 ### 4.3.1 Detailed design — for review before it is built
 
-Status: **draft.** Work on the large-series engine was started before this
-section was written, and has been paused until it is reviewed. Nothing here is
+Status: **agreed 2026-11-07** (decisions below); **built** on branch
+`feat/status-aware-samples`, unreleased. SES-Q6 is BigO's: it only
+decides which codes BigO declares, not anything in Limelight. Nothing here is
 specific to BigO: the concept is a general **sample status**, meaning one
 integer code per sample plus a table that says what each code means. SES is
 one user of it.
@@ -486,7 +487,7 @@ reader wants, but it changes every existing figure that has NaNs. The options:
 #### D4 — Manifest and writer
 
 ```dhall
-let StatusMeaning = < valid | skip | missing >
+let StatusMeaning = < valid | skip | absent >
 let StatusMarker  = < cross | circle | square | triangle | diamond | none >
 let StatusCode =
       { code : Integer, meaning : StatusMeaning, label : Text
@@ -497,7 +498,10 @@ let HdfStatusBinding = { dataset : Text, column : Optional Natural }
 ```
 
 - **Changes from the earlier sketch:** `code` is `Integer` rather than
-  `Natural`, and `marker` is an enum rather than free text.
+  `Natural`, and `marker` is an enum rather than free text. The meaning is
+  `absent`, not `missing`: `missing` is a Dhall keyword, so a manifest could
+  not name it. Throughout this note, a "missing" code means one whose
+  meaning is `absent`.
 - **Older packages** lack both fields and read as before.
 - **Writer:**
   - `StatusCode(code, meaning, label, marker=None, color=None)`
@@ -518,7 +522,8 @@ as two sources.
   - codes are unique;
   - at most 30 codes mean `missing`;
   - every label is non-empty;
-  - every colour is a `#rrggbb` value;
+  - every colour is one matplotlib accepts (`is_color_like`, as for other
+    artists' colours);
   - an array that has a `status` binding is in a source that declares
     `statusCodes`.
 - **`LL verify`:**
@@ -556,7 +561,7 @@ as two sources.
 | ID | Question | Decision (2026-11-07) |
 |---|---|---|
 | D3-a | Should a zoomed-out view mark plain NaNs (a visible change for existing packages)? | **Yes.** Every kind of missing, NaN included, gets ticks along the foot of the axes when zoomed out. Note it in the CHANGELOG. |
-| D4-a | One code table per source? | Open: the options are worked through below. |
+| D4-a | One code table per source? | **(A): one table per source.** A file whose status datasets give one code different meanings is declared as two sources over the same file. (B) can be added later without breaking packages. |
 | SES-Q4 | Presence or counts? | **Presence only.** A bucket says whether it holds any missing samples of each kind, not how many. |
 | SES-Q5 | Should undeclared codes warn or fail? | **Fail.** `LL verify` reports the package `INVALID`, naming the source, the status dataset and the undeclared codes. The app still draws them, as "Unknown status". |
 | SES-Q6 | Do BigO's four codes map to valid / missing (cross) / skip / missing (no marker)? | Open, for BigO. |
@@ -575,8 +580,8 @@ source is enough.
 sources over the same file.
 
 ```python
-gps = [StatusCode(0, "valid", "Fix"), StatusCode(1, "missing", "No fix"), StatusCode(2, "skip", "Stale")]
-adc = [StatusCode(0, "valid", "OK"),  StatusCode(1, "missing", "Clipped", marker="triangle")]
+gps = [StatusCode(0, "valid", "Fix"), StatusCode(1, "absent", "No fix"), StatusCode(2, "skip", "Stale")]
+adc = [StatusCode(0, "valid", "OK"),  StatusCode(1, "absent", "Clipped", marker="triangle")]
 project.add_hdf_dataset(id="gps", hdf5_path=h5, path="data/log.h5", status_codes=gps,
     y_arrays=[hdf_array("lat", "/gps", column=0, status="/gps_status"), …])
 project.add_hdf_dataset(id="adc", hdf5_path=h5, path="data/log.h5", status_codes=adc,

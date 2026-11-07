@@ -51,7 +51,45 @@ let IndexedTableFromCsv =
 -- dataset laid out rows x columns (row n of every column is sample n, so
 -- one such dataset can back many arrays sharing the source's index without
 -- being split up). Every array of a source has the same length.
-let HdfArrayBinding = { schema : ArraySchema, dataset : Text, column : Optional Natural }
+-- Sample status: an array of integer codes beside the values, one per
+-- sample, and a table on the source saying what each code means.
+--
+-- * `valid`: the sample is its value (a NaN value is still missing).
+-- * `skip`: no sample was expected here - a channel read on every tenth
+--   tick has nine skipped ticks in ten. The line joins the samples either
+--   side, and nothing is marked.
+-- * `absent`: a sample was expected and there is none, for the reason
+--   `label` names. The line breaks; zoomed in, the gap gets `marker` in
+--   `color` (default a red cross), and zoomed out, a tick at the foot of
+--   the axes shows where.
+--
+-- Status is authoritative: a value under a code that is not `valid` is
+-- ignored. A code the table does not declare fails `verify`. At most 30
+-- codes of a source can mean `absent`. (Not `missing`: that is a Dhall
+-- keyword.)
+let StatusMeaning = < valid | skip | absent >
+
+let StatusMarker = < cross | circle | square | triangle | diamond | none >
+
+let StatusCode =
+      { code : Integer
+      , meaning : StatusMeaning
+      , label : Text
+      , marker : Optional StatusMarker
+      , color : Optional Text
+      }
+
+-- Where an array's status codes are: a 1-D integer dataset, or `column` of a
+-- 2-D one, as long as the array. Its codes mean what the source's
+-- `statusCodes` say.
+let HdfStatusBinding = { dataset : Text, column : Optional Natural }
+
+let HdfArrayBinding =
+      { schema : ArraySchema
+      , dataset : Text
+      , column : Optional Natural
+      , status : Optional HdfStatusBinding
+      }
 
 -- An HDF5 file kept outside the package and downloaded when it is needed:
 -- an https `url`, the file's full SHA-256 (64 lower-case hexadecimal
@@ -68,6 +106,9 @@ let IndexedTableFromHdf5 =
       , yArrays : List HdfArrayBinding
       , index : Index
       , largeSeriesChunkSize : Natural
+      -- What the codes of the arrays' `status` datasets mean; one table for
+      -- the whole source. Empty for a source with no status.
+      , statusCodes : List StatusCode
       -- `Some` for a file that is not in the package but at a URL; `path`
       -- is then only the file's name, and nothing is at it in the package.
       , remote : Optional RemoteFile
@@ -85,6 +126,10 @@ let Source = < csv : IndexedTableFromCsv | hdf : IndexedTableFromHdf5 >
 
 in  { SourceFileFingerprint = SourceFileFingerprint
     , HdfArrayBinding = HdfArrayBinding
+    , HdfStatusBinding = HdfStatusBinding
+    , StatusCode = StatusCode
+    , StatusMarker = StatusMarker
+    , StatusMeaning = StatusMeaning
     , RemoteFile = RemoteFile
     , SourceProvenance = SourceProvenance
     , IndexedTableFromCsv = IndexedTableFromCsv

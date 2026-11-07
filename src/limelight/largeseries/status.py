@@ -8,8 +8,9 @@ per sample - and a table saying what each code means:
 * ``skip``: there is no sample here, and none was expected - a sensor that
   is read on every tenth tick has nine skipped ticks in ten. The line joins
   the samples either side, and nothing is marked.
-* ``missing``: a sample was expected and there is none; the line breaks, and
-  the gap is marked as this code's kind of missing.
+* ``absent``: a sample was expected and there is none; the line breaks, and
+  the gap is marked as this code's kind of missing. (Not "missing", which is
+  a Dhall keyword the manifest could not name.)
 
 Each kind of missing is a bit of a per-bucket mask, so the pyramid can say,
 at every zoom, which kinds of missing a bucket holds. Bit 0 is a NaN under a
@@ -36,7 +37,7 @@ MASK_DTYPE = np.uint32
 MAX_KINDS = 32
 MAX_DECLARED_MISSING = MAX_KINDS - FIRST_DECLARED_KIND
 
-MEANINGS = ("valid", "skip", "missing")
+MEANINGS = ("valid", "skip", "absent")
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class StatusMap:
 
     @classmethod
     def from_meanings(cls, entries: list[tuple[int, str]]) -> "StatusMap":
-        """From (code, meaning) pairs in declaration order; missing codes take bits in that order."""
+        """From (code, meaning) pairs in declaration order; absent codes take bits in that order."""
         pairs: dict[int, int] = {}
         next_kind = FIRST_DECLARED_KIND
         for code, meaning in entries:
@@ -58,9 +59,9 @@ class StatusMap:
                 pairs[code] = VALID
             elif meaning == "skip":
                 pairs[code] = SKIP
-            elif meaning == "missing":
+            elif meaning == "absent":
                 if next_kind >= MAX_KINDS:
-                    raise ValueError(f"at most {MAX_DECLARED_MISSING} status codes can mean missing")
+                    raise ValueError(f"at most {MAX_DECLARED_MISSING} status codes can mean absent")
                 pairs[code] = next_kind
                 next_kind += 1
             else:

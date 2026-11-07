@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 from . import largeseries
 from . import refs
 from .hdf_sources import hdf_file_path
+from .largeseries.mpl import MissingStyle
+from .largeseries.status import FIRST_DECLARED_KIND, StatusMap
 from .reader import LimelightPackage
 
 if TYPE_CHECKING:
@@ -13,7 +15,38 @@ if TYPE_CHECKING:
     from .app import LimelightRuntime
 
 
+def status_map_of(source: dict[str, Any]) -> StatusMap:
+    """What the source's status codes mean, missing kinds numbered in declaration order."""
+    return StatusMap.from_meanings([(int(entry["code"]), entry["meaning"]) for entry in source.get("statusCodes") or []])
+
+
+def missing_styles_of(source: dict[str, Any]) -> dict[int, MissingStyle]:
+    """How each declared absent code is marked, by its kind (the order `status_map_of` numbers them in)."""
+    styles: dict[int, MissingStyle] = {}
+    kind = FIRST_DECLARED_KIND
+    for entry in source.get("statusCodes") or []:
+        if entry["meaning"] != "absent":
+            continue
+        defaults = MissingStyle()
+        styles[kind] = MissingStyle(
+            label=entry["label"],
+            marker=entry.get("marker") or defaults.marker,
+            color=entry.get("color") or defaults.color,
+        )
+        kind += 1
+    return styles
+
+
 def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> largeseries.SourceSpec:
+    spec = _hdf_values_spec(source, package, column_name)
+    entry = next(e for e in source["yArrays"] if e["schema"]["name"] == column_name)
+    status = entry.get("status")
+    if not status:
+        return spec
+    return spec.with_status(status["dataset"], status_map_of(source), column=status.get("column"))
+
+
+def _hdf_values_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> largeseries.SourceSpec:
     hdf5_path = hdf_file_path(package, source)
     # name -> (dataset, column): a 1-D dataset, or column j of a 2-D one.
     y_datasets = {entry["schema"]["name"]: (entry["dataset"], entry.get("column")) for entry in source["yArrays"]}
@@ -98,13 +131,14 @@ def install_timeseries_artist(
     fill_color: str | None = None,
     fill_alpha: float | None = None,
     missing_marker: str | None = None,
+    missing_styles: dict[int, MissingStyle] | None = None,
     indicator: bool = True,
     indicator_font: Any | None = None,
     timing: Any | None = None,
 ) -> largeseries.ZoomSync:
     kwargs: dict[str, Any] = {
         "color": color, "fill_color": fill_color, "fill_alpha": fill_alpha, "indicator": indicator,
-        "indicator_font": indicator_font,
+        "indicator_font": indicator_font, "missing_styles": missing_styles,
     }
     if missing_marker is not None:
         kwargs["missing_marker"] = missing_marker

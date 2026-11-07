@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import h5py
+import numpy as np
 
 from .reader import LimelightError
 from .remote_files import RemoteFile, RemoteFileNotDownloaded, download, remote_file_of
@@ -33,10 +34,75 @@ def hdf_file_path(package: Any, source: dict[str, Any]) -> Path:
     return cached
 
 
-def check_hdf_bindings(hdf5_path: Path, y_arrays: list[dict[str, Any]], context: str) -> int:
+STATUS_MEANINGS = ("valid", "skip", "absent")
+# Bits 0 and 1 of a bucket's missing mask are NaN and undeclared codes; the
+# declared missing codes have the rest (largeseries/status.py).
+MAX_MISSING_CODES = 30
+_STATUS_SCAN_BLOCK = 1 << 20
+
+
+def check_status_codes(codes: list[dict[str, Any]], context: str) -> None:
+    """Raise LimelightError for a status code table the viewer could not honour."""
+    from matplotlib.colors import is_color_like
+
+    seen: set[int] = set()
+    missing = 0
+    for entry in codes:
+        code = int(entry["code"])
+        if code in seen:
+            raise LimelightError(f"{context}: status code {code} is declared twice")
+        seen.add(code)
+        if entry["meaning"] not in STATUS_MEANINGS:
+            raise LimelightError(f"{context}: status code {code} has unknown meaning {entry['meaning']!r}")
+        missing += entry["meaning"] == "absent"
+        if not str(entry.get("label") or "").strip():
+            raise LimelightError(f"{context}: status code {code} has no label")
+        color = entry.get("color")
+        if color is not None and not is_color_like(color):
+            raise LimelightError(f"{context}: status code {code} has an invalid color {color!r}")
+    if missing > MAX_MISSING_CODES:
+        raise LimelightError(f"{context}: {missing} status codes mean absent; at most {MAX_MISSING_CODES} can")
+
+
+def _check_status_binding(
+    handle: h5py.File, hdf5_path: Path, name: str, status: dict[str, Any], length: int,
+    declared: set[int], context: str,
+) -> None:
+    """The status dataset exists, is integer, is as long as its array, and uses only declared codes."""
+    dataset_path = status["dataset"]
+    column = status.get("column")
+    dataset = handle.get(dataset_path)
+    where = f"{context}: array {name!r} status {dataset_path!r}"
+    if not isinstance(dataset, h5py.Dataset):
+        raise LimelightError(f"{where} is not in {hdf5_path.name}")
+    if dataset.dtype.kind not in "iu":
+        raise LimelightError(f"{where} is {dataset.dtype}; a status dataset holds integer codes")
+    if column is None and dataset.ndim != 1:
+        raise LimelightError(f"{where} is {dataset.ndim}-D; a 2-D status dataset needs a column")
+    if column is not None:
+        if dataset.ndim != 2:
+            raise LimelightError(f"{where} names column {column}, but is {dataset.ndim}-D, not 2-D")
+        if not 0 <= column < dataset.shape[1]:
+            raise LimelightError(f"{where} names column {column}, but has {dataset.shape[1]} columns")
+    if int(dataset.shape[0]) != length:
+        raise LimelightError(f"{where} has {dataset.shape[0]} rows; the array has {length}")
+    undeclared: set[int] = set()
+    for start in range(0, length, _STATUS_SCAN_BLOCK):
+        block = dataset[start : start + _STATUS_SCAN_BLOCK] if column is None else dataset[start : start + _STATUS_SCAN_BLOCK, column]
+        undeclared.update(int(code) for code in np.unique(block) if int(code) not in declared)
+    if undeclared:
+        shown = ", ".join(str(code) for code in sorted(undeclared)[:10])
+        more = "" if len(undeclared) <= 10 else f" and {len(undeclared) - 10} more"
+        raise LimelightError(f"{where} holds codes the source's statusCodes do not declare: {shown}{more}")
+
+
+def check_hdf_bindings(
+    hdf5_path: Path, y_arrays: list[dict[str, Any]], context: str, *, status_codes: list[dict[str, Any]] | None = None
+) -> int:
     """Raise LimelightError on a binding the file cannot honour; return the row count."""
     if not hdf5_path.is_file():
         raise LimelightError(f"{context}: no such HDF5 file {hdf5_path}")
+    declared = {int(entry["code"]) for entry in status_codes or []}
     lengths: dict[str, int] = {}
     with h5py.File(hdf5_path, "r") as handle:
         for entry in y_arrays:
@@ -64,6 +130,11 @@ def check_hdf_bindings(hdf5_path: Path, y_arrays: list[dict[str, Any]], context:
                         f"which has {dataset.shape[1]} columns"
                     )
             lengths[name] = int(dataset.shape[0])
+            status = entry.get("status")
+            if status:
+                if not declared:
+                    raise LimelightError(f"{context}: array {name!r} has a status dataset, but the source declares no statusCodes")
+                _check_status_binding(handle, hdf5_path, name, status, lengths[name], declared, context)
     if len(set(lengths.values())) > 1:
         described = ", ".join(f"{name}: {length}" for name, length in lengths.items())
         raise LimelightError(f"{context}: arrays differ in length ({described}); every array of a source shares its index")
@@ -88,5 +159,8 @@ def verify_hdf_sources(
                 unchecked.append(f"Source {source['id']!r}: {remote.url} is not downloaded, so its bindings are unchecked")
                 continue
             download(remote)
-        check_hdf_bindings(hdf_file_path(package, source), source["yArrays"], f"Source {source['id']!r}")
+        check_hdf_bindings(
+            hdf_file_path(package, source), source["yArrays"], f"Source {source['id']!r}",
+            status_codes=source.get("statusCodes") or [],
+        )
     return unchecked

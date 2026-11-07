@@ -9,6 +9,17 @@ versions may break things.
 
 ### Added
 
+- **Sample status.** An hdf array can name a status dataset beside its
+  values - one integer code per sample - and its source a table of what the
+  codes mean: `valid`, `skip` (no sample expected: the line joins across it,
+  unmarked) or `absent` (expected and not there, for the reason a label
+  gives: the line breaks, and the gap is marked with the code's own marker
+  and colour, and named once in the legend). Tables show an absent cell's
+  label; a CSV export leaves skipped and absent cells empty. In the writer:
+  `StatusCode`, `hdf_array(..., status=..., status_column=...)` and
+  `add_hdf_dataset(..., status_codes=[...])`. `LL verify` fails on a code
+  the table does not declare.
+
 - **HDF5 data on the web.** An hdf source can name its file by URL, with the
   file's SHA-256 and size in bytes, instead of carrying it:
   `add_hdf_dataset(..., url="https://...")`. The manifest's
@@ -21,6 +32,16 @@ versions may break things.
 - **`--allow-downloads`** for `LL verify` and `LL pdf`. Without it they
   download only from trusted domains, and `verify` reports an undownloaded
   file as `UNCHECKED`.
+
+### Changed
+
+- **Missing samples are pointed out at every zoom.** Zoomed out, a bucket
+  holding a missing sample - a NaN, or an absent status code - now gets a
+  small tick along the foot of the axes, in the kind's colour; before, only
+  the zoomed-in view marked them. A time series' `missingMarker = none`
+  still turns all marks off.
+- **The large-series cache is rebuilt once** (schema 3: each bucket records
+  which kinds of missing sample it holds).
 
 ## [0.0.22] - 2026-10-27
 

@@ -993,6 +993,18 @@ class HdfArraySpec:
     nullable: bool = False
     # Column of a 2-D (rows x columns) dataset; None for a 1-D dataset.
     column: int | None = None
+    # The dataset (or `status_column` of a 2-D one) holding a status code per
+    # sample; its codes mean what the source's status_codes say.
+    status: str | None = None
+    status_column: int | None = None
+
+    def render_status(self) -> str:
+        if self.status is None:
+            return "None Limelight.HdfStatusBinding"
+        if self.status_column is not None and self.status_column < 0:
+            raise ValueError(f"status_column must be a non-negative index, got {self.status_column}")
+        binding = _record([("dataset", _quote(self.status)), ("column", _optional_natural(self.status_column))])
+        return f"Some\n{_indent(binding, 2)}"
 
     def render(self) -> str:
         schema = _record(
@@ -1012,6 +1024,40 @@ class HdfArraySpec:
                 ("schema", schema),
                 ("dataset", _quote(self.dataset)),
                 ("column", _optional_natural(self.column)),
+                ("status", self.render_status()),
+            ]
+        )
+
+
+STATUS_MEANINGS = {"valid", "skip", "absent"}
+STATUS_MARKERS = {"cross", "circle", "square", "triangle", "diamond", "none"}
+
+
+@dataclass
+class StatusCode:
+    """What one status code means: see `add_hdf_dataset(status_codes=...)`.
+
+    `meaning` is "valid" (the sample is its value), "skip" (no sample was
+    expected; the line joins across it) or "absent" (a sample was expected
+    and there is none, for the reason `label` gives). An absent code is
+    marked with `marker` in `color`, default a red cross; `marker="none"`
+    leaves the gap unmarked.
+    """
+
+    code: int
+    meaning: str
+    label: str
+    marker: str | None = None
+    color: str | None = None
+
+    def render(self) -> str:
+        return _record(
+            [
+                ("code", f"{'+' if self.code >= 0 else ''}{self.code}"),
+                ("meaning", _enum("StatusMeaning", STATUS_MEANINGS, self.meaning)),
+                ("label", _quote(self.label)),
+                ("marker", _optional_enum("StatusMarker", STATUS_MARKERS, self.marker)),
+                ("color", _optional_text(self.color)),
             ]
         )
 
@@ -1026,9 +1072,15 @@ def hdf_array(
     unit: str | None = None,
     description: str | None = None,
     nullable: bool = False,
+    status: str | None = None,
+    status_column: int | None = None,
 ) -> HdfArraySpec:
     """One array of an hdf source: `dataset` as it stands, or `column` of it
-    when the dataset is 2-D (rows x columns)."""
+    when the dataset is 2-D (rows x columns).
+
+    `status` names an integer dataset (or `status_column` of a 2-D one) with
+    a code per sample, saying whether each is a value, skipped or missing;
+    the source's `status_codes` say what the codes mean."""
     return HdfArraySpec(
         name=name,
         dataset=dataset,
@@ -1038,6 +1090,8 @@ def hdf_array(
         description=description,
         nullable=nullable,
         column=column,
+        status=status,
+        status_column=status_column,
     )
 
 
@@ -1229,6 +1283,8 @@ class HdfDataset:
     chunk_size: int
     provenance: SourceProvenance | None = None
     signatures: list[DocumentSignature] = field(default_factory=list)
+    # What the arrays' status codes mean; empty for a source with no status.
+    status_codes: list[StatusCode] = field(default_factory=list)
     # Set for a file the package names by URL rather than holding.
     url: str | None = None
     sha256: str | None = None
@@ -1281,6 +1337,7 @@ class HdfDataset:
                 )),
                 ("index", self.index.expr),
                 ("largeSeriesChunkSize", str(self.chunk_size)),
+                ("statusCodes", _list([code.render() for code in self.status_codes], "Limelight.StatusCode")),
                 ("remote", self._render_remote()),
                 ("provenance", _optional_provenance(self.provenance)),
                 ("signatures", _render_signatures(self.signatures)),
@@ -2748,6 +2805,7 @@ class LimelightProject:
         provenance: SourceProvenance | None = None,
         signers: Sequence[tuple[str, bytes]] = (),
         url: str | None = None,
+        status_codes: Sequence[StatusCode] = (),
     ) -> HdfDataset:
         """An hdf source, bundled in the package or, given a `url`, not.
 
@@ -2756,6 +2814,11 @@ class LimelightProject:
         what the bindings are checked against, and the file served at the
         URL must be byte for byte the same. The viewer asks the reader
         before downloading it.
+
+        `status_codes` say what the codes in the arrays' `status` datasets
+        mean (see `StatusCode`); one table serves the whole source. A file
+        whose status datasets give one code different meanings is two
+        sources over the same file.
         """
         dataset = HdfDataset(
             id=id,
@@ -2766,14 +2829,26 @@ class LimelightProject:
             index=index or Index.no_index(),
             chunk_size=chunk_size,
             provenance=provenance,
+            status_codes=list(status_codes),
         )
-        # Check the bindings against the file now, where the mistake is made.
-        from .hdf_sources import check_hdf_bindings
+        # Check the codes and the bindings against the file now, where the mistake is made.
+        from .hdf_sources import check_hdf_bindings, check_status_codes
 
+        codes_payload = [{"code": c.code, "meaning": c.meaning, "label": c.label, "color": c.color} for c in dataset.status_codes]
+        check_status_codes(codes_payload, f"hdf dataset {id!r}")
         check_hdf_bindings(
             dataset.hdf5_source_path,
-            [{"schema": {"name": a.name}, "dataset": a.dataset, "column": a.column} for a in dataset.y_arrays],
+            [
+                {
+                    "schema": {"name": a.name},
+                    "dataset": a.dataset,
+                    "column": a.column,
+                    **({"status": {"dataset": a.status, "column": a.status_column}} if a.status is not None else {}),
+                }
+                for a in dataset.y_arrays
+            ],
             f"hdf dataset {id!r}",
+            status_codes=codes_payload,
         )
         if url is not None:
             from .remote_files import validate_remote

@@ -2013,10 +2013,28 @@ def _draw_plot_contents(
         _format_axis(axes, x_axis_binding, "x")
     else:
         axes.tick_params(axis="x", labelbottom=False)
-    handles, labels = axes.get_legend_handles_labels()
+    handles, labels = _legend_entries(axes)
     if handles:
         text.add_legend(axes, handles, labels, loc="best")
     return list(handles), list(labels)
+
+
+def _legend_entries(axes: Any) -> tuple[list[Any], list[str]]:
+    """The axes' legend entries, each kind of missing sample named once however many series hold it."""
+    from .largeseries.mpl import MISSING_GID
+
+    handles, labels = axes.get_legend_handles_labels()
+    kept_handles: list[Any] = []
+    kept_labels: list[str] = []
+    seen_missing: set[str] = set()
+    for handle, label in zip(handles, labels):
+        if getattr(handle, "get_gid", lambda: None)() == MISSING_GID:
+            if label in seen_missing:
+                continue
+            seen_missing.add(label)
+        kept_handles.append(handle)
+        kept_labels.append(label)
+    return kept_handles, kept_labels
 
 
 def _draw_map_contents(
@@ -6235,6 +6253,7 @@ def _install_timeseries_artist(runtime: LimelightRuntime, axes: Any, artist: dic
         fill_color=artist.get("fillColor"),
         fill_alpha=artist.get("fillAlpha"),
         missing_marker=artist.get("missingMarker"),
+        missing_styles=largeseries_bridge.missing_styles_of(source),
         indicator=runtime.debug_ui,
         indicator_font=runtime.figure_text().badge,
         timing=runtime.timing,
