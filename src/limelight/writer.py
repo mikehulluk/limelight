@@ -1210,6 +1210,14 @@ class ImageAsset:
         )
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @dataclass
 class HdfDataset:
     id: str
@@ -1221,12 +1229,30 @@ class HdfDataset:
     chunk_size: int
     provenance: SourceProvenance | None = None
     signatures: list[DocumentSignature] = field(default_factory=list)
+    # Set for a file the package names by URL rather than holding.
+    url: str | None = None
+    sha256: str | None = None
+    size_bytes: int | None = None
 
     def file_fingerprints(self) -> list[tuple[str, str]]:
-        digest = hashlib.sha256(self.hdf5_source_path.read_bytes()).hexdigest()[:8]
-        return [(self.path, digest)]
+        digest = self.sha256 or _file_sha256(self.hdf5_source_path)
+        return [(self.path, digest[:8])]
+
+    def _render_remote(self) -> str:
+        if self.url is None:
+            return "None Limelight.RemoteFile"
+        remote = _record(
+            [
+                ("url", _quote(self.url)),
+                ("sha256", _quote(self.sha256 or "")),
+                ("sizeBytes", str(self.size_bytes)),
+            ]
+        )
+        return f"Some\n{_indent(remote, 2)}"
 
     def write_source_file(self, package_root: Path) -> None:
+        if self.url is not None:
+            return
         target = package_root / self.path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(self.hdf5_source_path, target)
@@ -1255,6 +1281,7 @@ class HdfDataset:
                 )),
                 ("index", self.index.expr),
                 ("largeSeriesChunkSize", str(self.chunk_size)),
+                ("remote", self._render_remote()),
                 ("provenance", _optional_provenance(self.provenance)),
                 ("signatures", _render_signatures(self.signatures)),
             ]
@@ -2720,7 +2747,16 @@ class LimelightProject:
         path: str | None = None,
         provenance: SourceProvenance | None = None,
         signers: Sequence[tuple[str, bytes]] = (),
+        url: str | None = None,
     ) -> HdfDataset:
+        """An hdf source, bundled in the package or, given a `url`, not.
+
+        With a `url` the file is left out of the package, which records the
+        URL with the SHA-256 and size of `hdf5_path`: that local copy is
+        what the bindings are checked against, and the file served at the
+        URL must be byte for byte the same. The viewer asks the reader
+        before downloading it.
+        """
         dataset = HdfDataset(
             id=id,
             title=title,
@@ -2739,6 +2775,15 @@ class LimelightProject:
             [{"schema": {"name": a.name}, "dataset": a.dataset, "column": a.column} for a in dataset.y_arrays],
             f"hdf dataset {id!r}",
         )
+        if url is not None:
+            from .remote_files import validate_remote
+
+            dataset.url = url
+            dataset.sha256 = _file_sha256(dataset.hdf5_source_path)
+            dataset.size_bytes = dataset.hdf5_source_path.stat().st_size
+            validate_remote(
+                {"url": url, "sha256": dataset.sha256, "sizeBytes": dataset.size_bytes}, f"hdf dataset {id!r}"
+            )
         dataset.signatures = _sign_all(dataset.hdf5_source_path.read_bytes(), signers) if signers else []
         self.hdf_datasets.append(dataset)
         return dataset

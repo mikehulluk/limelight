@@ -7,6 +7,21 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- **HDF5 data on the web.** An hdf source can name its file by URL, with the
+  file's SHA-256 and size in bytes, instead of carrying it:
+  `add_hdf_dataset(..., url="https://...")`. The manifest's
+  `IndexedTableFromHdf5` has a new `remote : Optional RemoteFile`. The app
+  asks before downloading, keeps a download only if it is exactly the
+  described bytes, and stores it by digest in the user's cache folder. Figures
+  and tables from a file that isn't downloaded say so in place.
+- **File › Settings,** with the domains to always download data from
+  (each covers its subdomains). The download prompt can add a domain to it.
+- **`--allow-downloads`** for `LL verify` and `LL pdf`. Without it they
+  download only from trusted domains, and `verify` reports an undownloaded
+  file as `UNCHECKED`.
+
 ## [0.0.22] - 2026-10-27
 
 ### Added

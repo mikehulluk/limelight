@@ -91,10 +91,19 @@ def sign_document(
 
 
 def verify_document_signature(content: bytes, signature: DocumentSignature) -> tuple[bool, str | None]:
+    return verify_digest_signature(hashlib.sha256(content).digest(), signature)
+
+
+def verify_digest_signature(digest: bytes, signature: DocumentSignature) -> tuple[bool, str | None]:
+    """As verify_document_signature, given the document's SHA-256 rather than its bytes.
+
+    A signature is over the digest, so a remote file's signatures can be
+    checked against the digest its manifest declares without downloading it;
+    a download is only kept if it has that digest.
+    """
     if signature.algorithm != ALGORITHM:
         return False, f"unsupported signature algorithm {signature.algorithm!r}"
 
-    digest = hashlib.sha256(content).digest()
     if digest.hex() != signature.content_sha256:
         return False, "content changed since signing"
 
@@ -122,6 +131,12 @@ def verify_manifest_signatures(package: "LimelightPackage", manifest: dict[str, 
     checks: list[SignatureCheck] = []
 
     for source in manifest["sources"]:
+        remote = source.get("remote")
+        if remote:
+            checks.extend(
+                _verify_digest_signatures(remote["url"], bytes.fromhex(remote["sha256"]), source.get("signatures") or [])
+            )
+            continue
         checks.extend(_verify_document_signatures(package, source["path"], source.get("signatures") or []))
 
     story = manifest["story"]
@@ -136,10 +151,17 @@ def _verify_document_signatures(
     if not signature_payloads:
         return []
 
-    content = package.read_bytes(document_path)
+    return _verify_digest_signatures(
+        document_path, hashlib.sha256(package.read_bytes(document_path)).digest(), signature_payloads
+    )
+
+
+def _verify_digest_signatures(
+    document_path: str, digest: bytes, signature_payloads: list[dict[str, Any]]
+) -> list[SignatureCheck]:
     checks: list[SignatureCheck] = []
     for payload in signature_payloads:
         signature = _document_signature_from_payload(payload)
-        ok, reason = verify_document_signature(content, signature)
+        ok, reason = verify_digest_signature(digest, signature)
         checks.append(SignatureCheck(document_path=document_path, signer=signature.signer, ok=ok, reason=reason))
     return checks

@@ -214,6 +214,10 @@ class _SemanticValidator:
     def _collect_dataset_arrays(self) -> None:
         for source in self.manifest["sources"]:
             if _is_hdf_source(source):
+                if source.get("remote"):
+                    from .remote_files import validate_remote
+
+                    validate_remote(source["remote"], f"Source {source['id']!r}")
                 self.hdf_source_ids.add(source["id"])
                 self.dataset_arrays[source["id"]] = {
                     y_array["schema"]["name"] for y_array in source["yArrays"]

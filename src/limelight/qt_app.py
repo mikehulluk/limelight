@@ -165,6 +165,8 @@ from .pdf_export import (
     rasterize_large_artists,
     write_story_pdf,
 )
+from .qt_downloads import SettingsDialog, fetch_remote_files
+from .remote_files import RemoteFileNotDownloaded
 from .settings import load_settings
 from . import updates
 from .metadata import metadata_entries
@@ -1870,7 +1872,13 @@ def _draw_plot_contents(
     for artist, series in zip(visible_artists, all_series):
         if series is None:
             artist_start_time = runtime.timing.start()
-            zoom_sync = _install_timeseries_artist(runtime, axes, artist)
+            try:
+                zoom_sync = _install_timeseries_artist(runtime, axes, artist)
+            except RemoteFileNotDownloaded as error:
+                logger.warning("Figure %r panel %r not drawn: %s", figure_id, axes_spec["id"], error)
+                axes.text(0.5, 0.5, str(error), ha="center", va="center", wrap=True, fontproperties=text.body)
+                axes.set_axis_off()
+                return [], []
             if zoom_sync is not None:
                 if zoom_syncs is not None:
                     zoom_syncs.append(zoom_sync)
@@ -2980,6 +2988,8 @@ class LimelightWindow(QMainWindow):
         self.debug_timing = debug_timing
         self.runtime = LimelightRuntime(package, manifest, debug_timing=debug_timing)
         register_document_fonts(self.runtime)
+        # Before anything is drawn, so figures from downloaded data draw at once.
+        fetch_remote_files(None, self.runtime)
         self.setWindowIcon(_application_icon())
         self.figure_view_windows: dict[tuple[str, int | None], FigureViewWindow] = {}
         self.table_view_windows: dict[tuple[str, str | None], "TableViewWindow"] = {}
@@ -3099,6 +3109,14 @@ class LimelightWindow(QMainWindow):
         document_information_action.triggered.connect(self._show_document_information)
         self.file_menu.addAction(document_information_action)
 
+        self.file_menu.addSeparator()
+
+        settings_action = QAction("&Settings...", self)
+        # On macOS this moves to the application menu, as Preferences.
+        settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
+        settings_action.triggered.connect(self._show_settings)
+        self.file_menu.addAction(settings_action)
+
         self._build_view_menu()
 
         self.help_menu = QMenu("&Help", self)
@@ -3148,6 +3166,9 @@ class LimelightWindow(QMainWindow):
         if path:
             self._open_package_path(path)
 
+    def _show_settings(self) -> None:
+        SettingsDialog(self).exec()
+
     def _reload_package(self) -> None:
         logger.info("Reloading Limelight package %s", self.runtime.package.path)
         self._open_package_path(self.runtime.package.path, error_title="Reload Limelight Package")
@@ -3168,6 +3189,7 @@ class LimelightWindow(QMainWindow):
         try:
             new_runtime = LimelightRuntime(package, manifest, debug_timing=self.debug_timing)
             register_document_fonts(new_runtime)
+            fetch_remote_files(self, new_runtime)
             self.runtime = new_runtime
             self._update_window_title()
             self._build_central_tabs()
@@ -3782,6 +3804,8 @@ class LimelightWindow(QMainWindow):
         caption = figure_spec.get("caption") or ""
         if preview.truncated:
             caption = f"{caption}\n\nShowing {len(preview.rows):,} of {preview.total_rows:,} rows.".strip()
+        if preview.unavailable:
+            caption = f"{caption}\n\n{preview.unavailable}.".strip()
         self.table_caption.setText(caption)
         _populate_table_widget(self.table_widget, preview, table_view_spec, runtime=self.runtime)
         self._shown_table_id = spec_id
@@ -3816,7 +3840,7 @@ class LimelightWindow(QMainWindow):
                     [
                         optional_field(source, "title") or source["id"],
                         "hdf source",
-                        source["path"],
+                        source["remote"]["url"] if source.get("remote") else source["path"],
                         "",
                     ]
                 )
@@ -4690,6 +4714,8 @@ class TableViewWindow(QMainWindow):
         if preview.truncated:
             status = QLabel(f"Showing {len(preview.rows):,} of {preview.total_rows:,} rows")
             layout.addWidget(status)
+        if preview.unavailable:
+            layout.addWidget(QLabel(preview.unavailable))
 
         table = QTableWidget()
         _populate_table_widget(table, preview)

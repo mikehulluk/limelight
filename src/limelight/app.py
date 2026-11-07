@@ -9,6 +9,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from pathlib import Path
 from threading import RLock
 from time import perf_counter
 from typing import Any, Callable, Sequence
@@ -26,6 +27,7 @@ from .geometry import (  # re-exported: the page's numbers live in one place
     MM_PER_INCH,
 )
 from . import refs
+from .hdf_sources import hdf_file_path
 from .logging_config import configure_logging
 from .reader import LimelightError, LimelightPackage, open_limelight
 from .semantic import (
@@ -38,6 +40,7 @@ from .semantic import (
     validate_manifest_semantics,
 )
 from .story_markdown import CAPTION_LABEL_CLASS, figure_caption_markup, numbered_story_items, story_image_references
+from .remote_files import RemoteFile, RemoteFileNotDownloaded, download, remote_file_of
 from .settings import load_settings
 from .story_syntax import CodeToken, parse_code_tokens
 from .typography import (
@@ -193,6 +196,9 @@ class TablePreview:
     # declares them, else its name. `columns` stays the names, which is what
     # a ColumnFormat or a column filter refers to.
     headers: list[str] = field(default_factory=list)
+    # Why there are no rows, when the source's data is at a URL and has not
+    # been downloaded; None otherwise.
+    unavailable: str | None = None
 
 
 _NUMERIC_DTYPES = {"integer", "natural", "double"}
@@ -774,6 +780,28 @@ class LimelightRuntime:
         # large-series cache is being built, from whichever thread is building
         # it; the GUI sets this to show the build's progress.
         self.cache_progress: Callable[[str, str, int, int], None] | None = None
+        # Asked whether a remote hdf file that is not downloaded yet may be
+        # fetched now. None (the app's way) fetches nothing here: the window
+        # asks the reader up front, and a file they declined stays missing.
+        self.allow_download: Callable[[RemoteFile], bool] | None = None
+        self._download_lock = RLock()
+
+    def remote_files(self) -> list[tuple[dict[str, Any], RemoteFile]]:
+        """Every hdf source held at a URL, with the file it names."""
+        return [
+            (source, remote)
+            for source in self.manifest["sources"]
+            if (remote := remote_file_of(source)) is not None
+        ]
+
+    def hdf_path(self, source: dict[str, Any]) -> Path:
+        """Where an hdf source's file is, downloading it first if `allow_download` lets it."""
+        remote = remote_file_of(source)
+        if remote is not None and remote.cached_path() is None and self.allow_download is not None:
+            with self._download_lock:
+                if remote.cached_path() is None and self.allow_download(remote):
+                    download(remote)
+        return hdf_file_path(self.package, source)
 
     def _default_control_parameter_value(self, control_parameter: dict[str, Any]) -> str | float | None:
         data_type = control_parameter["dataType"]
@@ -927,8 +955,13 @@ class LimelightRuntime:
             title = f"{source_id}['{columns_filter[0]}']"
         else:
             title = optional_field(source, "title") or source_id
+        unavailable: str | None = None
         if "yArrays" in source:
-            columns, rows, total_rows = self._hdf_table_rows(source, columns_filter, limit)
+            try:
+                columns, rows, total_rows = self._hdf_table_rows(source, columns_filter, limit)
+            except RemoteFileNotDownloaded as error:
+                columns = columns_filter or [entry["schema"]["name"] for entry in source["yArrays"]]
+                rows, total_rows, unavailable = [], 0, str(error)
         else:
             columns, rows, total_rows = self._csv_table_rows(source, columns_filter, limit)
 
@@ -955,6 +988,7 @@ class LimelightRuntime:
             truncated=total_rows > len(rows),
             column_kinds=column_kinds,
             headers=[_column_header(name, column_schemas[index]) for index, name in enumerate(columns)],
+            unavailable=unavailable,
         )
 
     def _csv_table_rows(
@@ -989,7 +1023,7 @@ class LimelightRuntime:
         else:
             entries = y_arrays
 
-        hdf5_path = self.package.package_path(source["path"])
+        hdf5_path = self.hdf_path(source)
         columns = [entry["schema"]["name"] for entry in entries]
         total_rows = 0
         columns_data: list[list[Any]] = []
@@ -1072,7 +1106,7 @@ class LimelightRuntime:
         header = ["index", *columns] if include_index else columns
         writer.writerow(header)
 
-        hdf5_path = self.package.package_path(source["path"])
+        hdf5_path = self.hdf_path(source)
         with h5py.File(hdf5_path, "r") as handle:
             datasets = [handle[entry["dataset"]] for entry in entries]
             total_rows = max((dataset.shape[0] for dataset in datasets), default=0)

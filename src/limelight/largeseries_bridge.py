@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import largeseries
 from . import refs
+from .hdf_sources import hdf_file_path
 from .reader import LimelightPackage
 
 if TYPE_CHECKING:
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
 
 
 def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> largeseries.SourceSpec:
-    hdf5_path = package.package_path(source["path"])
+    hdf5_path = hdf_file_path(package, source)
     # name -> (dataset, column): a 1-D dataset, or column j of a 2-D one.
     y_datasets = {entry["schema"]["name"]: (entry["dataset"], entry.get("column")) for entry in source["yArrays"]}
     if column_name not in y_datasets:
@@ -64,6 +65,7 @@ def get_or_build_cache(
         handle = runtime._largeseries_caches.get(cache_key)
         if handle is None:
             start_time = runtime.timing.start()
+            runtime.hdf_path(source)  # fetches a remote file, if it may
             spec = hdf_source_spec(source, runtime.package, column_name)
             report = runtime.cache_progress
             progress = (

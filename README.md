@@ -58,6 +58,37 @@ The scripts in `examples/` build sample packages into `_build/examples/`, and
 `src/limelight/language-reference/` holds the Dhall types a manifest is
 written against; the writer copies them into every package it builds.
 
+## Data on the web
+
+A large HDF5 source need not travel inside its package. Given a `url`,
+`add_hdf_dataset` leaves the file out and records the URL with the file's
+SHA-256 and size in bytes instead:
+
+```python
+project.add_hdf_dataset(
+    id="recording",
+    hdf5_path="recording.h5",  # checked against the bindings, then left out
+    y_arrays=[hdf_array("voltage", "/v")],
+    url="https://data.example.org/recording.h5",
+)
+```
+
+The file at the URL must be byte for byte that local copy: a download is kept
+only if its digest and size match. Only `https://` URLs are accepted.
+
+The app asks before downloading, showing each URL and its size, and can be
+told to always allow a domain (which covers its subdomains); File › Settings
+lists those domains for adding and removing. A file that isn't downloaded
+leaves the figures and tables drawn from it saying so; reloading asks again.
+Downloads are kept by digest in the user's cache folder (or
+`LIMELIGHT_DOWNLOAD_DIR`), so each file is fetched once.
+
+`LL verify` and `LL pdf` download only from trusted domains, or from anywhere
+with `--allow-downloads`; `verify` reports a file it didn't download as
+`UNCHECKED`. A hand-written `limelight-setting.json` can trust domains too,
+under `trustedDownloadHosts`. Signatures on a remote file are checked against
+the digest the manifest declares, so they need no download.
+
 ## Type
 
 A document says how every kind of its text is set - body, headings, code,

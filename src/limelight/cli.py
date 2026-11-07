@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -38,6 +38,25 @@ logger = logging.getLogger("limelight.cli")
 COMMANDS = ("json", "summary", "verify", "pdf", "meta", "desktop-entry")
 
 
+_ALLOW_DOWNLOADS_HELP = (
+    "Download any hdf file a package names by URL. Without this, only files from the hosts "
+    "trusted in Settings (or trustedDownloadHosts in limelight-setting.json) are fetched."
+)
+
+
+def _download_policy(allow_all: bool) -> Callable[[Any], bool]:
+    from .remote_files import format_size, host_is_trusted
+    from .settings import trusted_download_hosts
+
+    def allow(remote: Any) -> bool:
+        if not (allow_all or host_is_trusted(remote.host, trusted_download_hosts())):
+            return False
+        print(f"Downloading {remote.url} ({format_size(remote.size_bytes)})", file=sys.stderr)
+        return True
+
+    return allow
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     settings = load_settings()
     pdf_settings = settings.get("pdf", {})
@@ -58,9 +77,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     verify_parser = subparsers.add_parser("verify", help="Validate one or more Limelight packages")
     verify_parser.add_argument("packages", nargs="+", help="Paths to .limelight or .ll folders or archives")
+    verify_parser.add_argument("--allow-downloads", action="store_true", help=_ALLOW_DOWNLOADS_HELP)
 
     pdf_parser = subparsers.add_parser("pdf", help="Render each package's story document to a PDF")
     pdf_parser.add_argument("packages", nargs="+", help="Paths to .limelight or .ll folders or archives")
+    pdf_parser.add_argument("--allow-downloads", action="store_true", help=_ALLOW_DOWNLOADS_HELP)
     pdf_parser.add_argument(
         "--rasterize-above",
         type=_rasterize_threshold,
@@ -113,13 +134,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "desktop-entry":
         return _run_desktop_entry(remove=args.remove)
     if args.command == "verify":
-        return _run_verify(args.packages)
+        return _run_verify(args.packages, allow_download=_download_policy(args.allow_downloads))
     if args.command == "pdf":
         try:
             figure_options = _figure_pdf_options(pdf_settings, args.rasterize_above, args.raster_dpi)
         except (TypeError, ValueError) as error:
             pdf_parser.error(str(error))
-        return _run_pdf(args.packages, rolling_build=args.rolling_build, figure_options=figure_options)
+        return _run_pdf(
+            args.packages,
+            rolling_build=args.rolling_build,
+            figure_options=figure_options,
+            allow_download=_download_policy(args.allow_downloads),
+        )
 
     try:
         with open_limelight(args.package) as package:
@@ -193,17 +219,19 @@ def _summarize(package: LimelightPackage, manifest: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _run_verify(paths: Sequence[str]) -> int:
+def _run_verify(paths: Sequence[str], *, allow_download: Callable[[Any], bool] | None = None) -> int:
     failed = False
     for raw_path in paths:
         try:
             with open_limelight(raw_path) as package:
                 manifest = package.manifest_json()
                 validate_manifest_semantics(manifest)
-                verify_hdf_sources(package, manifest)
+                unchecked = verify_hdf_sources(package, manifest, allow_download=allow_download)
                 verify_fonts(package, manifest)
                 verify_code_tokens(package, manifest)
                 signature_checks = verify_manifest_signatures(package, manifest)
+            for line in unchecked:
+                print(f"UNCHECKED {line}")
             for line in _signature_check_lines(signature_checks):
                 print(line)
                 if line.startswith("INVALID"):
@@ -286,7 +314,13 @@ def _figure_pdf_options(pdf_settings: dict[str, Any], rasterize_above: Any, rast
     return options
 
 
-def _run_pdf(paths: Sequence[str], *, rolling_build: bool = False, figure_options: Any = None) -> int:
+def _run_pdf(
+    paths: Sequence[str],
+    *,
+    rolling_build: bool = False,
+    figure_options: Any = None,
+    allow_download: Callable[[Any], bool] | None = None,
+) -> int:
     import os
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -320,6 +354,7 @@ def _run_pdf(paths: Sequence[str], *, rolling_build: bool = False, figure_option
             manifest = package.manifest_json()
             validate_manifest_semantics(manifest)
             runtime = LimelightRuntime(package, manifest)
+            runtime.allow_download = allow_download
             try:
                 renderers = story_pdf_renderers(runtime, figure_options)
                 if rolling_build:

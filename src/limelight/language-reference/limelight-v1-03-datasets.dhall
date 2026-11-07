@@ -53,6 +53,13 @@ let IndexedTableFromCsv =
 -- being split up). Every array of a source has the same length.
 let HdfArrayBinding = { schema : ArraySchema, dataset : Text, column : Optional Natural }
 
+-- An HDF5 file kept outside the package and downloaded when it is needed:
+-- an https `url`, the file's full SHA-256 (64 lower-case hexadecimal
+-- characters) and its size in bytes. A download is kept only if it is
+-- exactly these bytes. The viewer asks the reader before fetching from a
+-- host they have not said always to allow.
+let RemoteFile = { url : Text, sha256 : Text, sizeBytes : Natural }
+
 let IndexedTableFromHdf5 =
       { id : Core.Id
       , title : Optional Core.DisplayText
@@ -61,6 +68,9 @@ let IndexedTableFromHdf5 =
       , yArrays : List HdfArrayBinding
       , index : Index
       , largeSeriesChunkSize : Natural
+      -- `Some` for a file that is not in the package but at a URL; `path`
+      -- is then only the file's name, and nothing is at it in the package.
+      , remote : Optional RemoteFile
       , provenance : Optional SourceProvenance
       , signatures : List Core.DocumentSignature
       }
@@ -75,6 +85,7 @@ let Source = < csv : IndexedTableFromCsv | hdf : IndexedTableFromHdf5 >
 
 in  { SourceFileFingerprint = SourceFileFingerprint
     , HdfArrayBinding = HdfArrayBinding
+    , RemoteFile = RemoteFile
     , SourceProvenance = SourceProvenance
     , IndexedTableFromCsv = IndexedTableFromCsv
     , IndexedTableFromHdf5 = IndexedTableFromHdf5
