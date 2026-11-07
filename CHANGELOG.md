@@ -7,6 +7,14 @@ versions may break things.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Several time series in one panel all show.** Each series used to set
+  the panel's x range to its own extent as it was drawn, emptying the ones
+  before it, so a panel of recordings kept one per file showed only the
+  last - and a PDF never showed the others. The panel now opens on every
+  series in it, and in the panels sharing its x axis.
+
 ## [0.0.23] - 2026-11-07
 
 ### Added

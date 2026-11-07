@@ -313,6 +313,23 @@ def add_indicator(ax: Axes, color: str, font: Any | None = None) -> Text:
     )
 
 
+_SERIES_X_RANGE = "_limelight_series_x_range"
+
+
+def series_x_union(ax: Axes, x_start: float, x_end: float) -> tuple[float, float]:
+    """Record a series' x extent on `ax`, and return the extent of every series
+    on `ax` and on the axes sharing its x: the range the axes should open on."""
+    own = getattr(ax, _SERIES_X_RANGE, None)
+    if own is not None:
+        x_start, x_end = min(own[0], x_start), max(own[1], x_end)
+    setattr(ax, _SERIES_X_RANGE, (x_start, x_end))
+    for sibling in ax.get_shared_x_axes().get_siblings(ax):
+        other = getattr(sibling, _SERIES_X_RANGE, None)
+        if other is not None:
+            x_start, x_end = min(other[0], x_start), max(other[1], x_end)
+    return x_start, x_end
+
+
 @dataclass
 class ZoomSync:
     """Keeps a min/max envelope on an Axes in sync with the current xlim."""
@@ -356,10 +373,13 @@ class ZoomSync:
         self._connect()
 
     def _install_initial_artists(self) -> None:
-        x_start, x_end = full_x_range(self.handle, self.spec)
+        # The axes open on every series they show - this one, and any already
+        # on them or on axes sharing their x - not on this series alone:
+        # several recordings, one source each, sit side by side on one axis.
+        x_start, x_end = series_x_union(self.ax, *full_x_range(self.handle, self.spec))
         # Setting the limits notifies every series already on these axes, and
-        # every panel sharing them. They are told the range they are already
-        # drawn at, which `_on_xlim_changed` then does nothing about.
+        # every panel sharing them, which redraw for the wider range. A series
+        # told the range it is already drawn at does nothing (`_on_xlim_changed`).
         self.ax.set_xlim(x_start, x_end)
         buckets = self._estimate_target_buckets()
         result = query_range(self.handle, self.spec, x_start, x_end, buckets, timing=self.timing)

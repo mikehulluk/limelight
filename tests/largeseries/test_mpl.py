@@ -295,3 +295,43 @@ def test_installing_a_series_does_not_requery_the_ones_already_there(tmp_path: P
 
     plt.close(figure)
     close_cache(handle)
+
+
+def _recording(tmp_path: Path, name: str, x0: float) -> SourceSpec:
+    path = tmp_path / f"{name}.h5"
+    with h5py.File(path, "w") as handle:
+        handle["/y"] = np.sin(np.arange(5_000) / 50.0)
+    return SourceSpec.uniform(path, "/y", x0=x0, dx=0.1)
+
+
+def test_several_series_on_one_axes_all_show(tmp_path: Path) -> None:
+    """Recordings kept one per file and drawn on one axis open side by side:
+    each series widens the axes to include itself, and none is emptied."""
+    specs = [_recording(tmp_path, f"rec{k}", x0) for k, x0 in enumerate([0.0, 900.0, 2400.0])]
+    fig, ax = plt.subplots()
+    handles = [build_or_get_cache(spec, cache_dir=tmp_path / "cache", chunk_size=64) for spec in specs]
+    try:
+        syncs = [ZoomSync(ax=ax, handle=h, spec=s, indicator=False) for h, s in zip(handles, specs)]
+        assert ax.get_xlim() == (0.0, 2400.0 + 4_999 * 0.1)
+        for sync, spec in zip(syncs, specs):
+            x = np.asarray(sync._line_min.get_xdata())
+            assert x.size and spec.x0 <= x.min() and x.max() <= spec.x0 + 500.0
+    finally:
+        plt.close(fig)
+        for handle in handles:
+            close_cache(handle)
+
+
+def test_panels_sharing_x_open_on_every_series_in_them(tmp_path: Path) -> None:
+    early, late = _recording(tmp_path, "early", 0.0), _recording(tmp_path, "late", 3_000.0)
+    fig, (top, bottom) = plt.subplots(2, 1, sharex=True)
+    handles = [build_or_get_cache(spec, cache_dir=tmp_path / "cache", chunk_size=64) for spec in (early, late)]
+    try:
+        first = ZoomSync(ax=top, handle=handles[0], spec=early, indicator=False)
+        ZoomSync(ax=bottom, handle=handles[1], spec=late, indicator=False)
+        assert top.get_xlim() == bottom.get_xlim() == (0.0, 3_000.0 + 4_999 * 0.1)
+        assert len(first._line_min.get_xdata())
+    finally:
+        plt.close(fig)
+        for handle in handles:
+            close_cache(handle)
