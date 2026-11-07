@@ -551,15 +551,64 @@ as two sources.
 - Table cells; CSV export.
 - An end-to-end package built from an SES-shaped file.
 
-#### Decisions wanted before building
+#### Decisions
 
-| ID | Question |
+| ID | Question | Decision (2026-11-07) |
+|---|---|---|
+| D3-a | Should a zoomed-out view mark plain NaNs (a visible change for existing packages)? | **Yes.** Every kind of missing, NaN included, gets ticks along the foot of the axes when zoomed out. Note it in the CHANGELOG. |
+| D4-a | One code table per source? | Open: the options are worked through below. |
+| SES-Q4 | Presence or counts? | **Presence only.** A bucket says whether it holds any missing samples of each kind, not how many. |
+| SES-Q5 | Should undeclared codes warn or fail? | **Fail.** `LL verify` reports the package `INVALID`, naming the source, the status dataset and the undeclared codes. The app still draws them, as "Unknown status". |
+| SES-Q6 | Do BigO's four codes map to valid / missing (cross) / skip / missing (no marker)? | Open, for BigO. |
+
+#### D4-a — options
+
+The question only matters for a file whose status datasets give the same code
+different meanings. For example, a logger file with
+`/gps_status`, where `1` means "no fix", and `/adc_status`, where `1` means
+"clipped".
+
+**SES, either way:** one `/status` with one meaning per code. One table per
+source is enough.
+
+**(A) One table per source.** A file with two meanings is declared as two
+sources over the same file.
+
+```python
+gps = [StatusCode(0, "valid", "Fix"), StatusCode(1, "missing", "No fix"), StatusCode(2, "skip", "Stale")]
+adc = [StatusCode(0, "valid", "OK"),  StatusCode(1, "missing", "Clipped", marker="triangle")]
+project.add_hdf_dataset(id="gps", hdf5_path=h5, path="data/log.h5", status_codes=gps,
+    y_arrays=[hdf_array("lat", "/gps", column=0, status="/gps_status"), …])
+project.add_hdf_dataset(id="adc", hdf5_path=h5, path="data/log.h5", status_codes=adc,
+    y_arrays=[hdf_array("v0", "/adc", column=0, status="/adc_status", status_column=0), …])
+```
+
+| | |
 |---|---|
-| D3-a | Should a zoomed-out view mark plain NaNs (a visible change for existing packages)? |
-| D4-a | One code table per source? |
-| SES-Q4 | Presence or counts? The proposal: presence. |
-| SES-Q5 | Should undeclared codes warn or fail? The proposal: warn. |
-| SES-Q6 | Do BigO's four codes map to valid / missing (cross) / skip / missing (no marker)? |
+| For | Simplest manifest. Every array of a source reads its codes the same way. |
+| Against | Arrays that share an index are split across sources, so a figure or table names two `data` ids. The file is one file. |
+
+**(B) Named tables in a source.** Each status binding names the table it uses.
+
+```python
+project.add_hdf_dataset(id="log", hdf5_path=h5,
+    status_tables={"gps": gps, "adc": adc},
+    y_arrays=[hdf_array("lat", "/gps", column=0, status="/gps_status", status_table="gps"),
+              hdf_array("v0",  "/adc", column=0, status="/adc_status", status_column=0, status_table="adc"), …])
+```
+
+```dhall
+-- IndexedTableFromHdf5 gains  statusTables : List { id : Text, codes : List StatusCode }
+-- HdfStatusBinding           = { dataset : Text, column : Optional Natural, table : Text }
+```
+
+| | |
+|---|---|
+| For | One source per file, however its status is laid out. |
+| Against | One more name to declare and validate, and a source whose arrays read their codes differently. |
+
+(A) can be widened to (B) later without breaking packages. A one-table source
+would read as a source with one table.
 
 ## 5. Questions for the BigO reviewer
 
