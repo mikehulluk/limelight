@@ -1,8 +1,9 @@
-﻿.venv
+.venv
 __pycache__
-_build/examples/example01-lotka-volterra.limelight
 _build
 dist/
 build/
 .pytest_cache/
 *.egg-info/
+# Editor settings are personal.
+.vscode/
