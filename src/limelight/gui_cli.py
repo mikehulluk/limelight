@@ -39,7 +39,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Log detailed UI/data rendering timings while the app is open",
     )
 
+    # For the packaged-app smoke test: the keychain and the Public Suffix List
+    # load from the bundle. Not in --help.
+    parser.add_argument("--self-check", action="store_true", help=argparse.SUPPRESS)
+
     args = parser.parse_args(argv)
+    if args.self_check:
+        return _self_check()
     log_path = configure_logging(args.log_file)
     logger.info("Limelight GUI started with log file %s", log_path)
 
@@ -52,6 +58,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.exception("Unexpected Limelight failure")
         return 1
 
+    return 0
+
+
+def _self_check() -> int:
+    """Exit 0 if the bundled sign-in dependencies work (a keychain backend may still be absent)."""
+    import keyring
+
+    from .remote_auth import registrable_domain
+
+    # A windowed bundle has no stdout; the exit status is the answer there.
+    if registrable_domain("a.b.example.co.uk") != "example.co.uk":
+        if sys.stderr is not None:
+            print("self-check: the Public Suffix List did not load", file=sys.stderr)
+        return 1
+    backend = keyring.get_keyring()
+    # Windows and macOS always have a keychain; finding none there means the
+    # bundle lost keyring's backends. (Headless Linux CI really has none.)
+    if sys.platform in ("win32", "darwin") and type(backend).__module__.endswith(".fail"):
+        if sys.stderr is not None:
+            print("self-check: no keyring backend in the bundle", file=sys.stderr)
+        return 1
+    if sys.stdout is not None:
+        print(f"self-check: ok (keyring backend {type(backend).__module__}.{type(backend).__name__})")
     return 0
 
 

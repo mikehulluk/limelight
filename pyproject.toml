@@ -42,11 +42,16 @@ dependencies = [
     # one and to instance a weight from a system font that is variable.
     "filelock>=3.12",
     "fonttools>=4.40",
+    # Signing in to fetch remote data: tokens go to the OS keychain (no file
+    # fallback), and the Public Suffix List says what a host's registrable
+    # domain is, offline.
+    "keyring>=24.0",
     "matplotlib>=3.8",
     "mdit-py-plugins>=0.6",
     "numpy>=1.26",
     "packaging>=23.0",
     "pillow>=10.0",
+    "publicsuffixlist>=1.0",
 ]
 
 [project.optional-dependencies]

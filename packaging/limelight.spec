@@ -21,7 +21,7 @@ REPOSITORY_ROOT = Path(SPECPATH).resolve().parent
 VERSION = os.environ.get("LIMELIGHT_VERSION") or installed_version("limelight-app")
 SOURCE_ROOT = REPOSITORY_ROOT / "src"
 
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 datas = [
     (str(SOURCE_ROOT / "limelight" / "assets"), "limelight/assets"),
@@ -30,6 +30,11 @@ datas = [
     # The app reads its own version from the distribution's metadata, for
     # the About box and to know whether a release is newer than itself.
     *copy_metadata("limelight-app"),
+    # keyring finds its backends through its own entry points, which live in
+    # its metadata; without it every keychain looks absent.
+    *copy_metadata("keyring"),
+    # The Public Suffix List, for a host's registrable domain (sign-in checks).
+    *collect_data_files("publicsuffixlist"),
 ]
 
 hiddenimports = [
@@ -38,6 +43,15 @@ hiddenimports = [
     "matplotlib.backends.backend_qtagg",
     # A story's figures are saved to PDF, for the exported PDF to place.
     "matplotlib.backends.backend_pdf",
+    # keyring's backends are imported by name from its entry points.
+    "keyring.backends.chainer",
+    "keyring.backends.fail",
+    "keyring.backends.null",
+    "keyring.backends.SecretService",
+    "keyring.backends.kwallet",
+    "keyring.backends.libsecret",
+    "keyring.backends.macOS",
+    "keyring.backends.Windows",
 ]
 
 # Qt ships far more than this app touches. Dropping the unused modules cuts both

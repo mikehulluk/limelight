@@ -90,6 +90,17 @@ jobs:
           LIMELIGHT_VERSION: ${{ needs.version.outputs.value }}
         run: pyinstaller packaging/limelight.spec --noconfirm
 
+      # The bundle loads keyring's backends (entry points) and the Public
+      # Suffix List, which PyInstaller only finds through the spec.
+      - name: Smoke-test the sign-in dependencies in the bundle
+        shell: bash
+        run: |
+          if [ -x dist/Limelight.app/Contents/MacOS/limelight ]; then
+            dist/Limelight.app/Contents/MacOS/limelight --self-check
+          else
+            dist/limelight/limelight --self-check
+          fi
+
       # --------------------------------------------------------------- Linux
       - name: Build .deb and AppImage
         if: matrix.target == 'linux'
