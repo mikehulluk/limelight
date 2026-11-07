@@ -43,7 +43,8 @@ jobs:
             target: linux
           - os: windows-latest
             target: windows
-          - os: macos-14
+          # macos-14 is no longer offered; macos-15 is Apple silicon too.
+          - os: macos-15
             target: macos
     runs-on: ${{ matrix.os }}
     steps:
@@ -55,6 +56,13 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+
+      # A manual build of a released version (redoing an installer a runner
+      # failed on, say) has to report that version, not the commit's .devN.
+      - name: Pin the version for a manual build of a release
+        if: github.ref_type != 'tag' && inputs.version != '' && inputs.version != '0.0.1'
+        shell: bash
+        run: echo "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LIMELIGHT_APP=${{ inputs.version }}" >> "$GITHUB_ENV"
 
       - name: Install project and build tools
         shell: bash
