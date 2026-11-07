@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .constants import MINMAX_DTYPE
+from .status import MASK_DTYPE, NAN_KIND
 
 
 # A NaN in the source is a missing sample, not a value: a bucket's envelope is
@@ -35,6 +36,31 @@ class LevelArrays:
     y_max: np.ndarray
     x_min: np.ndarray | None
     x_max: np.ndarray | None
+    # Per bucket, which kinds of missing sample it holds: bit k for kind k
+    # (see status.py). None where it was not computed.
+    missing: np.ndarray | None = None
+
+
+def nan_bits(y_block: np.ndarray) -> np.ndarray:
+    """Per-sample missing bits for a series with no status: NAN_KIND wherever y is NaN."""
+    bits = np.zeros(y_block.shape[0], dtype=MASK_DTYPE)
+    if y_block.dtype.kind == "f":
+        bits[np.isnan(y_block)] = MASK_DTYPE(1 << NAN_KIND)
+    return bits
+
+
+def reduce_bits_to_buckets(bits: np.ndarray, chunk_size: int) -> np.ndarray:
+    """OR of the per-sample missing bits over each chunk_size-wide bucket (a short last one included)."""
+    length = bits.shape[0]
+    n_full = length // chunk_size
+    parts = []
+    if n_full > 0:
+        parts.append(np.bitwise_or.reduce(bits[: n_full * chunk_size].reshape(n_full, chunk_size), axis=1))
+    if length > n_full * chunk_size:
+        parts.append(np.array([np.bitwise_or.reduce(bits[n_full * chunk_size :])], dtype=MASK_DTYPE))
+    if not parts:
+        return np.array([], dtype=MASK_DTYPE)
+    return np.concatenate(parts).astype(MASK_DTYPE, copy=False)
 
 
 def reduce_block_to_buckets(
@@ -92,18 +118,24 @@ class LevelZeroBuilder:
         self._y_max_parts: list[np.ndarray] = []
         self._x_min_parts: list[np.ndarray] = []
         self._x_max_parts: list[np.ndarray] = []
+        self._missing_parts: list[np.ndarray] = []
         self._carry_y: np.ndarray | None = None
         self._carry_x: np.ndarray | None = None
+        self._carry_bits: np.ndarray | None = None
         self._total_samples = 0
 
-    def feed(self, y_block: np.ndarray, x_block: np.ndarray | None = None) -> None:
+    def feed(self, y_block: np.ndarray, x_block: np.ndarray | None = None, bits: np.ndarray | None = None) -> None:
+        """Take the next samples. `bits` are their missing-kind bits; without them a NaN is NAN_KIND."""
         if self.irregular_x and x_block is None:
             raise ValueError("irregular_x=True requires x_block on every feed() call")
+        if bits is None:
+            bits = nan_bits(y_block)
 
         self._total_samples += y_block.shape[0]
 
         if self._carry_y is not None:
             y_block = np.concatenate([self._carry_y, y_block])
+            bits = np.concatenate([self._carry_bits, bits])
             if x_block is not None:
                 x_block = np.concatenate([self._carry_x, x_block])
 
@@ -119,6 +151,7 @@ class LevelZeroBuilder:
             )
             self._y_min_parts.append(y_min)
             self._y_max_parts.append(y_max)
+            self._missing_parts.append(reduce_bits_to_buckets(bits[:full_len], self.chunk_size))
             if x_min is not None:
                 self._x_min_parts.append(x_min)
                 self._x_max_parts.append(x_max)
@@ -126,9 +159,11 @@ class LevelZeroBuilder:
         if full_len < length:
             self._carry_y = y_block[full_len:]
             self._carry_x = x_block[full_len:] if x_block is not None else None
+            self._carry_bits = bits[full_len:]
         else:
             self._carry_y = None
             self._carry_x = None
+            self._carry_bits = None
 
     def finish(self) -> LevelArrays:
         if self._carry_y is not None and self._carry_y.shape[0] > 0:
@@ -137,17 +172,20 @@ class LevelZeroBuilder:
             )
             self._y_min_parts.append(y_min)
             self._y_max_parts.append(y_max)
+            self._missing_parts.append(reduce_bits_to_buckets(self._carry_bits, self.chunk_size))
             if x_min is not None:
                 self._x_min_parts.append(x_min)
                 self._x_max_parts.append(x_max)
             self._carry_y = None
             self._carry_x = None
+            self._carry_bits = None
 
         y_min = np.concatenate(self._y_min_parts) if self._y_min_parts else np.array([], dtype=MINMAX_DTYPE)
         y_max = np.concatenate(self._y_max_parts) if self._y_max_parts else np.array([], dtype=MINMAX_DTYPE)
         x_min = np.concatenate(self._x_min_parts) if self.irregular_x and self._x_min_parts else None
         x_max = np.concatenate(self._x_max_parts) if self.irregular_x and self._x_max_parts else None
-        return LevelArrays(y_min=y_min, y_max=y_max, x_min=x_min, x_max=x_max)
+        missing = np.concatenate(self._missing_parts) if self._missing_parts else np.array([], dtype=MASK_DTYPE)
+        return LevelArrays(y_min=y_min, y_max=y_max, x_min=x_min, x_max=x_max, missing=missing)
 
 
 def cascade_levels(level0: LevelArrays, min_level_buckets: int) -> list[LevelArrays]:
@@ -175,7 +213,13 @@ def cascade_levels(level0: LevelArrays, min_level_buckets: int) -> list[LevelArr
                 x_min = np.concatenate([x_min, current.x_min[-1:]])
                 x_max = np.concatenate([x_max, current.x_max[-1:]])
 
-        current = LevelArrays(y_min=y_min, y_max=y_max, x_min=x_min, x_max=x_max)
+        missing = None
+        if current.missing is not None:
+            missing = np.bitwise_or(current.missing[0:paired_len:2], current.missing[1:paired_len:2])
+            if has_remainder:
+                missing = np.concatenate([missing, current.missing[-1:]])
+
+        current = LevelArrays(y_min=y_min, y_max=y_max, x_min=x_min, x_max=x_max, missing=missing)
         levels.append(current)
 
     return levels

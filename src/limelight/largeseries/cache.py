@@ -4,7 +4,7 @@ import datetime
 import hashlib
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -25,6 +25,7 @@ from .exceptions import CacheCorruptError, InvalidSourceSpecError, NonMonotonicX
 from .hashing import StreamingHasher
 from .memo import MemoEntry, lookup_memo, update_memo
 from .pyramid import LevelArrays, LevelZeroBuilder, cascade_levels
+from .status import MASK_DTYPE, StatusMap, kind_bits, masked_values, sample_kinds
 from .timing import TimingProbeLike
 
 
@@ -52,8 +53,15 @@ class SourceSpec:
     # Column of a 2-D dataset for y and x respectively; None for a 1-D one.
     y_column: int | None = None
     x_column: int | None = None
+    # A status code per sample, and what each code means (see status.py);
+    # None for a series whose only missing samples are its NaNs.
+    status_dataset: str | None = None
+    status_column: int | None = None
+    status_map: StatusMap | None = None
 
     def __post_init__(self) -> None:
+        if (self.status_dataset is None) != (self.status_map is None):
+            raise InvalidSourceSpecError("a status dataset and a status map come together")
         if self.irregular_x and self.x_dataset is None:
             raise InvalidSourceSpecError("irregular_x=True requires an x_dataset")
         if not self.irregular_x and self.x_dataset is not None:
@@ -92,10 +100,31 @@ class SourceSpec:
             y_column=y_column, x_column=x_column,
         )
 
+    def with_status(self, status_dataset: str, status_map: StatusMap, *, column: int | None = None) -> "SourceSpec":
+        """This series, with `status_dataset` (or its `column`) saying what each sample is."""
+        return replace(self, status_dataset=status_dataset, status_column=column, status_map=status_map)
+
     @property
     def y_selector(self) -> str:
-        """The y array as one string, for cache keys and messages: `/values[3]` or `/y`."""
+        """The y array as one string, for messages: `/values[3]` or `/y`."""
         return _selector(self.y_dataset, self.y_column)
+
+    @property
+    def cache_selector(self) -> str:
+        """What the cache is of: the y array, and its status array and the meaning of its codes, if any."""
+        if self.status_dataset is None or self.status_map is None:
+            return self.y_selector
+        return f"{self.y_selector}|status={_selector(self.status_dataset, self.status_column)}@{self.status_map.fingerprint()}"
+
+    def open_status(self) -> ArraySource | None:
+        if self.status_dataset is None:
+            return None
+        return HdfArraySource(self.hdf5_path, self.status_dataset, self.status_column)
+
+    def bits_and_values(self, y_block: np.ndarray, status_block: np.ndarray | None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(per-sample kinds, missing bits, values NaN wherever not VALID) for a block of samples."""
+        kinds = sample_kinds(y_block, status_block, self.status_map)
+        return kinds, kind_bits(kinds), masked_values(y_block, kinds)
 
     def x_of_coord(self, coord: np.ndarray | float) -> np.ndarray | float:
         """Axis position of a raw coordinate (irregular) or sample index (uniform)."""
@@ -203,7 +232,7 @@ def build_or_get_cache(
 
 
 def _build_lock_name(source_path: Path, spec: SourceSpec) -> str:
-    key = f"{source_path}::{spec.y_selector}".encode("utf-8", "surrogateescape")
+    key = f"{source_path}::{spec.cache_selector}".encode("utf-8", "surrogateescape")
     return "build-" + hashlib.sha256(key).hexdigest()[:16]
 
 
@@ -240,7 +269,7 @@ def _open_memoised_cache(
     timing: TimingProbeLike | None,
 ) -> CacheHandle | None:
     """The cache the memo records for this source as it is now, if it is there and sound."""
-    entry = lookup_memo(cache_dir, source_path, spec.y_selector, mtime_ns, size, chunk_size)
+    entry = lookup_memo(cache_dir, source_path, spec.cache_selector, mtime_ns, size, chunk_size)
     if entry is None:
         return None
     dest = cache_dir / f"{entry.content_hash}.h5"
@@ -287,37 +316,54 @@ def _build_cache(
 
     y_array = spec.open_y()
     x_array = spec.open_x()
+    status_array = spec.open_status()
     try:
         source_length = y_array.length
         dtype = y_array.dtype
         x_dtype = x_array.dtype if x_array is not None else None
+        if status_array is not None:
+            if status_array.length != source_length:
+                raise InvalidSourceSpecError(
+                    f"{spec.hdf5_path}: status {spec.status_dataset!r} has {status_array.length} samples, "
+                    f"{spec.y_selector} has {source_length}"
+                )
+            if status_array.dtype.kind not in "iu":
+                raise InvalidSourceSpecError(
+                    f"{spec.hdf5_path}: status {spec.status_dataset!r} is {status_array.dtype}, not an integer type"
+                )
+            # The same data read with codes meaning something else is another cache.
+            hasher.update(np.frombuffer(spec.status_map.fingerprint().encode("ascii"), dtype=np.uint8))
 
+        x_blocks = x_array.iter_blocks(block) if x_array is not None else None
+        status_blocks = status_array.iter_blocks(block) if status_array is not None else None
         samples_done = 0
-        if x_array is not None:
-            # Every range query searches the x bounds, so x has to be sorted;
-            # the one pass over it that the build makes is where to be sure.
-            previous_last: float | None = None
-            for y_block, x_block in zip(y_array.iter_blocks(block), x_array.iter_blocks(block)):
+        # Every range query searches the x bounds, so x has to be sorted;
+        # the one pass over it that the build makes is where to be sure.
+        previous_last: float | None = None
+        for y_block in y_array.iter_blocks(block):
+            x_block = next(x_blocks) if x_blocks is not None else None
+            status_block = next(status_blocks) if status_blocks is not None else None
+            hasher.update(y_block)
+            if x_block is not None:
                 _require_non_decreasing(x_block, previous_last, samples_done, spec)
                 if x_block.shape[0]:
                     previous_last = float(x_block[-1])
-                hasher.update(y_block)
                 hasher.update(x_block)
+            if status_block is not None:
+                hasher.update(status_block)
+                _, bits, values = spec.bits_and_values(y_block, status_block)
+                builder.feed(values, x_block, bits)
+            else:
                 builder.feed(y_block, x_block)
-                samples_done += y_block.shape[0]
-                if progress is not None:
-                    progress(samples_done, source_length)
-        else:
-            for y_block in y_array.iter_blocks(block):
-                hasher.update(y_block)
-                builder.feed(y_block, None)
-                samples_done += y_block.shape[0]
-                if progress is not None:
-                    progress(samples_done, source_length)
+            samples_done += y_block.shape[0]
+            if progress is not None:
+                progress(samples_done, source_length)
     finally:
         y_array.close()
         if x_array is not None:
             x_array.close()
+        if status_array is not None:
+            status_array.close()
 
     level0 = builder.finish()
     content_hash = hasher.hexdigest()
@@ -339,7 +385,7 @@ def _build_cache(
     update_memo(
         resolved_cache_dir,
         source_path,
-        spec.y_selector,
+        spec.cache_selector,
         MemoEntry(
             mtime_ns=mtime_ns,
             size=size,
@@ -407,6 +453,8 @@ def open_existing_cache(cache_dir: Path, content_hash: str) -> CacheHandle:
                 f"/levels/{level}/x_min" not in handle_file or f"/levels/{level}/x_max" not in handle_file
             ):
                 raise CacheCorruptError(f"{path} is missing level {level} x data")
+            if f"/levels/{level}/missing" not in handle_file:
+                raise CacheCorruptError(f"{path} is missing level {level} missing-sample data")
 
         return CacheHandle(
             path=path,
@@ -453,13 +501,15 @@ def _write_cache_file(
                 handle.attrs["x_dtype"] = str(x_dtype)
             handle.attrs["n_levels"] = len(levels)
             handle.attrs["source_path_hint"] = str(spec.hdf5_path)
-            handle.attrs["dataset_path_hint"] = spec.y_selector
+            handle.attrs["dataset_path_hint"] = spec.cache_selector
             handle.attrs["built_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             for level_index, level in enumerate(levels):
                 group = handle.create_group(f"/levels/{level_index}")
                 group.create_dataset("y_min", data=level.y_min, compression="lzf")
                 group.create_dataset("y_max", data=level.y_max, compression="lzf")
+                missing = level.missing if level.missing is not None else np.zeros(len(level.y_min), dtype=MASK_DTYPE)
+                group.create_dataset("missing", data=missing.astype(MASK_DTYPE, copy=False), compression="lzf")
                 if spec.irregular_x:
                     group.create_dataset("x_min", data=level.x_min, compression="lzf")
                     group.create_dataset("x_max", data=level.x_max, compression="lzf")

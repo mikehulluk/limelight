@@ -6,7 +6,10 @@ DEFAULT_CHUNK_SIZE: int = 4096
 MIN_LEVEL_BUCKETS: int = 8
 # 2: level buckets are NaN-aware (a NaN sample no longer blanks its bucket), so
 #    a cache built by version 1 over data with NaNs draws differently and is rebuilt.
-SCHEMA_VERSION: int = 2
+# 3: each level stores, per bucket, a mask of the kinds of missing sample it
+#    holds (status.py), and a series can have a status array; a version 2
+#    cache has no mask and is rebuilt.
+SCHEMA_VERSION: int = 3
 HASH_STREAM_BLOCK: int = 1 << 20
 MINMAX_DTYPE = np.float64
 CONTENT_HASH_DIGEST_SIZE: int = 16

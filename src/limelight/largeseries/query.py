@@ -8,7 +8,8 @@ import numpy as np
 from .cache import CacheHandle, SourceSpec
 from .constants import MINMAX_DTYPE
 from .exceptions import UnsupportedQueryError
-from .pyramid import reduce_block_to_buckets
+from .pyramid import nan_bits, reduce_bits_to_buckets, reduce_block_to_buckets
+from .status import MASK_DTYPE, SKIP
 from .timing import TimingProbeLike
 
 
@@ -24,6 +25,25 @@ class QueryResult:
     raw: bool = False
     # Number of source samples covered by the query (before any reduction).
     sample_count: int = 0
+    # Per point, the kinds of missing sample it stands for (status.py's bits):
+    # for a raw point its own kind, for a bucket every kind it holds. Points
+    # for skipped samples, and buckets of nothing but skipped samples, are
+    # left out altogether, so the line joins across them.
+    missing: np.ndarray | None = None
+
+
+def _without_skipped(result_fields: dict, keep: np.ndarray) -> dict:
+    if keep.all():
+        return result_fields
+    return {
+        name: (value[keep] if isinstance(value, np.ndarray) and value.shape[:1] == keep.shape else value)
+        for name, value in result_fields.items()
+    }
+
+
+def _skipped_buckets(y_min: np.ndarray, missing: np.ndarray) -> np.ndarray:
+    """A bucket with no value and no missing sample held only skipped ones."""
+    return np.isnan(y_min) & (missing == 0)
 
 
 def query_range(
@@ -47,7 +67,9 @@ def query_range(
     i1 = min(handle.source_length, i1)
     if i0 >= i1:
         empty = np.array([], dtype=MINMAX_DTYPE)
-        result = QueryResult(x=empty, y_min=empty, y_max=empty, level=-1, from_cache=False)
+        result = QueryResult(
+            x=empty, y_min=empty, y_max=empty, level=-1, from_cache=False, missing=np.array([], dtype=MASK_DTYPE)
+        )
     else:
         requested_samples = i1 - i0
         target_bucket_width = requested_samples / target_buckets
@@ -67,6 +89,7 @@ def query_range(
             group = handle.level_group(level)
             y_min = np.asarray(group["y_min"][bucket_id0:bucket_id1])
             y_max = np.asarray(group["y_max"][bucket_id0:bucket_id1])
+            missing = np.asarray(group["missing"][bucket_id0:bucket_id1])
 
             if handle.irregular_x:
                 x_min = np.asarray(group["x_min"][bucket_id0:bucket_id1])
@@ -76,9 +99,10 @@ def query_range(
                 centers = (np.arange(bucket_id0, bucket_id1, dtype=np.float64) + 0.5) * bucket_width
                 x = spec.x_of_coord(centers)
 
-            result = QueryResult(
-                x=x, y_min=y_min, y_max=y_max, level=level, from_cache=True, sample_count=requested_samples
+            fields = _without_skipped(
+                {"x": x, "y_min": y_min, "y_max": y_max, "missing": missing}, ~_skipped_buckets(y_min, missing)
             )
+            result = QueryResult(level=level, from_cache=True, sample_count=requested_samples, **fields)
         else:
             result = _raw_fallback(handle, spec, i0, i1, target_buckets)
 
@@ -112,6 +136,18 @@ def _raw_fallback(
     finally:
         y_array.close()
 
+    status_array = spec.open_status()
+    if status_array is not None:
+        try:
+            kinds, bits, y_values = spec.bits_and_values(y_raw, status_array.read_range(i0, i1))
+        finally:
+            status_array.close()
+        not_skipped = kinds != SKIP
+    else:
+        bits = nan_bits(y_raw)
+        y_values = y_raw.astype(MINMAX_DTYPE, copy=False)
+        not_skipped = np.ones(y_raw.shape[0], dtype=bool)
+
     x_raw = None
     x_array = spec.open_x()
     if x_array is not None:
@@ -128,13 +164,12 @@ def _raw_fallback(
         x = spec.x_of_coord(np.arange(i0, i1, dtype=np.float64))
 
     if sample_count <= target_buckets:
-        y = y_raw.astype(MINMAX_DTYPE, copy=False)
-        return QueryResult(
-            x=x, y_min=y, y_max=y, level=-1, from_cache=False, raw=True, sample_count=sample_count
-        )
+        fields = _without_skipped({"x": x, "y_min": y_values, "y_max": y_values, "missing": bits}, not_skipped)
+        return QueryResult(level=-1, from_cache=False, raw=True, sample_count=sample_count, **fields)
 
     bucket_width = -(-sample_count // target_buckets)  # ceil division
-    y_min, y_max, x_min, x_max = reduce_block_to_buckets(y_raw, x_raw, bucket_width)
+    y_min, y_max, x_min, x_max = reduce_block_to_buckets(y_values, x_raw, bucket_width)
+    missing = reduce_bits_to_buckets(bits, bucket_width)
 
     if x_raw is not None and x_min is not None and x_max is not None:
         bucket_x = spec.x_of_coord((x_min.astype(np.float64) + x_max.astype(np.float64)) / 2.0)
@@ -143,9 +178,10 @@ def _raw_fallback(
         bucket_centers = (np.arange(n_buckets, dtype=np.float64) + 0.5) * bucket_width
         bucket_x = spec.x_of_coord(i0 + bucket_centers)
 
-    return QueryResult(
-        x=bucket_x, y_min=y_min, y_max=y_max, level=-1, from_cache=False, sample_count=sample_count
+    fields = _without_skipped(
+        {"x": bucket_x, "y_min": y_min, "y_max": y_max, "missing": missing}, ~_skipped_buckets(y_min, missing)
     )
+    return QueryResult(level=-1, from_cache=False, sample_count=sample_count, **fields)
 
 
 def full_x_range(handle: CacheHandle, spec: SourceSpec) -> tuple[float, float]:

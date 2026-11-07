@@ -11,6 +11,7 @@ from matplotlib.text import Text
 
 from .cache import CacheHandle, SourceSpec
 from .query import QueryResult, full_x_range, query_range
+from .status import NAN_KIND, UNKNOWN_KIND, kinds_in_mask
 from .timing import TimingProbeLike
 
 # Buckets across the axes when its pixel width is not known (a figure that
@@ -28,6 +29,32 @@ MISSING_MARKERS = ("cross", "none")
 DEFAULT_MISSING_MARKER = "cross"
 MISSING_MARK_COLOR = "#d62728"
 MISSING_MARK_SIZE_PT = 5.0
+
+# The shapes a kind of missing sample can be marked with, as matplotlib markers.
+MARK_SHAPES = {"cross": "x", "circle": "o", "square": "s", "triangle": "^", "diamond": "D", "none": None}
+# Zoomed out, a bucket holding a kind of missing sample gets a tick of that
+# kind's colour along the foot of the axes, this far up (axes fraction).
+RUG_Y = 0.0
+RUG_MARKER_SIZE_PT = 6.0
+MISSING_GID = "limelight-missing"
+
+
+@dataclass(frozen=True)
+class MissingStyle:
+    """How one kind of missing sample is shown: its marker shape and colour,
+    and its name in the legend (None: no legend entry)."""
+
+    label: str | None = None
+    marker: str = "cross"
+    color: str = MISSING_MARK_COLOR
+
+
+# The two kinds every series can have. A plain NaN keeps the red cross it
+# always had, unnamed; a status code no one declared is grey.
+DEFAULT_MISSING_STYLES: dict[int, MissingStyle] = {
+    NAN_KIND: MissingStyle(),
+    UNKNOWN_KIND: MissingStyle(label="Unknown status", color="#7f7f7f"),
+}
 
 
 def missing_sample_marks(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -48,6 +75,112 @@ def missing_sample_marks(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.n
     return x[missing], y[last_good[missing]]
 
 
+class MissingMarks:
+    """The marks for a series' missing samples, one pair of lines per kind of missing.
+
+    Zoomed in to raw samples, each missing sample gets its kind's marker at
+    the height of the last good sample before it (as `missing_sample_marks`).
+    Zoomed out, a sample cannot be picked out, so each bucket that holds a
+    kind of missing gets a tick in that kind's colour along the foot of the
+    axes instead: a reader sees where data is missing, and which kind, at
+    any zoom.
+
+    Lines are made for the kinds `kinds_present` names (a series' whole
+    extent, which the first, zoomed-out query shows), so the legend - built
+    once the figure is drawn - names every kind the series has.
+    """
+
+    def __init__(
+        self,
+        ax: Axes,
+        *,
+        kinds_present: list[int],
+        styles: dict[int, MissingStyle] | None = None,
+        enabled: bool = True,
+    ) -> None:
+        self.ax = ax
+        self.enabled = enabled
+        all_styles = {**DEFAULT_MISSING_STYLES, **(styles or {})}
+        self.points: dict[int, Line2D] = {}
+        self.rugs: dict[int, Line2D] = {}
+        if not enabled:
+            return
+        for kind in kinds_present:
+            style = all_styles.get(kind, MissingStyle())
+            shape = MARK_SHAPES.get(style.marker, "x")
+            if shape is None:
+                continue
+            filled = shape != "x"
+            (points,) = ax.plot(
+                [], [],
+                linestyle="none",
+                marker=shape,
+                markersize=MISSING_MARK_SIZE_PT,
+                markeredgewidth=1.0,
+                color=style.color,
+                markerfacecolor=style.color if filled else "none",
+                label=style.label or "_nolegend_",
+                zorder=4,
+                gid=MISSING_GID,
+            )
+            (rug,) = ax.plot(
+                [], [],
+                linestyle="none",
+                marker="|",
+                markersize=RUG_MARKER_SIZE_PT,
+                markeredgewidth=1.0,
+                color=style.color,
+                transform=ax.get_xaxis_transform(),
+                label="_nolegend_",
+                zorder=4,
+                clip_on=False,
+            )
+            self.points[kind] = points
+            self.rugs[kind] = rug
+
+    def update(self, result: QueryResult) -> None:
+        missing = result.missing
+        for kind in self.points:
+            points, rug = self.points[kind], self.rugs[kind]
+            if missing is None or not len(result.x):
+                points.set_data([], [])
+                rug.set_data([], [])
+                continue
+            has_kind = (missing >> kind & 1).astype(bool)
+            if result.raw:
+                mx, my = missing_kind_marks(result.x, result.y_min, has_kind)
+                points.set_data(mx, my)
+                rug.set_data([], [])
+            else:
+                points.set_data([], [])
+                bucket_x = result.x[has_kind]
+                rug.set_data(bucket_x, np.full(bucket_x.shape, RUG_Y))
+            points.set_visible(result.raw)
+            rug.set_visible(not result.raw)
+
+    def get_visible(self) -> bool:
+        return any(line.get_visible() and len(line.get_xdata()) for line in [*self.points.values(), *self.rugs.values()])
+
+
+def missing_kind_marks(x: np.ndarray, y: np.ndarray, is_kind: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """As `missing_sample_marks`, for the samples `is_kind` picks out (which are NaN in `y`)."""
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    missing = np.isnan(y)
+    if not is_kind.any() or missing.all():
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    good = np.flatnonzero(~missing)
+    last_good = good[np.clip(np.searchsorted(good, np.arange(len(y)), side="right") - 1, 0, None)]
+    return x[is_kind], y[last_good[is_kind]]
+
+
+def kinds_present(result: QueryResult) -> list[int]:
+    """Every kind of missing in a query's points: for a query over a whole series, the series'."""
+    if result.missing is None or not len(result.missing):
+        return []
+    return kinds_in_mask(int(np.bitwise_or.reduce(result.missing)))
+
+
 def plot_envelope(
     ax: Axes,
     result: QueryResult,
@@ -58,9 +191,10 @@ def plot_envelope(
     line_kwargs: dict | None = None,
     fill_kwargs: dict | None = None,
     missing_marker: str = DEFAULT_MISSING_MARKER,
-) -> tuple[Line2D, Line2D, PolyCollection, Line2D]:
+    missing_styles: dict[int, MissingStyle] | None = None,
+) -> tuple[Line2D, Line2D, PolyCollection, MissingMarks]:
     """Draws a min/max envelope: two edge lines and the band between them,
-    plus the marks for missing samples (see `missing_sample_marks`).
+    plus the marks for missing samples (see `MissingMarks`).
 
     `color` is the edge colour and, unless `fill_color` is given, the band
     colour too; the band is opaque unless `fill_alpha` says otherwise. With no
@@ -83,7 +217,9 @@ def plot_envelope(
     (line_min,) = ax.plot(result.x, result.y_min, **line_kwargs)
     (line_max,) = ax.plot(result.x, result.y_max, **line_kwargs)
     fill = ax.fill_between(result.x, result.y_min, result.y_max, **fill_kwargs)
-    marks = add_missing_marks(ax, visible=missing_marker != "none")
+    marks = MissingMarks(
+        ax, kinds_present=kinds_present(result), styles=missing_styles, enabled=missing_marker != "none"
+    )
     _apply_envelope_mode(line_max, fill, marks, result)
 
     return line_min, line_max, fill, marks
@@ -112,7 +248,7 @@ def update_envelope_artists(
     line_max: Line2D,
     fill: PolyCollection,
     result: QueryResult,
-    marks: Line2D | None = None,
+    marks: MissingMarks | None = None,
 ) -> None:
     line_min.set_data(result.x, result.y_min)
     line_max.set_data(result.x, result.y_max)
@@ -123,29 +259,21 @@ def update_envelope_artists(
 
 
 def _apply_envelope_mode(
-    line_max: Line2D, fill: PolyCollection, marks: Line2D | None, result: QueryResult
+    line_max: Line2D, fill: PolyCollection, marks: MissingMarks | None, result: QueryResult
 ) -> None:
-    """Show the envelope only when there is one, and the marks only when there isn't.
+    """Show the envelope only when there is one.
 
     Once the query returns raw samples (zoomed in far enough that every point is
     a single source value) y_min and y_max coincide, so the max line and the
     fill would just retrace the min line; hide them and let the min line stand
-    as the plain data line. That is also the only view in which a missing
-    sample is an identifiable point, so the marks are placed then and cleared
-    otherwise.
+    as the plain data line. The missing-sample marks follow the same switch
+    (see `MissingMarks`).
     """
     show_envelope = not result.raw
     line_max.set_visible(show_envelope)
     fill.set_visible(show_envelope)
     if marks is not None:
-        enabled = getattr(marks, "_limelight_marks_enabled", True)
-        if result.raw and enabled:
-            mx, my = missing_sample_marks(result.x, result.y_min)
-            marks.set_data(mx, my)
-            marks.set_visible(True)
-        else:
-            marks.set_data([], [])
-            marks.set_visible(False)
+        marks.update(result)
 
 
 def indicator_label(result: QueryResult) -> str:
@@ -204,11 +332,14 @@ class ZoomSync:
     indicator_font: Any | None = None
     # "cross" marks each missing sample in the raw view; "none" leaves the gap.
     missing_marker: str = DEFAULT_MISSING_MARKER
+    # How each kind of missing sample is marked, by kind (status.py); kinds
+    # not named here take DEFAULT_MISSING_STYLES, else a red cross.
+    missing_styles: dict[int, MissingStyle] | None = None
 
     _line_min: Line2D | None = field(default=None, init=False, repr=False)
     _line_max: Line2D | None = field(default=None, init=False, repr=False)
     _fill: PolyCollection | None = field(default=None, init=False, repr=False)
-    _marks: Line2D | None = field(default=None, init=False, repr=False)
+    _marks: MissingMarks | None = field(default=None, init=False, repr=False)
     _indicator: Text | None = field(default=None, init=False, repr=False)
     _cid: int | None = field(default=None, init=False, repr=False)
     # The (x_start, x_end, buckets) the artists currently show, so a
@@ -230,7 +361,7 @@ class ZoomSync:
         self._drawn = (x_start, x_end, buckets)
         self._line_min, self._line_max, self._fill, self._marks = plot_envelope(
             self.ax, result, color=self.color, fill_color=self.fill_color, fill_alpha=self.fill_alpha,
-            missing_marker=self.missing_marker,
+            missing_marker=self.missing_marker, missing_styles=self.missing_styles,
         )
         if self.indicator:
             self._indicator = add_indicator(self.ax, self._line_min.get_color(), self.indicator_font)
