@@ -2733,6 +2733,16 @@ class UpdateDialog(QDialog):
         self.close_button = buttons.addButton("Later", QDialogButtonBox.ButtonRole.RejectRole)
         self.close_button.clicked.connect(self.reject)
         layout.addWidget(buttons)
+        if kind is updates.InstallKind.SOURCE_CHECKOUT:
+            # Nothing to download: the checkout moves with git. Say how, and
+            # offer no button that would replace it with a release.
+            folder = updates.editable_checkout()
+            self.update_button.hide()
+            self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.status.setText(
+                "This copy runs from a source checkout. To update it, run in a terminal:\n"
+                + updates.checkout_update_command(folder or Path("<checkout>"))
+            )
 
     def _update_button_text(self) -> str:
         if self.kind is updates.InstallKind.WINDOWS_INSTALLER:
@@ -2789,7 +2799,11 @@ class UpdateDialog(QDialog):
 
     # ---- pip / uv: upgrade the package in place ----
     def _apply_python_package(self) -> None:
-        command = updates.python_upgrade_command(self.kind, self.release.version)
+        try:
+            command = updates.python_upgrade_command(self.kind, self.release.version)
+        except updates.UpdateError as error:
+            self.status.setText(str(error))
+            return
         self.update_button.setEnabled(False)
         self.notes.hide()
         self.output.show()

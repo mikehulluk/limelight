@@ -67,6 +67,8 @@ def test_is_newer(candidate: str, current: str, newer: bool) -> None:
     ],
 )
 def test_install_kind_is_told_from_how_the_app_runs(monkeypatch, tmp_path, frozen, platform, environ, prefix, kind) -> None:
+    # The tests themselves run from an editable checkout: these rows are not one.
+    monkeypatch.setattr(updates, "editable_checkout", lambda: None)
     monkeypatch.setattr(sys, "frozen", frozen, raising=False)
     monkeypatch.setattr(sys, "platform", platform)
     # A uv tool environment is known by the receipt uv leaves at its root.
@@ -81,6 +83,40 @@ def test_install_kind_is_told_from_how_the_app_runs(monkeypatch, tmp_path, froze
     assert updates.install_kind() is kind
 
 
+def test_an_editable_install_is_a_source_checkout(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    monkeypatch.setattr(updates, "editable_checkout", lambda: tmp_path)
+    assert updates.install_kind() is updates.InstallKind.SOURCE_CHECKOUT
+    assert not updates.InstallKind.SOURCE_CHECKOUT.updates_in_place
+    assert str(tmp_path) in updates.describe_install(updates.InstallKind.SOURCE_CHECKOUT)
+    assert updates.checkout_update_command(tmp_path) == f"cd {tmp_path} && git pull && uv sync --all-extras"
+    with pytest.raises(updates.UpdateError):
+        updates.python_upgrade_command(updates.InstallKind.SOURCE_CHECKOUT, "0.0.9")
+
+
+@pytest.mark.parametrize(
+    ("direct_url", "expected"),
+    [
+        ('{"url": "file:///home/me/dev/limelight", "dir_info": {"editable": true}}', Path("/home/me/dev/limelight")),
+        ('{"url": "file:///home/me/my%20code/limelight", "dir_info": {"editable": true}}', Path("/home/me/my code/limelight")),
+        ('{"url": "file:///home/me/dev/limelight", "dir_info": {}}', None),
+        ('{"url": "https://files.example/limelight.whl", "archive_info": {}}', None),
+        ("not json", None),
+        (None, None),
+    ],
+)
+def test_editable_checkout_reads_the_install_record(monkeypatch, direct_url, expected) -> None:
+    class FakeDistribution:
+        def read_text(self, name):
+            assert name == "direct_url.json"
+            return direct_url
+
+    import importlib.metadata
+
+    monkeypatch.setattr(importlib.metadata, "distribution", lambda name: FakeDistribution())
+    assert updates.editable_checkout() == expected
+
+
 def test_installer_asset_matches_the_install_kind() -> None:
     release = updates.release_from_payload(RELEASE_PAYLOAD)
     picks = {kind: updates.installer_asset(release, kind) for kind in updates.InstallKind}
@@ -92,9 +128,10 @@ def test_installer_asset_matches_the_install_kind() -> None:
     assert picks[updates.InstallKind.PYTHON_UV_TOOL] is None
 
 
-def test_python_upgrade_commands_keep_the_gui_extra() -> None:
+def test_python_upgrade_commands_keep_the_gui_extra(monkeypatch) -> None:
     # The app is the `gui` extra; an upgrade that named the bare distribution
     # would come back without Qt and the app would not start.
+    monkeypatch.setattr(updates, "has_pip", lambda: True)
     assert updates.python_upgrade_command(updates.InstallKind.PYTHON_UV_TOOL, "0.0.9") == [
         "uv", "tool", "install", "--force", "limelight-app[gui]==0.0.9",
     ]
@@ -107,6 +144,22 @@ def test_python_upgrade_commands_keep_the_gui_extra() -> None:
     assert updates.python_upgrade_command(updates.InstallKind.PYTHON_PACKAGE) == [
         sys.executable, "-m", "pip", "install", "--upgrade", "limelight-app[gui]",
     ]
+
+
+def test_an_environment_without_pip_is_upgraded_by_uv(monkeypatch) -> None:
+    # uv's venvs have no pip: `python -m pip` there fails with "No module named pip".
+    monkeypatch.setattr(updates, "has_pip", lambda: False)
+    monkeypatch.setattr(updates.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+    assert updates.python_upgrade_command(updates.InstallKind.PYTHON_PACKAGE, "0.0.9") == [
+        "/usr/bin/uv", "pip", "install", "--python", sys.executable, "--upgrade", "limelight-app[gui]==0.0.9",
+    ]
+
+
+def test_an_environment_without_pip_or_uv_says_so(monkeypatch) -> None:
+    monkeypatch.setattr(updates, "has_pip", lambda: False)
+    monkeypatch.setattr(updates.shutil, "which", lambda name: None)
+    with pytest.raises(updates.UpdateError, match="no pip, and uv is not on the PATH"):
+        updates.python_upgrade_command(updates.InstallKind.PYTHON_PACKAGE, "0.0.9")
 
 
 def test_windows_installer_runs_silently_then_relaunches() -> None:
@@ -155,6 +208,17 @@ def test_update_dialog_offers_what_fits_the_install(qt_app) -> None:
     assert labels[updates.InstallKind.PYTHON_UV_TOOL] == "Upgrade Now"
     assert labels[updates.InstallKind.MACOS_BUNDLE] == "Open Download"
     assert labels[updates.InstallKind.LINUX_PACKAGE] == "Open Download"
+
+
+def test_update_dialog_for_a_checkout_says_how_and_offers_no_upgrade(qt_app, monkeypatch, tmp_path) -> None:
+    from limelight.qt_app import UpdateDialog
+
+    monkeypatch.setattr(updates, "editable_checkout", lambda: tmp_path)
+    release = updates.release_from_payload(RELEASE_PAYLOAD)
+    dialog = UpdateDialog(None, release=release, current="0.0.9.dev3+gabc", kind=updates.InstallKind.SOURCE_CHECKOUT)
+    assert dialog.update_button.isHidden()
+    assert f"cd {tmp_path} && git pull && uv sync --all-extras" in dialog.status.text()
+    dialog.deleteLater()
 
 
 def test_window_has_the_help_action_and_reports_up_to_date(qt_app, tmp_path: Path, monkeypatch) -> None:

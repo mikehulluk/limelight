@@ -5,9 +5,12 @@ depends on how this copy was installed, which the app can tell:
 
 * a PyInstaller bundle (``sys.frozen``) came from one of the installers, and
   on Windows the Inno Setup installer can be run silently over the top;
+* an editable install is a source checkout: it moves with ``git pull``, not
+  with a download, so the app only says how;
 * otherwise this is a Python package, reinstalled as ``limelight-app[gui]``
   with ``uv tool install --force`` or ``pip install --upgrade`` depending on
-  which put it here.
+  which put it here. An environment uv made has no pip; there ``uv pip
+  install`` does the same job.
 
 On macOS and Linux the bundles have no in-place path, so the app can only
 point at the download. Nothing here touches Qt: the window drives it.
@@ -19,7 +22,9 @@ import enum
 import hashlib
 import json
 import os
+import importlib.util
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -46,6 +51,7 @@ class InstallKind(enum.Enum):
     LINUX_PACKAGE = "linux-package"
     PYTHON_UV_TOOL = "uv-tool"
     PYTHON_PACKAGE = "python-package"
+    SOURCE_CHECKOUT = "source-checkout"
 
     @property
     def updates_in_place(self) -> bool:
@@ -95,11 +101,49 @@ def install_kind() -> InstallKind:
         if os.environ.get("APPIMAGE"):
             return InstallKind.LINUX_APPIMAGE
         return InstallKind.LINUX_PACKAGE
+    # An editable install runs a checkout's own source: a release from PyPI
+    # would replace it with a copy that no longer follows the checkout.
+    if editable_checkout() is not None:
+        return InstallKind.SOURCE_CHECKOUT
     # uv writes a receipt at the root of every environment it manages as a
     # tool; a plain venv, whoever made it, has none.
     if (Path(sys.prefix) / "uv-receipt.toml").is_file():
         return InstallKind.PYTHON_UV_TOOL
     return InstallKind.PYTHON_PACKAGE
+
+
+def editable_checkout() -> Path | None:
+    """The source folder of an editable install of Limelight, else None.
+
+    An installer records how it installed a distribution in its
+    ``direct_url.json`` (PEP 610); an editable install from a folder says so
+    there, with the folder's file URL.
+    """
+    try:
+        from importlib.metadata import distribution
+
+        text = distribution(DISTRIBUTION).read_text("direct_url.json")
+    except (PackageNotFoundError, OSError):
+        return None
+    if not text:
+        return None
+    try:
+        record = json.loads(text)
+    except ValueError:
+        return None
+    if not (record.get("dir_info") or {}).get("editable"):
+        return None
+    url = record.get("url") or ""
+    if not url.startswith("file://"):
+        return None
+    from urllib.parse import unquote, urlsplit
+
+    return Path(unquote(urlsplit(url).path))
+
+
+def checkout_update_command(folder: Path) -> str:
+    """What brings a source checkout up to date: the newest commit, then its dependencies."""
+    return f"cd {folder} && git pull && uv sync --all-extras"
 
 
 def fetch_latest_release(timeout: float = 10.0) -> Release:
@@ -169,7 +213,22 @@ def python_upgrade_command(kind: InstallKind, version: str | None = None) -> lis
     spec = f"{GUI_SPEC}=={version}" if version else GUI_SPEC
     if kind is InstallKind.PYTHON_UV_TOOL:
         return ["uv", "tool", "install", "--force", spec]
-    return [sys.executable, "-m", "pip", "install", "--upgrade", spec]
+    if kind is InstallKind.SOURCE_CHECKOUT:
+        raise UpdateError("A source checkout is updated with git, not by the app.")
+    if has_pip():
+        return [sys.executable, "-m", "pip", "install", "--upgrade", spec]
+    # A venv that uv made has no pip; uv installs into it just the same.
+    uv = shutil.which("uv")
+    if uv is not None:
+        return [uv, "pip", "install", "--python", sys.executable, "--upgrade", spec]
+    raise UpdateError(
+        f"This Python ({sys.executable}) has no pip, and uv is not on the PATH, "
+        f"so the app cannot upgrade itself. Install pip or uv, or run: pip install --upgrade \"{spec}\""
+    )
+
+
+def has_pip() -> bool:
+    return importlib.util.find_spec("pip") is not None
 
 
 def download(
@@ -276,4 +335,5 @@ def describe_install(kind: InstallKind) -> str:
         InstallKind.LINUX_PACKAGE: "a Linux package",
         InstallKind.PYTHON_UV_TOOL: "uv (as a tool)",
         InstallKind.PYTHON_PACKAGE: f"pip into {platform.python_implementation()} {platform.python_version()}",
+        InstallKind.SOURCE_CHECKOUT: f"a source checkout ({editable_checkout() or 'unknown folder'})",
     }[kind]

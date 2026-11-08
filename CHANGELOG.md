@@ -7,6 +7,19 @@ versions may break things.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Updating from inside the app no longer fails where there is no pip.**
+  A virtual environment made by uv has no pip, so *Upgrade Now* ran
+  `python -m pip` and stopped with "No module named pip". It now upgrades
+  such an environment with `uv pip install`, and says plainly when neither
+  pip nor uv is there.
+- **A source checkout is not offered a release over the top of it.** An
+  editable install (`pip install -e`, `uv sync` in a checkout) runs the
+  checkout's own code; the update dialog now says so and gives the command
+  that updates it (`git pull && uv sync --all-extras`), with no *Upgrade
+  Now* button.
+
 ## [0.0.25] - 2026-11-07
 
 ### Added
