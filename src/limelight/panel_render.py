@@ -20,10 +20,10 @@ import numpy as np
 from matplotlib.patches import Rectangle
 
 # A line artist's drawStyle, as matplotlib's drawstyle names it.
-MPL_DRAW_STYLES = {"straight": "default", "stepsPre": "steps-pre", "stepsPost": "steps-post"}
+MPL_DRAW_STYLES = {"straight": "default", "stepsPre": "steps-pre", "stepsPost": "steps-post", "stepsMid": "steps-mid"}
 
 # A filled line artist's drawStyle, as matplotlib's fill_between `step` names it.
-MPL_FILL_STEPS: dict[str, str | None] = {"straight": None, "stepsPre": "pre", "stepsPost": "post"}
+MPL_FILL_STEPS: dict[str, str | None] = {"straight": None, "stepsPre": "pre", "stepsPost": "post", "stepsMid": "mid"}
 
 DEFAULT_RECT_COLOR = "#f3d36b"
 DEFAULT_RECT_ALPHA = 0.35
@@ -88,16 +88,20 @@ def draw_scatter(
     color: str | None = None,
     marker: str | None = None,
     alpha: float | None = None,
-    size: float = 24.0,
+    size: float | Sequence[float] = 24.0,
     edge_color: str | None = None,
     edge_width: float | None = None,
+    color_values: Sequence[float] | None = None,
 ) -> Any:
+    # `color_values`, given, colours each point from the viridis colormap,
+    # as a continuous colorBy column does.
+    colour_kwargs: dict[str, Any] = {"c": color_values, "cmap": "viridis"} if color_values is not None else {"color": color}
     return axes.scatter(
         x_values,
         y_values,
         label=label,
         s=size,
-        color=color,
+        **colour_kwargs,
         marker=marker or "o",
         edgecolors=DEFAULT_SCATTER_EDGE_COLOR if edge_color is None else edge_color,
         linewidths=DEFAULT_SCATTER_EDGE_WIDTH if edge_width is None else edge_width,
@@ -135,7 +139,7 @@ def draw_hspan_decorator(
     linewidth: float | None = None,
     label: str | None = None,
     label_font: Any = None,
-) -> None:
+) -> Any:
     """Like `draw_vspan_decorator`, but a horizontal line/band at a y value
     or range instead of a vertical one at an x value/range."""
 
@@ -143,7 +147,7 @@ def draw_hspan_decorator(
     text_kwargs = {"fontproperties": label_font} if label_font is not None else {}
     if lower == upper:
         line_color = color or DEFAULT_DECORATOR_COLOR
-        axes.axhline(
+        artist = axes.axhline(
             lower,
             color=line_color,
             linestyle=":",
@@ -161,8 +165,8 @@ def draw_hspan_decorator(
                 color=line_color,
                 **text_kwargs,
             )
-        return
-    axes.axhspan(lower, upper, color=color or DEFAULT_RECT_COLOR, alpha=DEFAULT_RECT_ALPHA if alpha is None else alpha)
+        return artist
+    artist = axes.axhspan(lower, upper, color=color or DEFAULT_RECT_COLOR, alpha=DEFAULT_RECT_ALPHA if alpha is None else alpha)
     if label:
         axes.text(
             0.96,
@@ -173,6 +177,7 @@ def draw_hspan_decorator(
             transform=axes.get_yaxis_transform(),
             **text_kwargs,
         )
+    return artist
 
 
 def draw_rect_decorator(
@@ -221,15 +226,15 @@ def draw_vspan_decorator(
     linewidth: float | None = None,
     label: str | None = None,
     label_font: Any = None,
-) -> None:
+) -> Any:
     """`x_window` of equal bounds draws a single vertical marker line; unequal
-    bounds shade the span between them."""
+    bounds shade the span between them. Returns the line or the shaded patch."""
 
     lower, upper = x_window
     text_kwargs = {"fontproperties": label_font} if label_font is not None else {}
     if lower == upper:
         line_color = color or DEFAULT_DECORATOR_COLOR
-        axes.axvline(
+        artist = axes.axvline(
             lower,
             color=line_color,
             linestyle=":",
@@ -248,8 +253,8 @@ def draw_vspan_decorator(
                 color=line_color,
                 **text_kwargs,
             )
-        return
-    axes.axvspan(lower, upper, color=color or DEFAULT_RECT_COLOR, alpha=DEFAULT_RECT_ALPHA if alpha is None else alpha)
+        return artist
+    artist = axes.axvspan(lower, upper, color=color or DEFAULT_RECT_COLOR, alpha=DEFAULT_RECT_ALPHA if alpha is None else alpha)
     if label:
         axes.text(
             sum(x_window) / 2,
@@ -260,3 +265,4 @@ def draw_vspan_decorator(
             transform=axes.get_xaxis_transform(),
             **text_kwargs,
         )
+    return artist

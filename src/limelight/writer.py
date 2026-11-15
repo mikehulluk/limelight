@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import csv
 import hashlib
 import io
@@ -682,7 +683,7 @@ ALIGNMENTS = {"Left", "Center", "Right"}
 FONT_STYLES = {"Bold", "Italic"}
 AXIS_SCALES = {"Linear", "Log"}
 MISSING_MARKERS = {"cross", "none"}
-DRAW_STYLES = {"straight", "stepsPre", "stepsPost"}
+DRAW_STYLES = {"straight", "stepsPre", "stepsPost", "stepsMid"}
 TRANSFORMS = {"identity"}
 
 
@@ -1372,7 +1373,7 @@ class LineArtist:
     # "-" (default), "--", "-." or ":"; or "none", to draw the markers alone.
     linestyle: str | None = None
     linewidth: float | None = None
-    # "straight" (default), "stepsPre" or "stepsPost": how samples are joined.
+    # "straight" (default), "stepsPre", "stepsPost" or "stepsMid": how samples are joined.
     draw_style: str | None = None
     marker: str | None = None
     # "cross" (default) or "none": how a missing (null/NaN) sample is shown.
@@ -1398,6 +1399,10 @@ class ScatterArtist:
     size_by: str | None = None
     color: str | None = None
     marker: str | None = None
+    alpha: float | None = None
+    # Every marker's area in points squared (24 when unset), unless size_by
+    # gives one per point.
+    size: float | None = None
     # Each marker's outline: white and 0.45pt wide when unset. Set
     # edge_width=0.0 (or edge_color matching color) for a dense scatter
     # with no visible edge between overlapping markers.
@@ -1473,7 +1478,8 @@ class Panel:
     `frame` places the panel exactly instead and takes it out of the stack.
     Panels whose x-axes name no `share_group` pan and zoom together, as one
     figure; give a panel's `x_axis` a `share_group` of its own to take it
-    out of that, which is what side-by-side panels usually want.
+    out of that, which is what side-by-side panels usually want. Y-axes are
+    linked only when their `y_axis` names the same `share_group`.
     """
 
     lines: Sequence["str | tuple[str, str] | LineArtist"] = ()
@@ -1833,6 +1839,8 @@ class FigureSpec:
                     ("sizeBy", _optional_text(_column_ref(data, scatter.size_by) if scatter.size_by else None)),
                     ("color", _optional_text(scatter.color)),
                     ("marker", _optional_text(scatter.marker)),
+                    ("alpha", _optional_double(scatter.alpha)),
+                    ("size", _optional_double(scatter.size)),
                     ("edgeColor", _optional_text(scatter.edge_color)),
                     ("edgeWidth", _optional_double(scatter.edge_width)),
                     ("visibleWhen", _optional_expr(
@@ -3172,28 +3180,35 @@ class LimelightProject:
         """A figure built from `mpl_capture.CapturingAxes` panels: each one
         drew on a real matplotlib Axes with ordinary `scatter`/`plot`/etc
         calls (good for an instant preview) while recording the same calls
-        as artists. This registers one dataset holding every panel's
-        plotted arrays (by the column names `CapturingAxes` assigned) and
-        turns each panel into the matching `Panel` of the real figure - one
-        set of draw calls, no second description of the same data.
+        as artists. This registers the panels' plotted arrays (by the column
+        names `CapturingAxes` assigned) and turns each panel into the
+        matching `Panel` of the real figure - one set of draw calls, no
+        second description of the same data.
 
-        If `dataset_id` already names a dataset this project has (typically
-        another figure's, captured earlier), nothing is registered here -
-        these panels are trusted to have captured their arrays under that
-        dataset's actual column names (e.g. via another `CapturingFigure`'s
-        `name_for`), and just bind to it instead of duplicating it.
+        The panels must share one `CapturingDataset` (one `subplots()` call
+        gives them one). Its columns go into `dataset_id` (`<id>-data` by
+        default); columns of another length than the first one captured go
+        into a dataset of their own, `<dataset_id>-n<length>`, since a CSV
+        dataset's columns are all one length.
 
-        Any panel object with `.columns` (a `{name: values}` mapping) and
-        `.to_panel(data=...)` works here; `CapturingAxes` is simply the one
-        this module provides.
+        If a dataset of that id is already in this project (typically
+        another figure's, captured earlier from the same `CapturingDataset`),
+        it is reused, and any column these panels captured since is added to
+        it - so two figures sharing a `CapturingDataset` share one dataset
+        however their calls interleave.
         """
 
         dataset_id = dataset_id or f"{id}-data"
-        if not any(dataset.id == dataset_id for dataset in (*self.datasets, *self.hdf_datasets)):
-            merged_columns: dict[str, Any] = {}
-            for panel in panels:
-                merged_columns.update(panel.columns)
-            self.add_csv_dataset(id=dataset_id, arrays=merged_columns, provenance=provenance)
+        # `id` is this method's own argument here, so the builtin is spelled out.
+        datasets = {builtins.id(panel.dataset): panel.dataset for panel in panels}
+        if len(datasets) > 1:
+            raise ValueError(
+                f"add_mpl_figure {id!r}: the panels capture into {len(datasets)} different CapturingDatasets; "
+                "build them with one subplots() call, or pass the same dataset= to each"
+            )
+        groups = next(iter(datasets.values())).partition(dataset_id) if datasets else {}
+        for group_id, columns in groups.items():
+            self._add_or_extend_csv_dataset(group_id, columns, provenance=provenance)
         return self.add_figure(
             id=id,
             title=title,
@@ -3201,6 +3216,29 @@ class LimelightProject:
             size=size,
             panels=[panel.to_panel(data=dataset_id) for panel in panels],
         )
+
+    def _add_or_extend_csv_dataset(
+        self, dataset_id: str, columns: Mapping[str, Any], *, provenance: "SourceProvenance | None"
+    ) -> None:
+        if any(dataset.id == dataset_id for dataset in self.hdf_datasets):
+            # An hdf dataset is the caller's own, bound to by name: its
+            # columns are trusted to be the ones these panels refer to.
+            return
+        existing = next((dataset for dataset in self.datasets if dataset.id == dataset_id), None)
+        if existing is None:
+            self.add_csv_dataset(id=dataset_id, arrays=columns, provenance=provenance)
+            return
+        missing = {name: values for name, values in columns.items() if name not in existing.arrays}
+        if not missing:
+            return
+        if existing.signatures:
+            raise ValueError(
+                f"dataset {dataset_id!r} is signed, so the columns {sorted(missing)} cannot be added to it; "
+                "give this figure a dataset_id of its own"
+            )
+        for name, values in missing.items():
+            existing.arrays[name] = array(values).normalized()
+        existing.sample_count()
 
     def add_line_figure(
         self,

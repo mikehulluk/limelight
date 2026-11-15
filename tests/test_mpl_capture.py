@@ -16,11 +16,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
 
-from limelight import LimelightProject, mpl_capture, mpl_subplots, open_limelight
+from limelight import LimelightProject, MplCaptureWarning, mpl_capture, mpl_subplots, open_limelight
 from limelight.app import LimelightRuntime
-from limelight.mpl_capture import CapturingDataset
+from limelight.mpl_capture import CapturingAxes, CapturingDataset
 from limelight.semantic import validate_manifest_semantics
 
 
@@ -89,10 +90,11 @@ def test_fill_between_after_plot_becomes_that_lines_fill(tmp_path: Path) -> None
     assert fill.get_label() == "y"
 
 
-def test_fill_between_without_its_plot_is_refused() -> None:
+def test_fill_between_without_its_plot_is_drawn_in_the_preview_and_warns() -> None:
     _, ax = mpl_subplots()
-    with pytest.raises(ValueError, match="immediately follow"):
+    with pytest.warns(MplCaptureWarning, match="no plot"):
         ax.fill_between([0.0, 1.0], [1.0, 2.0])
+    assert len(ax.mpl_axes.collections) == 1
 
 
 def test_spans_and_lines_are_recorded_as_decorators(tmp_path: Path) -> None:
@@ -127,7 +129,7 @@ def test_two_figures_sharing_a_dataset_register_it_once(tmp_path: Path) -> None:
 
 
 def test_capture_wraps_plt_subplots_only_inside_the_block() -> None:
-    with mpl_capture() as figures:
+    with mpl_capture.capture() as figures:
         fig, ax = plt.subplots()
         ax.plot([0.0, 1.0], [1.0, 2.0])
         ax.bar([0.5], [1.0])  # not captured, but still drawn
@@ -166,3 +168,206 @@ def test_add_figure_without_id_or_title_is_refused() -> None:
         project.add_figure(fig)
     with pytest.raises(TypeError, match="needs id and title"):
         project.add_figure(panels=[])
+
+
+# --- matplotlib's own call shapes ------------------------------------------
+
+
+def test_plot_takes_format_strings_bare_y_and_several_lines(tmp_path: Path) -> None:
+    t = np.linspace(0.0, 1.0, 5)
+    fig, ax = mpl_subplots()
+    returned = ax.plot(t, t, "r--", t, t**2, "g^")
+    ax.plot(t**3)
+    assert isinstance(returned, list) and len(returned) == 2
+    dashed, triangles, bare = ax.lines
+    assert (dashed.color, dashed.linestyle, dashed.marker) == ("r", "--", None)
+    assert (triangles.color, triangles.linestyle, triangles.marker) == ("g", "none", "^")
+    assert bare.x == "index"
+
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    first = figure.axes[0].get_lines()[0]
+    assert (first.get_linestyle(), first.get_color()) == ("--", "r")
+
+
+def test_keyword_aliases_are_captured() -> None:
+    _, ax = mpl_subplots()
+    ax.plot([0.0, 1.0], [1.0, 2.0], lw=3, ls=":", c="k", ds="steps-mid")
+    [line] = ax.lines
+    assert (line.linewidth, line.linestyle, line.color, line.draw_style) == (3, ":", "k", "stepsMid")
+
+
+def test_limits_take_every_matplotlib_form() -> None:
+    _, ax = mpl_subplots()
+    ax.set_xlim((2.0, 3.0))
+    ax.set_ylim(bottom=-1.0, top=4.0)
+    ax.set_xlim(left=0.0)
+    rendered = [str(action) for action in ax.actions]
+    assert "xLower = 2.0" in rendered[0] and "xUpper = 3.0" in rendered[0]
+    assert "yLower = -1.0" in rendered[1] and "yUpper = 4.0" in rendered[1]
+    assert "xLower = 0.0" in rendered[2] and "xUpper = 3.0" in rendered[2]
+
+
+def test_subplots_returns_matplotlibs_shape() -> None:
+    _, grid = mpl_subplots(2, 2)
+    assert grid.shape == (2, 2)
+    assert isinstance(grid[0, 1], CapturingAxes)
+    assert all(isinstance(axes, CapturingAxes) for axes in grid.flat)
+    _, column = mpl_subplots(3, 1)
+    assert column.shape == (3,)
+    _, single = mpl_subplots()
+    assert isinstance(single, CapturingAxes)
+
+
+# --- nothing changes the figure silently ------------------------------------
+
+
+def test_uncapturable_keywords_reach_the_preview_and_warn() -> None:
+    _, ax = mpl_subplots()
+    with pytest.warns(MplCaptureWarning, match="zorder=9") as caught:
+        [line] = ax.plot([0.0, 1.0], [1.0, 2.0], lw=5, zorder=9)
+    assert line.get_zorder() == 9 and line.get_linewidth() == 5
+    assert ax.lines[0].linewidth == 5
+    # The warning points at this file, not at mpl_capture.
+    assert caught[0].filename == __file__
+
+
+def test_scatter_captures_alpha_size_and_per_point_colour(tmp_path: Path) -> None:
+    x = np.linspace(0.0, 1.0, 6)
+    y = x**2
+    fig, ax = mpl_subplots()
+    ax.scatter(x, y, s=80, c=y, alpha=0.4, ec="k", lw=0.5, name="pts")
+    [scatter] = ax.scatters
+    assert (scatter.size, scatter.alpha, scatter.edge_color, scatter.edge_width) == (80.0, 0.4, "k", 0.5)
+    # c is y itself, so it reuses y's column rather than copying it.
+    assert scatter.color_by == scatter.array == "pts"
+
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    [points] = [c for c in figure.axes[0].collections if len(c.get_offsets()) == 6]
+    assert points.get_sizes()[0] == 80.0
+    assert points.get_alpha() == pytest.approx(0.4)
+
+
+def test_fidelity_losses_all_warn() -> None:
+    _, ax = mpl_subplots()
+    with pytest.warns(MplCaptureWarning, match="symlog"):
+        ax.set_yscale("symlog")
+    with pytest.warns(MplCaptureWarning, match="marker='.'"):
+        ax.plot([0.0, 1.0], [1.0, 2.0], "k.")
+    with pytest.warns(MplCaptureWarning, match="xmin=/xmax="):
+        ax.axhline(0.5, 0.0, 0.5)
+    with pytest.warns(MplCaptureWarning, match="linestyle"):
+        ax.axvline(0.5, linestyle="--")
+    assert ax.y_scale == "Linear"
+
+
+def test_steps_mid_round_trips(tmp_path: Path) -> None:
+    fig, ax = mpl_subplots()
+    ax.plot([0.0, 1.0, 2.0], [1.0, 3.0, 2.0], drawstyle="steps-mid")
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    assert figure.axes[0].get_lines()[0].get_drawstyle() == "steps-mid"
+
+
+def test_fill_between_on_a_y_two_lines_drew_is_not_guessed() -> None:
+    t, y = np.arange(3.0), np.array([1.0, 2.0, 1.0])
+    _, ax = mpl_subplots()
+    ax.plot(t, y, label="first")
+    ax.plot(t, y, label="second")
+    with pytest.warns(MplCaptureWarning, match="ambiguous"):
+        ax.fill_between(t, y, color="g")
+    assert [line.fill_color for line in ax.lines] == [None, None]
+
+
+def test_fill_between_without_a_colour_captures_the_one_matplotlib_picked() -> None:
+    t, y = np.arange(3.0), np.array([1.0, 2.0, 1.0])
+    _, ax = mpl_subplots()
+    ax.plot(t, y)
+    fill = ax.fill_between(t, y, alpha=0.3)
+    assert ax.lines[0].fill_color == to_hex(fill.get_facecolor()[0], keep_alpha=False)
+
+
+# --- layout and data ---------------------------------------------------------
+
+
+def _linked(figure: Figure, axis: str) -> bool:
+    first, second = figure.axes
+    siblings = (first.get_shared_x_axes() if axis == "x" else first.get_shared_y_axes()).get_siblings(first)
+    return second in siblings
+
+
+@pytest.mark.parametrize(
+    ("sharex", "sharey", "x_linked", "y_linked"),
+    [(False, False, False, False), (True, False, True, False), (False, True, False, True), ("all", "all", True, True)],
+)
+def test_shared_axes_link_in_the_app_as_in_matplotlib(tmp_path: Path, sharex, sharey, x_linked, y_linked) -> None:
+    fig, (top, bottom) = mpl_subplots(2, 1, sharex=sharex, sharey=sharey)
+    top.plot([0.0, 1.0], [0.0, 1.0])
+    bottom.plot([0.0, 2.0], [0.0, 5.0])
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    assert (_linked(figure, "x"), _linked(figure, "y")) == (x_linked, y_linked)
+    preview = fig.mpl_figure
+    assert (_linked(preview, "x"), _linked(preview, "y")) == (x_linked, y_linked)
+
+
+def test_height_ratios_become_panel_heights() -> None:
+    fig, (top, bottom) = mpl_subplots(2, 1, height_ratios=[3, 1])
+    top.plot([0.0, 1.0], [0.0, 1.0])
+    bottom.plot([0.0, 1.0], [1.0, 0.0])
+    panels = [axes.to_panel(data="d") for axes in fig.panels]
+    assert [panel.height for panel in panels] == [3.0, 1.0]
+
+
+def test_panels_with_different_lengths_get_a_dataset_per_length(tmp_path: Path) -> None:
+    fig, (top, bottom) = mpl_subplots(2, 1)
+    top.plot(np.linspace(0.0, 1.0, 5), np.zeros(5))
+    bottom.plot(np.linspace(0.0, 1.0, 9), np.ones(9))
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    assert [dataset.id for dataset in project.datasets] == ["fig-data", "fig-data-n9"]
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    assert len(figure.axes[1].get_lines()[0].get_xdata()) == 9
+
+
+def test_a_shared_dataset_takes_columns_captured_after_it_was_added(tmp_path: Path) -> None:
+    t = np.linspace(0.0, 1.0, 4)
+    shared = CapturingDataset()
+    first, ax1 = mpl_subplots(dataset=shared)
+    ax1.plot(t, t)
+    project = LimelightProject(title="T", authors=["Test"])
+    first.add_to(project, id="first", title="First")
+    second, ax2 = mpl_subplots(dataset=shared)
+    ax2.plot(t, t * 3)
+    second.add_to(project, id="second", title="Second")
+    assert [dataset.id for dataset in project.datasets] == ["first-data"]
+    figure, _ = _write_and_render(project, tmp_path, "second")
+    assert np.allclose(figure.axes[0].get_lines()[0].get_ydata(), t * 3)
+
+
+def test_panels_from_different_datasets_are_refused() -> None:
+    project = LimelightProject(title="T", authors=["Test"])
+    with pytest.raises(ValueError, match="different CapturingDatasets"):
+        project.add_mpl_figure(id="fig", title="Fig", panels=[CapturingAxes(Figure().add_subplot()), CapturingAxes(Figure().add_subplot())])
+
+
+def test_to_panel_defaults_to_the_dataset_id() -> None:
+    fig, ax = mpl_subplots()
+    ax.plot([0.0, 1.0], [1.0, 2.0])
+    with pytest.raises(ValueError, match="dataset id"):
+        ax.to_panel()
+    fig.configure(dataset_id="d")
+    assert ax.to_panel().data == "d"
+
+
+def test_limelight_mpl_capture_is_the_module() -> None:
+    import limelight
+    import limelight.mpl_capture as module
+
+    assert limelight.mpl_capture is module
+    assert limelight.mpl_subplots is module.subplots

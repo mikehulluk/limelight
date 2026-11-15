@@ -29,9 +29,10 @@ let MissingMarker = < cross | none >
 -- draws a straight segment from each sample to the next; `stepsPre` holds
 -- each sample's value back to the previous sample, so the jump is at the
 -- earlier x; `stepsPost` holds it forward to the next sample, so the jump is
--- at the later x. A series that changes only at events (a balance, a rate)
--- reads correctly only as steps.
-let DrawStyle = < straight | stepsPre | stepsPost >
+-- at the later x; `stepsMid` puts the jump halfway between the two samples.
+-- A series that changes only at events (a balance, a rate) reads correctly
+-- only as steps.
+let DrawStyle = < straight | stepsPre | stepsPost | stepsMid >
 
 -- `fillColor`/`fillAlpha` shade the area between the line and `fillBaseline`
 -- (0 by default) - a filled line with `drawStyle = stepsPost` and narrow,
@@ -60,6 +61,8 @@ let LineArtist =
 -- other and from a panel's lines, but at high point density it can read as
 -- a web of faint lines between overlapping markers; set `edgeWidth = 0.0`
 -- (or match `edgeColor` to `color`) for a dense cloud with no visible edge.
+-- `size` is every marker's area in points squared (24 when unset) when
+-- `sizeBy` does not give one per point.
 let ScatterArtist =
       { id : Core.Id
       , x : Text
@@ -69,6 +72,8 @@ let ScatterArtist =
       , sizeBy : Optional Text
       , color : Optional Text
       , marker : Optional Text
+      , alpha : Optional Double
+      , size : Optional Double
       , edgeColor : Optional Text
       , edgeWidth : Optional Double
       , visibleWhen : Optional TextControlParameterMatch

@@ -20,6 +20,10 @@ let AxisDataType =
       | timeSeries : { calendar : Optional Text }
       >
 
+-- Panels whose axes name the same `shareGroup` pan and zoom together on that
+-- axis. An x-axis with none is linked to every other such x-axis in its
+-- figure, so a stack of panels reads as one; a y-axis with none is linked to
+-- nothing.
 let AxisSpec =
       { id : Types.AxisSpecId
       , label : Optional Core.DisplayText

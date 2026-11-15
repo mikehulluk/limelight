@@ -15,8 +15,10 @@ from .signing import (
     verify_manifest_signatures,
 )
 
-from .mpl_capture import CapturingAxes, CapturingDataset, CapturingFigure
-from .mpl_capture import capture as mpl_capture
+# `mpl_capture` is the module (`mpl_capture.subplots()`, `mpl_capture.capture()`,
+# as its docstrings write them); `mpl_subplots` is its `subplots`, for short.
+from . import mpl_capture
+from .mpl_capture import CapturingAxes, CapturingDataset, CapturingFigure, MplCaptureWarning
 from .mpl_capture import subplots as mpl_subplots
 from .typography import SyntaxStyle, TextStyle, Typography
 from .writer import (
@@ -86,6 +88,7 @@ __all__ = [
     "CapturingAxes",
     "CapturingDataset",
     "CapturingFigure",
+    "MplCaptureWarning",
     "CellStyleRule",
     "ColumnFormat",
     "ColumnWidth",

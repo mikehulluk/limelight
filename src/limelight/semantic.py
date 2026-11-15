@@ -473,6 +473,12 @@ class _SemanticValidator:
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
                 f"fillAlpha {fill_alpha!r} is outside 0..1"
             )
+        size = artist.get("size")
+        if size is not None and kind == "scatter" and float(size) <= 0.0:
+            raise LimelightError(
+                f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
+                f"size {size!r} must be greater than 0"
+            )
         edge_width = artist.get("edgeWidth")
         if edge_width is not None and float(edge_width) < 0.0:
             raise LimelightError(
@@ -486,10 +492,10 @@ class _SemanticValidator:
                 f"has unknown missingMarker {missing_marker!r}; expected cross or none"
             )
         draw_style = artist.get("drawStyle")
-        if draw_style is not None and draw_style not in ("straight", "stepsPre", "stepsPost"):
+        if draw_style is not None and draw_style not in ("straight", "stepsPre", "stepsPost", "stepsMid"):
             raise LimelightError(
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
-                f"has unknown drawStyle {draw_style!r}; expected straight, stepsPre or stepsPost"
+                f"has unknown drawStyle {draw_style!r}; expected straight, stepsPre, stepsPost or stepsMid"
             )
         linewidth = artist.get("linewidth")
         if linewidth is not None and not float(linewidth) > 0.0:

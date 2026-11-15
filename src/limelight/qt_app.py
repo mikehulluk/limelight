@@ -1647,6 +1647,7 @@ def _render_figure_view_to_matplotlib_figure(
         raise TypeError(f"FigureSpec {figure_id!r} has no axesSpecs")
     panels = _add_panels(figure, axes_specs)
     _share_x_axes(panels, axes_specs)
+    _share_y_axes(panels, axes_specs)
     labels_x = _panels_labelling_x(panels, axes_specs)
     # Panels sharing an x-axis share its tick labels, so they share its
     # categories too: a category has one place whichever panel draws it.
@@ -1750,6 +1751,24 @@ def _share_x_axes(panels: Sequence[Any], axes_specs: Sequence[dict[str, Any]]) -
             axes.sharex(leader)
 
 
+def _share_y_axes(panels: Sequence[Any], axes_specs: Sequence[dict[str, Any]]) -> None:
+    """Links the y-axes of panels whose yAxis specs name the same shareGroup.
+
+    Unlike x, a y-axis with no shareGroup is linked to nothing: stacked
+    panels usually plot different quantities, each on its own scale.
+    """
+    leaders: dict[Any, Any] = {}
+    for axes, axes_spec in zip(panels, axes_specs):
+        group = axes_spec["yAxis"].get("shareGroup")
+        if group is None:
+            continue
+        leader = leaders.get(group)
+        if leader is None:
+            leaders[group] = axes
+        else:
+            axes.sharey(leader)
+
+
 def _draw_scatter_artist(
     axes: Any,
     artist: dict[str, Any],
@@ -1764,6 +1783,7 @@ def _draw_scatter_artist(
 ) -> None:
     marker = artist.get("marker") or "o"
     alpha_value = 1.0 if alpha is None else alpha
+    default_size = _to_float(artist.get("size")) or 24.0
     edge_color = artist.get("edgeColor")
     edge_color = panel_render.DEFAULT_SCATTER_EDGE_COLOR if edge_color is None else edge_color
     edge_width = _to_float(artist.get("edgeWidth"))
@@ -1774,7 +1794,7 @@ def _draw_scatter_artist(
             x_values,
             y_values,
             label=label,
-            s=series.sizes or 24.0,
+            s=series.sizes or default_size,
             c=series.colors,
             cmap="viridis",
             marker=marker,
@@ -1800,7 +1820,7 @@ def _draw_scatter_artist(
                 [x_values[index] for index in indices],
                 [y_values[index] for index in indices],
                 label=str(category),
-                s=[series.sizes[index] for index in indices] if series.sizes else 24.0,
+                s=[series.sizes[index] for index in indices] if series.sizes else default_size,
                 color=palette[category_index % len(palette)],
                 marker=marker,
                 edgecolors=edge_color,
@@ -1814,7 +1834,7 @@ def _draw_scatter_artist(
             x_values,
             y_values,
             label=label,
-            s=series.sizes or 24.0,
+            s=series.sizes or default_size,
             color=color,
             marker=marker,
             edgecolors=edge_color,

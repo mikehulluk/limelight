@@ -31,14 +31,24 @@ versions may break things.
 - **Scatter marker edges.** `ScatterArtist`'s `edgeColor` and `edgeWidth`
   set each marker's outline, white and 0.45pt by default; `edgeWidth = 0.0`
   gives a dense cloud without a web of outlines.
-- **Build figures with ordinary matplotlib calls.** `limelight.mpl_subplots`
-  is `plt.subplots` with every Axes wrapped: `plot`, `scatter`,
+- **Build figures with ordinary matplotlib calls.**
+  `limelight.mpl_capture.subplots` (also `limelight.mpl_subplots`) is
+  `plt.subplots` with every Axes wrapped: `plot`, `scatter`,
   `fill_between`, `axvspan`/`axhspan`, `axvline`/`axhline`, limits, labels
-  and scales draw a normal preview *and* record the same calls, and
+  and scales draw a normal preview *and* record the same calls, in
+  matplotlib's own call shapes (format strings, `plot(y)`, `lw=`, ...), and
   `project.add_figure(fig)` turns them into the interactive figure, its data
-  registered once however many panels share it. `with limelight.mpl_capture()`
-  does the same for an unmodified script's `plt.subplots`; anything not
-  captured still draws in the preview.
+  registered once however many panels share it. `sharex`/`sharey` and
+  `height_ratios` carry over. `with limelight.mpl_capture.capture()` does the
+  same for an unmodified script's `plt.subplots`. Whatever the interactive
+  figure cannot show still draws in the preview and raises an
+  `MplCaptureWarning` saying what will differ - nothing is dropped silently.
+- **Shared y-axes.** Panels whose `yAxis` names the same `shareGroup` now
+  pan and zoom together on y. A y-axis without one is still independent.
+- **`drawStyle = stepsMid`**, a step halfway between samples, as
+  matplotlib's `steps-mid`.
+- **`ScatterArtist` takes `alpha` and `size`** (one marker area for every
+  point, when `sizeBy` gives none).
 - **`FigureViewBuilder`**, from `figure_view_builder(...)` or a captured
   figure's `.view()`: a figure view written as one chain -
   `.xlim()`, `.shade()`, `.shade_regions()`, `.vline()`, `.hline()`,
