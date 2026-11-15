@@ -10,22 +10,17 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from limelight import (
     AxisDataType,
+    CapturingDataset,
+    CapturingFigure,
     CellStyleRule,
     ColumnFormat,
     Index,
-    LineArtist,
     LimelightProject,
     PageGeometry,
-    PlotArrow,
     SourceProvenance,
     TableViewSpec,
     array,
-    axes_action_add_annotation,
-    axes_action_add_axis_window_decorator,
-    axes_action_add_rect_decorator,
-    axes_action_set_x_float_limits,
-    axes_action_set_y_float_limits,
-    figure_view_action,
+    mpl_subplots,
     summary_statistics,
 )
 
@@ -240,6 +235,43 @@ def extrema_in_window(
     return minimum_index, maximum_index
 
 
+def _bound_dataset(dataset_id: str) -> CapturingDataset:
+    """A CapturingDataset that binds to a dataset the project already declares."""
+    dataset = CapturingDataset()
+    dataset.dataset_id = dataset_id
+    return dataset
+
+
+def _populations_figure(
+    dataset: CapturingDataset,
+    times: list[float],
+    prey: list[float],
+    predator: list[float],
+    *,
+    id: str,
+    title: str,
+    caption: str,
+) -> CapturingFigure:
+    fig, ax = mpl_subplots(dataset=dataset)
+    ax.plot(times, prey, label="Prey", name="prey", x_name="time")
+    ax.plot(times, predator, label="Predator", name="predator", x_name="time")
+    ax.set_xlabel("Time (cycles)")
+    ax.set_ylabel("Population")
+    ax.legend()
+    return fig.configure(id=id, title=title, caption=caption)
+
+
+def _phase_figure(
+    dataset: CapturingDataset, prey: list[float], predator: list[float], *, id: str, title: str, caption: str
+) -> CapturingFigure:
+    fig, ax = mpl_subplots(dataset=dataset)
+    ax.plot(prey, predator, label="Trajectory", name="predator", x_name="prey")
+    ax.set_xlabel("Prey population")
+    ax.set_ylabel("Predator population")
+    ax.legend()
+    return fig.configure(id=id, title=title, caption=caption)
+
+
 def build_project() -> LimelightProject:
     dt = 0.05
     alpha = 1.1
@@ -344,65 +376,8 @@ def build_project() -> LimelightProject:
     )
     peak_lag_angle = 360.0 * peak_lag / season_5_cycle_duration
     trough_lag_angle = 360.0 * trough_lag / season_5_cycle_duration
-    season_1_actions = [
-        figure_view_action("populations-over-time", axes_action_set_x_float_limits(0.0, season_4_window[0])),
-    ]
-    multi_season_actions = [
-        figure_view_action("populations-over-time", axes_action_set_x_float_limits(season_4_window[0], season_8_window[1])),
-        figure_view_action("populations-over-time", axes_action_add_axis_window_decorator(lower=season_4_window[0], upper=season_5_window[0], label="Season 4")),
-        figure_view_action("populations-over-time", axes_action_add_axis_window_decorator(lower=season_5_window[0], upper=season_5_window[1], label="Season 5")),
-    ]
-    phase_cycle_actions = [
-        figure_view_action("phase-plot", axes_action_set_x_float_limits(0.0, max(prey) * 1.05)),
-        figure_view_action("phase-plot", axes_action_set_y_float_limits(0.0, max(predator) * 1.05)),
-    ]
-    season_5_phase_actions = [
-        figure_view_action(
-            "phase-plot",
-            axes_action_add_rect_decorator(
-                x_lower=prey[prey_min_index],
-                x_upper=prey[prey_max_index],
-                y_lower=predator[predator_min_index],
-                y_upper=predator[predator_max_index],
-                label="Season 5 extrema",
-            ),
-        ),
-    ]
     prey_peak_point = (times[prey_max_index], prey[prey_max_index])
     predator_peak_point = (times[predator_max_index], predator[predator_max_index])
-    season_5_analysis_actions = [
-        figure_view_action("populations-over-time", axes_action_set_x_float_limits(phase_analysis_window[0], phase_analysis_window[1])),
-        figure_view_action("populations-over-time", axes_action_add_axis_window_decorator(lower=season_5_window[0], upper=season_5_window[1], label="Season 5")),
-        figure_view_action(
-            "populations-over-time",
-            axes_action_add_annotation(
-                PlotArrow(start=prey_peak_point, end=prey_peak_point),
-                label="Prey peak",
-                color="seagreen",
-                label_offset=(8.0, 10.0),
-            ),
-        ),
-        figure_view_action(
-            "populations-over-time",
-            axes_action_add_annotation(
-                PlotArrow(start=predator_peak_point, end=predator_peak_point),
-                label="Predator peak",
-                color="firebrick",
-                label_offset=(8.0, -14.0),
-            ),
-        ),
-    ]
-    noisy_time_actions = [
-        figure_view_action("noisy-populations-over-time", axes_action_set_x_float_limits(0.0, noisy_times[-1])),
-    ]
-    pulse_window_actions = [
-        figure_view_action("pulse-populations-over-time", axes_action_set_x_float_limits(0.0, pulse_times[-1])),
-        figure_view_action("pulse-populations-over-time", axes_action_add_axis_window_decorator(lower=pulse_time, upper=pulse_time, label="Pulse")),
-    ]
-    large_pulse_window_actions = [
-        figure_view_action("large-pulse-populations-over-time", axes_action_set_x_float_limits(0.0, large_pulse_times[-1])),
-        figure_view_action("large-pulse-populations-over-time", axes_action_add_axis_window_decorator(lower=pulse_time, upper=pulse_time, label="Pulse")),
-    ]
 
     project = LimelightProject(
         title="Lotka-Volterra predator-prey walkthrough",
@@ -482,26 +457,30 @@ def build_project() -> LimelightProject:
         },
     )
 
-    project.add_line_figure(
+    # The plots are ordinary matplotlib calls (mpl_subplots, ax.plot, ...),
+    # bound to the datasets declared above: each simulation's CapturingDataset
+    # takes the declared dataset's id, and naming the columns as declared means
+    # nothing is copied - the figures read the very columns the tables and
+    # downloads do.
+    simulation = _bound_dataset("population-simulation")
+    pulse_simulation = _bound_dataset("pulse-input-constant-state")
+    large_pulse_simulation = _bound_dataset("large-pulse-input-constant-state")
+    noisy_simulation = _bound_dataset("noisy-population-simulation")
+
+    populations = _populations_figure(
+        simulation, times, prey, predator,
         id="populations-over-time",
         title="Populations over time",
         caption="The predator population lags the prey population over each cycle.",
-        data="population-simulation",
-        x="time",
-        y=[("prey", "Prey"), ("predator", "Predator")],
-        x_axis=AxisDataType.continuous(label="Time", unit="cycles", share_group="simulation-time"),
-        y_axis=AxisDataType.continuous(label="Population"),
     )
-    project.add_line_figure(
+    phase = _phase_figure(
+        simulation, prey, predator,
         id="phase-plot",
         title="Phase plot",
         caption="The phase plot shows the cyclic relationship between prey and predator populations.",
-        data="population-simulation",
-        x="prey",
-        y=[LineArtist(array="predator", label="Trajectory", x="prey")],
-        x_axis=AxisDataType.continuous(label="Prey population"),
-        y_axis=AxisDataType.continuous(label="Predator population"),
     )
+    for figure in (populations, phase):
+        project.add_figure(figure)
     project.add_line_figure(
         id="prey-summary-table",
         title="Prey population summary statistics",
@@ -521,103 +500,78 @@ def build_project() -> LimelightProject:
             )
         ],
     )
-    project.add_line_figure(
+    pulse_populations = _populations_figure(
+        pulse_simulation, pulse_times, pulse_prey, pulse_predator,
         id="pulse-populations-over-time",
         title="Pulse input from constant state",
         caption=(
             "The system starts at the coexistence fixed point. A prey pulse at Season 2 "
             "moves it onto a closed deterministic orbit."
         ),
-        data="pulse-input-constant-state",
-        x="time",
-        y=[("prey", "Prey"), ("predator", "Predator")],
-        x_axis=AxisDataType.continuous(label="Time", unit="cycles", share_group="pulse-simulation-time"),
-        y_axis=AxisDataType.continuous(label="Population"),
     )
-    project.add_line_figure(
+    pulse_phase = _phase_figure(
+        pulse_simulation, pulse_prey, pulse_predator,
         id="pulse-phase-plot",
         title="Pulse phase plot",
         caption=(
             "A one-time prey injection from the fixed point creates a closed orbit around "
             "the coexistence state."
         ),
-        data="pulse-input-constant-state",
-        x="prey",
-        y=[LineArtist(array="predator", label="Trajectory", x="prey")],
-        x_axis=AxisDataType.continuous(label="Prey population"),
-        y_axis=AxisDataType.continuous(label="Predator population"),
     )
-    project.add_line_figure(
+    large_pulse_populations = _populations_figure(
+        large_pulse_simulation, large_pulse_times, large_pulse_prey, large_pulse_predator,
         id="large-pulse-populations-over-time",
         title="Large pulse input from constant state",
         caption=(
             "A larger one-time prey pulse at Season 2 moves the system onto a wider "
             "closed orbit around the coexistence fixed point."
         ),
-        data="large-pulse-input-constant-state",
-        x="time",
-        y=[("prey", "Prey"), ("predator", "Predator")],
-        x_axis=AxisDataType.continuous(label="Time", unit="cycles", share_group="pulse-simulation-time"),
-        y_axis=AxisDataType.continuous(label="Population"),
     )
-    project.add_line_figure(
+
+    # Two simulations on one plot: this figure captures its own copy of both
+    # trajectories rather than adding columns to either declared dataset.
+    comparison, ax = mpl_subplots()
+    ax.plot(pulse_prey, pulse_predator, label="Pulse +12")
+    ax.plot(large_pulse_prey, large_pulse_predator, label="Pulse +24")
+    ax.set_xlabel("Prey population")
+    ax.set_ylabel("Predator population")
+    ax.legend()
+    comparison.configure(
         id="input-phase-comparison",
         title="Pulse-size phase comparison",
         caption=(
             "Both one-time prey pulses create closed orbits; the larger pulse lands on "
             "a wider trajectory."
         ),
-        data="pulse-input-constant-state",
-        x="prey",
-        y=[
-            LineArtist(array="predator", label="Pulse +12", x="prey"),
-            LineArtist(
-                array="predator",
-                label="Pulse +24",
-                id="large-pulse-phase-line",
-                data="large-pulse-input-constant-state",
-                x="prey",
-            ),
-        ],
-        x_axis=AxisDataType.continuous(label="Prey population"),
-        y_axis=AxisDataType.continuous(label="Predator population"),
     )
-    project.add_line_figure(
+
+    noisy_populations = _populations_figure(
+        noisy_simulation, noisy_times, noisy_prey, noisy_predator,
         id="noisy-populations-over-time",
         title="Noisy populations over time",
         caption=(
             "Small additive Gaussian noise perturbs both populations while density-limited dynamics "
             "pull the system back toward stable coexistence."
         ),
-        data="noisy-population-simulation",
-        x="time",
-        y=[("prey", "Prey"), ("predator", "Predator")],
-        x_axis=AxisDataType.continuous(label="Time", unit="cycles", share_group="noisy-simulation-time"),
-        y_axis=AxisDataType.continuous(label="Population"),
     )
-    project.add_line_figure(
+
+    noisy_phase, ax = mpl_subplots()
+    ax.plot(noisy_prey, noisy_predator, label="Noisy trajectory")
+    ax.plot(prey, predator, label="Deterministic trajectory", alpha=0.3)
+    ax.set_xlabel("Prey population")
+    ax.set_ylabel("Predator population")
+    ax.legend()
+    noisy_phase.configure(
         id="noisy-phase-plot",
         title="Noisy phase plot",
         caption=(
             "The noisy trajectory spirals toward the coexistence attractor and then wanders "
             "around it under continuing population shocks."
         ),
-        data="noisy-population-simulation",
-        x="prey",
-        y=[
-            LineArtist(array="predator", label="Noisy trajectory", x="prey"),
-            LineArtist(
-                array="predator",
-                label="Deterministic trajectory",
-                id="deterministic-trajectory-line",
-                data="population-simulation",
-                alpha=0.3,
-                x="prey",
-            ),
-        ],
-        x_axis=AxisDataType.continuous(label="Prey population"),
-        y_axis=AxisDataType.continuous(label="Predator population"),
     )
+    for figure in (pulse_populations, pulse_phase, large_pulse_populations, comparison, noisy_populations, noisy_phase):
+        project.add_figure(figure)
+
     project.set_story_markdown(
         base_dir=Path(__file__).resolve().parent / "example01_lotka_volterra",
         markdown=f"""
@@ -659,43 +613,43 @@ The $\\alpha$ term grows prey, $\\beta$ removes prey through predation, $\\gamma
 
 In the first cycle, prey recover first. Predator growth follows after prey become abundant.
 
-{project.story_figure("populations-over-time", actions=season_1_actions)}
+{populations.view().xlim(0.0, season_4_window[0]).story(project)}
 
 ## Season 2 and onwards
 
 From Season 2 onward, the same lagged pattern repeats. The five-cycle window shows the recurrence, with alternate Season bands labeled Season 1, Season 3, and Season 5.
 
-{project.story_figure("populations-over-time", actions=multi_season_actions)}
+{populations.view().xlim(season_4_window[0], season_8_window[1]).vspan(season_4_window[0], season_5_window[0], label="Season 4").vspan(*season_5_window, label="Season 5").story(project)}
 
 If we plot the sizes of the populations, against each other, this gives us a phase-plot.
 
-{project.story_figure("phase-plot", id="phase-cycle", actions=phase_cycle_actions)}
+{phase.view(id="phase-cycle").xlim(0.0, max(prey) * 1.05).ylim(0.0, max(predator) * 1.05).story(project)}
 
 ## Phase Plot
 
 The phase plot removes time from the x-axis and shows the cycle as a trajectory through prey-predator state space. The closed loop in [Figure](#phase-cycle) is the same data as the time series above it, and the rabbits of [Figure](#rabbit) are its horizontal axis.
 
-{project.story_figure("phase-plot")}
+{phase.view().story(project)}
 
 ## Phase Analysis
 
 This view spans Seasons 4-8 of the deterministic time-series. Season 5 runs from one prey minimum to the next, lasting about {season_5_cycle_duration:.1f} time units. The dotted vertical markers show the minimum and maximum of each population within Season 5.
 
-{project.story_figure("populations-over-time", actions=season_5_analysis_actions)}
+{populations.view().xlim(*phase_analysis_window).vspan(*season_5_window, label="Season 5").annotate(start=prey_peak_point, label="Prey peak", color="seagreen", label_offset=(8.0, 10.0)).annotate(start=predator_peak_point, label="Predator peak", color="firebrick", label_offset=(8.0, -14.0)).story(project)}
 
 Peak phase-lag: the predator peak follows the prey peak by {peak_lag:.2f} time units, or {peak_lag_angle:.0f} degrees of the Season 5 cycle. Trough phase-lag: the predator trough follows the prey trough by {trough_lag:.2f} time units, or {trough_lag_angle:.0f} degrees of the cycle.
 
 Phase analysis treats each point as a full system state rather than a timestamp. The deterministic model returns to the same closed trajectory, so equal prey levels can imply different predator trends depending on where the state sits on the loop. The shaded box is bounded by the Season 5 extrema of each population: the loop touches every side of it and never leaves it.
 
-{project.story_figure("phase-plot", actions=season_5_phase_actions)}
+{phase.view().shade(x=(prey[prey_min_index], prey[prey_max_index]), y=(predator[predator_min_index], predator[predator_max_index]), label="Season 5 extrema").story(project)}
 
 ## Small Additive Gaussian Noise
 
 The noisy example adds a seeded Gaussian value with mean 0.0 to each population after every integration step. A weak carrying-capacity term makes the coexistence point a stable attractor, so the trajectory spirals inward and then fluctuates around that state.
 
-{project.story_figure("noisy-populations-over-time", actions=noisy_time_actions)}
+{noisy_populations.view().xlim(0.0, noisy_times[-1]).story(project)}
 
-{project.story_figure("noisy-phase-plot")}
+{noisy_phase.view().story(project)}
 
 ## Pulse Input from 'constant' state
 
@@ -713,19 +667,19 @@ So the fixed points are the collapsed state $(0, 0)$ and the coexistence state $
 
 The collapsed state remains collapsed only if both populations are exactly zero. It is not stable to a prey perturbation: if $y=0$, predators cannot appear, so a pulse into $x$ alone does not create predator-prey dynamics. The experiments below therefore start from the nonzero constant coexistence state. The pulse experiment injects {prey_pulse:.1f} prey once at the start of Season 2, $t={pulse_time:.1f}$.
 
-{project.story_figure("pulse-populations-over-time", actions=pulse_window_actions)}
+{pulse_populations.view().xlim(0.0, pulse_times[-1]).vline(pulse_time, label="Pulse").story(project)}
 
 Before the pulse, both populations sit at the coexistence fixed point. The prey input moves the system away from that point; predators then rise in response, prey falls, and the deterministic system settles onto a closed orbit rather than damping back to the fixed point.
 
 The second experiment uses another one-time prey pulse at the same time, but with size {large_prey_pulse:.1f}, twice the first pulse. The larger displacement creates a wider closed orbit around the same coexistence fixed point.
 
-{project.story_figure("large-pulse-populations-over-time", actions=large_pulse_window_actions)}
+{large_pulse_populations.view().xlim(0.0, large_pulse_times[-1]).vline(pulse_time, label="Pulse").story(project)}
 
 The phase comparison makes the difference clearer: both inputs are one-time pulses, and the pulse size controls how far the state is displaced onto the surrounding orbit.
 
-{project.story_figure("input-phase-comparison")}
+{comparison.view().story(project)}
 
-{project.story_figure("pulse-phase-plot")}
+{pulse_phase.view().story(project)}
 
 ## Summary statistics
 

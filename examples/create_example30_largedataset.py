@@ -10,7 +10,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from limelight import AxisDataType, Index, LimelightProject, PageGeometry, SourceProvenance, TimeSeriesArtist, hdf_array
+from limelight import Index, LimelightProject, PageGeometry, SourceProvenance, hdf_array, hdf_source, mpl_subplots
 
 
 POINT_COUNT = 50_000_000
@@ -47,7 +47,7 @@ def build_project(h5_path: Path) -> LimelightProject:
         document_version="0.1",
     )
 
-    project.add_hdf_dataset(
+    source = hdf_source(
         id="bigseries",
         hdf5_path=h5_path,
         y_arrays=[hdf_array("y", "/y")],
@@ -58,23 +58,26 @@ def build_project(h5_path: Path) -> LimelightProject:
         ),
     )
 
-    f = project.add_line_figure(
-        id="largedataset-figure",
-        title="50M-point synthetic series",
-        data="bigseries",
-        x="time",
-        y=[],
-        time_series=[TimeSeriesArtist(data="bigseries", array="y", id="largedataset-envelope")],
-        # The index is relative (elapsed seconds), so this is a number line,
-        # not a calendar axis.
-        x_axis=AxisDataType.continuous(label="Time", unit="s"),
-        caption=(
-            f"A {POINT_COUNT:,}-point synthetic series backed by an HDF5 file. "
-            "Rendered as a min/max envelope; pan and zoom to see it re-level."
-        ),
+    # ax.series draws the source as lightspeed's min/max envelope - here, as a
+    # preview, and in the app - and adds it to the project with the figure.
+    # The index is relative (elapsed seconds), so this is a number line, not a
+    # calendar axis.
+    fig, ax = mpl_subplots()
+    ax.series(source, "y")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Value")
+    project.add_figure(
+        fig.configure(
+            id="largedataset-figure",
+            title="50M-point synthetic series",
+            caption=(
+                f"A {POINT_COUNT:,}-point synthetic series backed by an HDF5 file. "
+                "Rendered as a min/max envelope; pan and zoom to see it re-level."
+            ),
+        )
     )
 
-    fig_view0 = project.story_figure(ref="largedataset-figure", id="largedataset-figure-view0", actions=[])
+    fig_view0 = fig.view(id="largedataset-figure-view0").story(project)
 
     md = f"""
 # Some Markdown

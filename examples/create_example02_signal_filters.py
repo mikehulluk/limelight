@@ -24,13 +24,13 @@ from limelight import (
     PageGeometry,
     Panel,
     SliderCtrlSpec,
-    StemArtist,
     SyntaxStyle,
     TextControlParameterMatch,
     Typography,
     array,
     axes_action_add_axis_window_decorator,
     figure_view_action,
+    mpl_subplots,
 )
 
 SAMPLE_RATE_HZ = 400.0
@@ -287,21 +287,26 @@ def build_project() -> LimelightProject:
         index=Index.no_index(),
     )
 
-    project.add_line_figure(
-        id="signal-components",
-        title="Three sinusoidal components",
-        data="composite-signal",
-        x="time",
-        y=[
-            LineArtist("input-signal", label="Composite signal", id="composite-line", alpha=0.9),
-            ("low-component", "2 Hz component"),
-            ("mid-component", "13 Hz component"),
-            ("high-component", "45 Hz component"),
-        ],
-        caption="The input is the sum of low-, mid-, and high-frequency sinusoids.",
-        x_axis=AxisDataType.continuous(label="Time", unit="s", share_group="signal-time"),
-        y_axis=AxisDataType.continuous(label="Amplitude"),
-        controls=[reference_alpha_slider],
+    # Figures with a matplotlib equivalent are ordinary matplotlib calls,
+    # bound by `dataset_id` and column names to the datasets declared above.
+    # The two whose lines the filter dropdown shows and hides (visible_when)
+    # have none, and are written out with the builders below.
+    fig, ax = mpl_subplots()
+    time = signal["time"]
+    ax.plot(time, signal["input-signal"], label="Composite signal", alpha=0.9, name="input-signal", x_name="time")
+    for component, label in (("low-component", "2 Hz component"), ("mid-component", "13 Hz component"), ("high-component", "45 Hz component")):
+        ax.plot(time, signal[component], label=label, name=component, x_name="time")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Amplitude")
+    ax.legend()
+    project.add_figure(
+        fig.configure(
+            id="signal-components",
+            title="Three sinusoidal components",
+            caption="The input is the sum of low-, mid-, and high-frequency sinusoids.",
+            dataset_id="composite-signal",
+            forms=[FormSpec(controls=[reference_alpha_slider])],
+        )
     )
     project.add_line_figure(
         id="filtered-output",
@@ -317,32 +322,32 @@ def build_project() -> LimelightProject:
     bode_frequency_axis = AxisDataType.continuous(
         label="Frequency", unit="Hz", scale="Log", share_group="bode-frequency"
     )
+    input_bode_figure, (magnitude, phase) = mpl_subplots(2, 1, sharex=True)
+    frequency = input_bode["frequency-hz"]
+    magnitude.stem(
+        frequency, input_bode["magnitude-db"], bottom=-245.0, basefmt=" ", label="Magnitude",
+        name="magnitude-db", x_name="frequency-hz",
+    )
+    magnitude.set_ylabel("Magnitude (dB)")
+    phase.plot(frequency, input_bode["phase-deg"], label="Phase", name="phase-deg", x_name="frequency-hz")
+    phase.set_ylabel("Phase (deg)")
+    for axes in (magnitude, phase):
+        axes.set_xscale("log")
+        axes.set_xlabel("Frequency (Hz)")
+        axes.legend()
     project.add_figure(
-        id="input-bode",
-        title="Original signal Bode plot",
-        panels=[
-            Panel(
-                stems=[StemArtist(array="magnitude-db", label="Magnitude", baseline=-245.0)],
-                data="input-signal-bode",
-                x="frequency-hz",
-                x_axis=bode_frequency_axis,
-                y_axis=AxisDataType.continuous(label="Magnitude", unit="dB"),
+        input_bode_figure.configure(
+            id="input-bode",
+            title="Original signal Bode plot",
+            caption=(
+                "Full FFT magnitude and phase spectrum of the unfiltered input, plotted over every frequency "
+                "bin rather than just the three component peaks. The 2, 13, and 45 Hz components each complete "
+                "a whole number of cycles in the 3 second analysis window, so there is essentially no spectral "
+                "leakage: magnitude between peaks sits at the numerical noise floor, and phase there is "
+                "meaningless noise rather than filter phase delay."
             ),
-            Panel(
-                lines=[("phase-deg", "Phase")],
-                data="input-signal-bode",
-                x="frequency-hz",
-                x_axis=bode_frequency_axis,
-                y_axis=AxisDataType.continuous(label="Phase", unit="deg"),
-            ),
-        ],
-        caption=(
-            "Full FFT magnitude and phase spectrum of the unfiltered input, plotted over every frequency "
-            "bin rather than just the three component peaks. The 2, 13, and 45 Hz components each complete "
-            "a whole number of cycles in the 3 second analysis window, so there is essentially no spectral "
-            "leakage: magnitude between peaks sits at the numerical noise floor, and phase there is "
-            "meaningless noise rather than filter phase delay."
-        ),
+            dataset_id="input-signal-bode",
+        )
     )
     project.add_figure(
         id="bode-response",
@@ -389,6 +394,12 @@ def build_project() -> LimelightProject:
             )
         return markers
 
+    # The same marker down both panels of the input's Bode plot.
+    input_bode_markers = input_bode_figure.view()
+    for frequency_hz in COMPONENT_FREQUENCIES_HZ:
+        for panel in (1, 2):
+            input_bode_markers.vline(frequency_hz, label=f"{frequency_hz:g} Hz", panel=panel)
+
     project.set_story_markdown(
         f"""
 # Signal Filtering
@@ -419,7 +430,7 @@ A lower cutoff removes more of the 13 Hz and 45 Hz components. Bessel and critic
 
 The original signal has a discrete spectrum: energy at the three sinusoidal component frequencies. The filter Bode plots then show how the selected filter weights those frequencies in magnitude and phase.
 
-{project.story_figure("input-bode", actions=component_frequency_markers("input-bode"))}
+{input_bode_markers.story(project)}
 
 {project.story_figure("bode-response", actions=component_frequency_markers("bode-response"))}
 

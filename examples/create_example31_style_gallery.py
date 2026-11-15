@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from limelight import (
     AxisDataType,
     DropdownCtrlSpec,
+    FormSpec,
     Index,
     LineArtist,
     LimelightProject,
@@ -21,6 +22,7 @@ from limelight import (
     axes_action_add_utc_time_window_decorator,
     axes_action_set_x_utc_time_limits,
     figure_view_action,
+    mpl_subplots,
 )
 
 REGIONS = ["North", "South", "East", "West"]
@@ -123,20 +125,6 @@ def build_project() -> LimelightProject:
         index=Index.no_index(),
     )
 
-    # Each kind of event is a series of its own, at the months it happened:
-    for event, months in SCHEDULED_EVENTS.items():
-        if not months:
-            continue
-        project.add_csv_dataset(
-            id=f"event-{event}",
-            title=f"Event: {event}",
-            arrays={
-                "month": array([float(month) for month in months], dtype="double", label="Month"),
-                "event": array([event] * len(months), dtype="category", label="Event"),
-            },
-            index=Index.irregular_index_array(coordinate_array="month", unit="month"),
-        )
-
     project.add_csv_dataset(
         id="monthly-revenue",
         title="Monthly revenue",
@@ -159,47 +147,59 @@ def build_project() -> LimelightProject:
         default=REGIONS[0],
     )
 
-    project.add_line_figure(
-        id="explicit-styling",
-        title="Explicit color and linestyle",
-        data="damped-oscillations",
-        x="time",
-        y=[
-            LineArtist("fast-decay", label="Fast decay", color="crimson", linestyle="-"),
-            LineArtist("medium-decay", label="Medium decay", color="#1f77b4", linestyle="--"),
-            LineArtist("slow-decay", label="Slow decay", linestyle=":"),
-        ],
-        caption=(
-            "Three damped oscillations with the same frequency but different decay rates, styled "
-            "with an explicit named color, an explicit hex color, and the default color cycle."
-        ),
-        x_axis=AxisDataType.continuous(label="Time", unit="s"),
-        y_axis=AxisDataType.continuous(label="Amplitude"),
-        controls=[DropdownCtrlSpec(id="highlight-region-control", control_parameter="highlight-region")],
-        form_title="Controls",
-        form_caption="Not wired to the plot; demonstrates a titled control panel.",
+    # The figures are ordinary matplotlib calls, each bound by `dataset_id`
+    # (and its columns' names) to the dataset declared above, so nothing is
+    # copied. The categorical colorBy and the calendar-month axis below have
+    # no matplotlib equivalent and are written out with the builders.
+    time = oscillations["time"]
+    fig, ax = mpl_subplots()
+    ax.plot(time, oscillations["fast-decay"], color="crimson", linestyle="-", label="Fast decay", name="fast-decay", x_name="time")
+    ax.plot(time, oscillations["medium-decay"], color="#1f77b4", linestyle="--", label="Medium decay", name="medium-decay", x_name="time")
+    ax.plot(time, oscillations["slow-decay"], linestyle=":", label="Slow decay", name="slow-decay", x_name="time")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Amplitude")
+    ax.legend()
+    project.add_figure(
+        fig.configure(
+            id="explicit-styling",
+            title="Explicit color and linestyle",
+            caption=(
+                "Three damped oscillations with the same frequency but different decay rates, styled "
+                "with an explicit named color, an explicit hex color, and the default color cycle."
+            ),
+            dataset_id="damped-oscillations",
+            forms=[
+                FormSpec(
+                    controls=[DropdownCtrlSpec(id="highlight-region-control", control_parameter="highlight-region")],
+                    title="Controls",
+                    caption="Not wired to the plot; demonstrates a titled control panel.",
+                )
+            ],
+        )
     )
 
-    project.add_line_figure(
-        id="continuous-color-by",
-        title="Continuous colorBy with size legend",
-        data="depth-measurements",
-        x="depth-m",
-        y=[],
-        scatter=[
-            ScatterArtist(
-                array="temperature-c",
-                label="Measurements",
-                color_by="temperature-c",
-                size_by="sample-volume-ml",
-            )
-        ],
-        caption=(
-            "Each point's color encodes temperature on a continuous colormap (with a colorbar), "
-            "and its size encodes sample volume (with a size legend)."
-        ),
-        x_axis=AxisDataType.continuous(label="Depth", unit="m"),
-        y_axis=AxisDataType.continuous(label="Temperature", unit="C"),
+    fig, ax = mpl_subplots()
+    temperature = measurements["temperature-c"]
+    # Registered by name first, so the size column is the declared one.
+    fig.dataset.register(measurements["sample-volume-ml"], name="sample-volume-ml")
+    points = ax.scatter(
+        measurements["depth-m"], temperature, c=temperature, s=measurements["sample-volume-ml"],
+        label="Measurements", name="temperature-c", x_name="depth-m",
+    )
+    fig.colorbar(points, ax=ax, label="temperature-c")
+    ax.set_xlabel("Depth (m)")
+    ax.set_ylabel("Temperature (C)")
+    ax.legend()
+    project.add_figure(
+        fig.configure(
+            id="continuous-color-by",
+            title="Continuous colorBy with size legend",
+            caption=(
+                "Each point's color encodes temperature on a continuous colormap (with a colorbar), "
+                "and its size encodes sample volume (with a size legend)."
+            ),
+            dataset_id="depth-measurements",
+        )
     )
 
     project.add_line_figure(
@@ -224,35 +224,43 @@ def build_project() -> LimelightProject:
         y_axis=AxisDataType.continuous(label="Temperature", unit="C"),
     )
 
-    project.add_line_figure(
-        id="discrete-region-axis",
-        title="Mean temperature by region",
-        data="region-mean-temperature",
-        x="region",
-        y=[("mean-temperature-c", "Mean temperature")],
-        caption=(
-            "A discrete x-axis plots one point per named category, in first-appearance order, "
-            "instead of a numeric coordinate."
-        ),
-        x_axis=AxisDataType.discrete(label="Region"),
-        y_axis=AxisDataType.continuous(label="Mean temperature", unit="C"),
+    fig, ax = mpl_subplots()
+    ax.plot(region_names, region_temperatures, label="Mean temperature", name="mean-temperature-c", x_name="region")
+    ax.set_xlabel("Region")
+    ax.set_ylabel("Mean temperature (C)")
+    ax.legend()
+    project.add_figure(
+        fig.configure(
+            id="discrete-region-axis",
+            title="Mean temperature by region",
+            caption=(
+                "A discrete x-axis plots one point per named category, in first-appearance order, "
+                "instead of a numeric coordinate."
+            ),
+            dataset_id="region-mean-temperature",
+        )
     )
 
-    project.add_line_figure(
-        id="discrete-event-axis",
-        title="Scheduled events",
-        data="event-payment",
-        x="month",
-        y=[
-            LineArtist("event", data=f"event-{event}", label=event, linestyle="none", marker="x")
-            for event, months in SCHEDULED_EVENTS.items() if months
-        ],
-        caption=(
-            "A discrete y-axis gives each event a row, in the order its categories are declared; "
-            "a declared category nothing draws keeps its row. The lines draw their markers alone."
-        ),
-        x_axis=AxisDataType.continuous(label="Month"),
-        y_axis=AxisDataType.discrete(label="Event", categories=list(SCHEDULED_EVENTS)),
+    # Each kind of event gets a row, in the order declared here - "audit"
+    # included, though nothing happens on it - as matplotlib's own categorical
+    # axis holds them.
+    fig, ax = mpl_subplots()
+    ax.yaxis.update_units(list(SCHEDULED_EVENTS))
+    for event, months in SCHEDULED_EVENTS.items():
+        if months:
+            ax.plot([float(month) for month in months], [event] * len(months), linestyle="none", marker="x", label=event)
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Event")
+    ax.legend()
+    project.add_figure(
+        fig.configure(
+            id="discrete-event-axis",
+            title="Scheduled events",
+            caption=(
+                "A discrete y-axis gives each event a row, in the order its categories are declared; "
+                "a declared category nothing draws keeps its row. The lines draw their markers alone."
+            ),
+        )
     )
 
     project.add_line_figure(
