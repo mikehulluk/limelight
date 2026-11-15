@@ -17,6 +17,8 @@ from tempfile import TemporaryDirectory
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import urlsplit
 
+from lightspeed import DEFAULT_CHUNK_SIZE
+
 from .images import (
     DEFAULT_MAX_WIDTH,
     ConvertedImage,
@@ -32,7 +34,6 @@ from .geometry import (
     DEFAULT_PAGE_MARGIN_MM,
     DEFAULT_PAGE_WIDTH_MM,
 )
-from .largeseries import DEFAULT_CHUNK_SIZE
 from .metadata import METADATA_TYPES, MetadataError, parse_metadata_value
 from .reader import PACKAGE_SUFFIXES, LimelightError
 from .remote_files import RemoteFile

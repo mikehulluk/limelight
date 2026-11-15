@@ -11,7 +11,12 @@ CACHE_DIR_ENV_VAR = "LIMELIGHT_CACHE_DIR"
 
 
 def resolve_cache_dir(cache_dir: str | Path | None = None) -> Path:
-    """Resolve (and create) the limelight.largeseries cache directory."""
+    """Resolve (and create) Limelight's cache directory.
+
+    Everything Limelight caches lives here: large-series caches (built by
+    lightspeed, which is passed this directory), downloaded remote files and
+    instanced fonts.
+    """
     if cache_dir is not None:
         path = Path(cache_dir).expanduser().resolve()
     else:

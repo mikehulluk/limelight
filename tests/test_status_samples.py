@@ -22,10 +22,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 from limelight import largeseries_bridge  # noqa: E402
 from limelight.app import LimelightRuntime  # noqa: E402
 from limelight.hdf_sources import verify_hdf_sources  # noqa: E402
-from limelight.largeseries import SourceSpec, build_or_get_cache, close_cache, query_range  # noqa: E402
-from limelight.largeseries.mpl import plot_envelope  # noqa: E402
-from limelight.largeseries.pyramid import LevelZeroBuilder, cascade_levels  # noqa: E402
-from limelight.largeseries.status import (  # noqa: E402
+from lightspeed import SourceSpec, build_or_get_cache, close_cache, query_range  # noqa: E402
+from lightspeed.mpl import plot_envelope  # noqa: E402
+from lightspeed.pyramid import LevelZeroBuilder, cascade_levels  # noqa: E402
+from lightspeed.status import (  # noqa: E402
     NAN_KIND,
     SKIP,
     UNKNOWN_KIND,

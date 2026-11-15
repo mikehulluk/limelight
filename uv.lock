@@ -735,6 +735,28 @@ wheels = [
 ]
 
 [[package]]
+name = "lightspeed-series"
+version = "0.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "filelock" },
+    { name = "h5py" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/64/02/536c245e6696a5056d6ee4d807207cb69a26f87f2c38d88a1da7f74a507f/lightspeed_series-0.0.2.tar.gz", hash = "sha256:b4958462b17b6fd1e2033a609145f84b3cc27f6f14ad1104ff68673c9630220d", size = 187717, upload-time = "2026-11-15T22:43:46.537Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cc/dd/69bd872d763a1bc7a32e6dbfac8c0975937275b7cc3c0b02d7a5beb847e3/lightspeed_series-0.0.2-py3-none-any.whl", hash = "sha256:b7d02ec9efc3ae2a63032afab2b828a11c0d103648ec69b947c6bc6df9a6e2ff", size = 33348, upload-time = "2026-11-15T22:43:45.43Z" },
+]
+
+[package.optional-dependencies]
+mpl = [
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+
+[[package]]
 name = "limelight-app"
 source = { editable = "." }
 dependencies = [
@@ -743,6 +765,7 @@ dependencies = [
     { name = "fonttools" },
     { name = "h5py" },
     { name = "keyring" },
+    { name = "lightspeed-series", extra = ["mpl"] },
     { name = "linkify-it-py" },
     { name = "markdown-it-py", extra = ["linkify"] },
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -778,6 +801,7 @@ requires-dist = [
     { name = "fonttools", specifier = ">=4.40" },
     { name = "h5py", specifier = ">=3.10" },
     { name = "keyring", specifier = ">=24.0" },
+    { name = "lightspeed-series", extras = ["mpl"], specifier = ">=0.0.2,<0.1" },
     { name = "linkify-it-py", specifier = ">=2.0" },
     { name = "markdown-it-py", extras = ["linkify"], specifier = ">=4.0" },
     { name = "matplotlib", specifier = ">=3.8" },

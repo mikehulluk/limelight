@@ -736,7 +736,7 @@ def _system_font_static_faces(font: ResolvedFont, weights: set[tuple[int, bool]]
 
 
 def _instance_variable_font(source: Path, weight: int) -> Path:
-    from .largeseries.cachedir import cache_lock, resolve_cache_dir
+    from .cachedir import cache_lock, resolve_cache_dir
 
     digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
     cache_dir = resolve_cache_dir()

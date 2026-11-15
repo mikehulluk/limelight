@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from limelight.largeseries.cachedir import resolve_cache_dir
+from limelight.cachedir import resolve_cache_dir
 
 
 @pytest.fixture(autouse=True)

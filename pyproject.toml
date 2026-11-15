@@ -29,7 +29,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 # What the library needs: writing and reading packages, the CLI's verify/
-# summary/json/meta, and the large-series cache. The desktop app and the pdf
+# summary/json/meta, and the large-series cache (lightspeed-series). The desktop app and the pdf
 # command need Qt as well, which is the `gui` extra below, so a server that
 # only builds packages does not install ~0.5 GB of Qt to do it.
 dependencies = [
@@ -46,6 +46,11 @@ dependencies = [
     # fallback), and the Public Suffix List says what a host's registrable
     # domain is, offline.
     "keyring>=24.0",
+    # Large series: the min/max level-of-detail cache and the zoomable plot,
+    # split out of limelight (it was limelight.largeseries); [mpl] is its
+    # matplotlib drawing. Still 0.0.x, so held below 0.1, where its API may
+    # change.
+    "lightspeed-series[mpl]>=0.0.2,<0.1",
     "matplotlib>=3.8",
     "mdit-py-plugins>=0.6",
     "numpy>=1.26",
