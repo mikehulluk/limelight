@@ -2079,7 +2079,7 @@ def _draw_plot_contents(
     else:
         axes.tick_params(axis="x", labelbottom=False)
     handles, labels = _legend_entries(axes)
-    if handles:
+    if handles and axes_spec.get("legend") is not False:
         text.add_legend(axes, handles, labels, loc="best")
     return list(handles), list(labels)
 
@@ -2502,6 +2502,13 @@ def _apply_axes_action_decorators(
         raise TypeError(f"Unknown AxesDecorator constructor: {decorator!r}")
 
 
+def _decorator_label(decorator: dict[str, Any]) -> str | None:
+    """A span's or rect's floating label. Packages written before 0.0.28
+    called it `label`; they still open with their labels."""
+    label = decorator.get("floatingLabel")
+    return decorator.get("label") if label is None else label
+
+
 def _apply_vspan_decorator(axes: Any, axes_spec: dict[str, Any], vspan: dict[str, Any], text: FigureText) -> None:
     point = _axis_limit_point(vspan["xLimit"], axes_spec["xAxis"], axes_spec["yAxis"])
     if point is not None:
@@ -2515,7 +2522,7 @@ def _apply_vspan_decorator(axes: Any, axes_spec: dict[str, Any], vspan: dict[str
             color=vspan.get("color"),
             alpha=_to_float(vspan.get("alpha")),
             linewidth=_to_float(vspan.get("linewidth")),
-            label=vspan.get("floatingLabel"),
+            label=_decorator_label(vspan),
             label_font=text.annotation,
         )
         return
@@ -2529,7 +2536,7 @@ def _apply_vspan_decorator(axes: Any, axes_spec: dict[str, Any], vspan: dict[str
             plot_window,
             color=vspan.get("color"),
             alpha=_to_float(vspan.get("alpha")),
-            label=vspan.get("floatingLabel"),
+            label=_decorator_label(vspan),
             label_font=text.annotation,
         )
 
@@ -2547,7 +2554,7 @@ def _apply_hspan_decorator(axes: Any, axes_spec: dict[str, Any], hspan: dict[str
             color=hspan.get("color"),
             alpha=_to_float(hspan.get("alpha")),
             linewidth=_to_float(hspan.get("linewidth")),
-            label=hspan.get("floatingLabel"),
+            label=_decorator_label(hspan),
             label_font=text.annotation,
         )
         return
@@ -2561,7 +2568,7 @@ def _apply_hspan_decorator(axes: Any, axes_spec: dict[str, Any], hspan: dict[str
             plot_window,
             color=hspan.get("color"),
             alpha=_to_float(hspan.get("alpha")),
-            label=hspan.get("floatingLabel"),
+            label=_decorator_label(hspan),
             label_font=text.annotation,
         )
 
@@ -2589,7 +2596,7 @@ def _apply_rect_decorator(axes: Any, axes_spec: dict[str, Any], rect: dict[str, 
         y_window,
         color=rect.get("color"),
         alpha=_to_float(rect.get("alpha")),
-        label=rect.get("floatingLabel"),
+        label=_decorator_label(rect),
         label_font=text.annotation,
     )
 

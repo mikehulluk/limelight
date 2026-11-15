@@ -203,7 +203,7 @@ def test_limits_take_every_matplotlib_form() -> None:
     ax.set_xlim((2.0, 3.0))
     ax.set_ylim(bottom=-1.0, top=4.0)
     ax.set_xlim(left=0.0)
-    rendered = [str(action) for action in ax.actions]
+    rendered = [str(action) for action in ax.to_panel(data="d").actions]
     assert "xLower = 2.0" in rendered[0] and "xUpper = 3.0" in rendered[0]
     assert "yLower = -1.0" in rendered[1] and "yUpper = 4.0" in rendered[1]
     assert "xLower = 0.0" in rendered[2] and "xUpper = 3.0" in rendered[2]
@@ -438,3 +438,92 @@ def test_a_framed_colour_bar_with_no_room_beside_its_frame_takes_a_share_of_it()
     figure.draw_without_rendering()
     left, _, width, _ = colorbar.ax.get_position().bounds
     assert left + width <= 1.0
+
+
+# --- dates, pyplot, legends, calls after add_to -------------------------------
+
+
+def test_dates_on_x_make_a_time_axis_in_the_app(tmp_path: Path) -> None:
+    import matplotlib.dates as mdates
+
+    days = np.array(["2026-01-01", "2026-01-02", "2026-01-03"], dtype="datetime64[D]")
+    fig, ax = mpl_subplots()
+    ax.plot(days, [1.0, 2.0, 3.0])
+    ax.axvline(np.datetime64("2026-01-02"), label="mid")
+    ax.set_xlim(np.datetime64("2025-12-31"), np.datetime64("2026-01-04"))
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, manifest = _write_and_render(project, tmp_path, "fig")
+
+    [axes_spec] = manifest["figures"][0]["axesSpecs"]
+    # A time axis, as dhall-to-json flattens the union: its dataType has a calendar.
+    assert "calendar" in axes_spec["xAxis"]["dataType"]
+    [line] = [line for line in figure.axes[0].get_lines() if line.get_linestyle() != ":"]
+    assert np.allclose(line.get_xdata(), mdates.date2num(days))
+    lower, upper = figure.axes[0].get_xlim()
+    assert (lower, upper) == pytest.approx((mdates.date2num(np.datetime64("2025-12-31")), mdates.date2num(np.datetime64("2026-01-04"))))
+    assert any(text.get_text() == "mid" for text in figure.axes[0].texts)
+
+
+def test_pyplot_calls_inside_capture_are_recorded(tmp_path: Path) -> None:
+    with mpl_capture.capture() as figures:
+        plt.figure()
+        top = plt.subplot(211)
+        plt.plot([0.0, 1.0, 2.0], [1.0, 2.0, 0.5], "r-", label="a")
+        plt.title("Top")
+        plt.subplot(212, sharex=top)
+        plt.scatter([0.0, 1.0, 2.0], [3.0, 1.0, 2.0])
+        plt.xlim(0.0, 2.0)
+    [fig] = figures
+    assert [len(panel.lines) for panel in fig.panels] == [1, 0]
+    assert [len(panel.scatters) for panel in fig.panels] == [0, 1]
+    assert fig.panels[0].title == "Top"
+
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    upper, lower = figure.axes
+    assert lower in upper.get_shared_x_axes().get_siblings(upper)
+    assert upper.get_lines()[0].get_color() == "r"
+
+
+def test_drawing_capture_cannot_see_warns_at_the_end_of_the_block() -> None:
+    with pytest.warns(MplCaptureWarning, match="in no captured figure"):
+        with mpl_capture.capture():
+            fig = plt.figure()
+            fig.add_subplot().plot([0.0, 1.0], [1.0, 2.0])
+
+
+def test_a_legend_carries_over_only_when_the_preview_has_one(tmp_path: Path) -> None:
+    fig, (with_legend, without) = mpl_subplots(2, 1)
+    with_legend.plot([0.0, 1.0], [0.0, 1.0], label="shown")
+    with_legend.legend()
+    without.plot([0.0, 1.0], [1.0, 0.0], label="not shown")
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    assert [axes.get_legend() is not None for axes in figure.axes] == [True, False]
+
+
+def test_calls_after_add_to_draw_in_the_preview_only_and_warn(tmp_path: Path) -> None:
+    fig, ax = mpl_subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+
+    with pytest.warns(MplCaptureWarning, match="already added"):
+        ax.plot([0.0, 1.0], [5.0, 6.0])
+    with pytest.warns(MplCaptureWarning, match="already added"):
+        ax.axvline(0.5)
+    assert len(ax.mpl_axes.get_lines()) == 3  # the preview has all three
+
+    _, manifest = _write_and_render(project, tmp_path, "fig")
+    [axes_spec] = manifest["figures"][0]["axesSpecs"]
+    assert len(axes_spec["actions"]) == 1  # the interactive figure has only the first line
+
+
+def test_a_package_from_before_floating_label_keeps_its_span_labels() -> None:
+    from limelight.qt_app import _decorator_label
+
+    assert _decorator_label({"xLimit": {}, "label": "old"}) == "old"
+    assert _decorator_label({"xLimit": {}, "floatingLabel": "new", "label": "old"}) == "new"

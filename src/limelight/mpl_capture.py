@@ -46,13 +46,17 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import datetime as _datetime
+import functools
 import itertools
 import math
 import sys
 import warnings
 from typing import Any, Iterator, Sequence
 
+import matplotlib._pylab_helpers as _pylab_helpers
 import matplotlib.collections as _mcollections
+import matplotlib.dates as _mdates
 import matplotlib.lines as _mlines
 import matplotlib.patches as _mpatches
 import matplotlib.pyplot as _plt
@@ -101,6 +105,25 @@ _MPL_TO_AXIS_SCALE = {"linear": "Linear", "log": "Log"}
 
 _share_counter = itertools.count()
 
+# pyplot's drawing functions `capture()` sends to the current CapturingAxes.
+_PYPLOT_ROUTES = {
+    "plot": "plot",
+    "scatter": "scatter",
+    "fill_between": "fill_between",
+    "axvline": "axvline",
+    "axhline": "axhline",
+    "axvspan": "axvspan",
+    "axhspan": "axhspan",
+    "xlim": "set_xlim",
+    "ylim": "set_ylim",
+    "xlabel": "set_xlabel",
+    "ylabel": "set_ylabel",
+    "title": "set_title",
+    "xscale": "set_xscale",
+    "yscale": "set_yscale",
+    "legend": "legend",
+}
+
 
 class MplCaptureWarning(UserWarning):
     """The preview draws something the interactive figure will not show."""
@@ -111,7 +134,7 @@ def _warn(message: str) -> None:
     # module it was raised.
     frame = sys._getframe(1)
     level = 2
-    while frame is not None and frame.f_code.co_filename == __file__:
+    while frame is not None and frame.f_code.co_filename in (__file__, contextlib.__file__):
         frame = frame.f_back
         level += 1
     warnings.warn(message, MplCaptureWarning, stacklevel=level)
@@ -200,6 +223,63 @@ def _split_plot_args(args: tuple[Any, ...]) -> list[tuple[Any, Any, str | None]]
     return groups
 
 
+def _date_numbers(values: Any) -> np.ndarray | None:
+    """`values` as matplotlib date numbers (days since 1970-01-01 UTC, the
+    coordinates a Limelight time axis draws in), or None if they are not
+    dates."""
+
+    array = np.asarray(values)
+    if array.dtype.kind == "M" or (
+        array.dtype.kind == "O" and array.size and isinstance(array.flat[0], (_datetime.date, np.datetime64))
+    ):
+        return np.asarray(_mdates.date2num(array), dtype=float)
+    return None
+
+
+def _date_number(value: Any) -> float | None:
+    if isinstance(value, (_datetime.date, np.datetime64)):
+        return float(_mdates.date2num(value))
+    return None
+
+
+def _utc_text(date_number: float) -> str:
+    return _mdates.num2date(date_number).isoformat()
+
+
+@dataclasses.dataclass
+class _XWindow:
+    """An x-axis limit, or an x span or line, written once `to_panel` knows
+    whether the axis is a time axis."""
+
+    kind: str  # "limits" or "window"
+    lower: float
+    upper: float
+    style: dict[str, Any]
+
+
+def _recorded(mpl_name: str) -> Any:
+    """A recording method that, once its panel's figure has been added to a
+    project, only draws on the preview (as `Axes.<mpl_name>`) and warns:
+    the interactive figure was written from what was recorded by then."""
+
+    def wrap(method: Any) -> Any:
+        @functools.wraps(method)
+        def inner(self: "CapturingAxes", *args: Any, **kwargs: Any) -> Any:
+            if self._added_as is None:
+                return method(self, *args, **kwargs)
+            for key in ("name", "x_name", "fill_color", "fill_alpha", "fill_baseline"):
+                kwargs.pop(key, None)
+            _warn(
+                f"{mpl_name}: figure {self._added_as!r} was already added to a project, so this draws in "
+                "the preview only - make every call before add_to()/add_figure()"
+            )
+            return getattr(self.mpl_axes, mpl_name)(*args, **kwargs)
+
+        return inner
+
+    return wrap
+
+
 class CapturingDataset:
     """The dataset backing one or more `CapturingFigure`s: one registry of
     `{column_name: values}`.
@@ -235,6 +315,9 @@ class CapturingDataset:
         self._by_identity: dict[int, str] = {}
         self._counter = itertools.count()
         self._indices: dict[int, np.ndarray] = {}
+        # Dates captured as date numbers, by the identity of the array the
+        # script passed; the original is kept so its id stays its own.
+        self._as_date_numbers: dict[int, tuple[Any, np.ndarray]] = {}
 
     def register(self, values: Sequence[Any], *, name: str | None = None) -> str:
         key = id(values)
@@ -248,6 +331,19 @@ class CapturingDataset:
         self.columns[column] = values
         self._by_identity[key] = column
         return column
+
+    def register_dates(self, values: Any, *, name: str | None = None) -> str | None:
+        """Registers `values` as date numbers, if they are dates (None if
+        not). The same array object always comes back as the same column."""
+
+        cached = self._as_date_numbers.get(id(values))
+        if cached is not None:
+            return self.register(cached[1], name=name)
+        numbers = _date_numbers(values)
+        if numbers is None:
+            return None
+        self._as_date_numbers[id(values)] = (values, numbers)
+        return self.register(numbers, name=name)
 
     def index_for(self, length: int) -> np.ndarray:
         """The implicit x of `plot(y)` - 0, 1, 2, ... - one array per length,
@@ -353,6 +449,11 @@ class CapturingAxes:
         # `CapturingFigure.add_to` sets it from where matplotlib put it.
         self.frame: tuple[float, float, float, float] | None = None
         self._plotted: list[_Plotted] = []
+        # True once dates are drawn on x: the panel's x-axis is a time axis.
+        self.x_time = False
+        # The id of the figure this panel was added to a project as; after
+        # that, its calls only draw on the preview.
+        self._added_as: str | None = None
         # Each recorded scatter's preview collection, to see at add time
         # whether the script gave it a colour bar.
         self._scatter_collections: list[Any] = []
@@ -364,8 +465,26 @@ class CapturingAxes:
     def _register(self, values: Sequence[Any], *, name: str | None) -> str:
         return self.dataset.register(values, name=name)
 
+    def _register_x(self, values: Sequence[Any], *, name: str | None) -> str:
+        column = self.dataset.register_dates(values, name=name)
+        if column is not None:
+            self.x_time = True
+            return column
+        return self._register(values, name=name)
+
+    def _x_number(self, value: Any) -> Any:
+        """An x position as the axis holds it: a date becomes a date number
+        (and makes this a time axis)."""
+
+        number = _date_number(value)
+        if number is None:
+            return value
+        self.x_time = True
+        return number
+
     # -- plot ---------------------------------------------------------------
 
+    @_recorded("plot")
     def plot(
         self,
         *args: Any,
@@ -436,8 +555,8 @@ class CapturingAxes:
         if x is None:
             x = self.dataset.index_for(len(y))
         x = _as_sized(x)
-        if np.ndim(x) != 1:
-            uncaptured.add("a 2-D x")
+        if np.ndim(x) != 1 or _date_numbers(y) is not None:
+            uncaptured.add("a 2-D x" if np.ndim(x) != 1 else "dates on the y-axis")
             uncaptured.report()
             return self.mpl_axes.plot(x, y, *([fmt] if fmt else []), **kwargs)[0]
 
@@ -498,7 +617,7 @@ class CapturingAxes:
         if kwargs:
             line.set(**kwargs)
 
-        x_col = self._register(x, name=x_name if x_name is not None else (f"{name}_x" if name is not None else None))
+        x_col = self._register_x(x, name=x_name if x_name is not None else (f"{name}_x" if name is not None else None))
         y_col = self._register(y, name=name)
         artist = LineArtist(
             array=y_col,
@@ -521,6 +640,7 @@ class CapturingAxes:
 
     # -- fill_between ---------------------------------------------------------
 
+    @_recorded("fill_between")
     def fill_between(
         self,
         x: Sequence[float],
@@ -618,6 +738,7 @@ class CapturingAxes:
 
     # -- scatter --------------------------------------------------------------
 
+    @_recorded("scatter")
     def scatter(
         self,
         x: Sequence[float],
@@ -750,7 +871,7 @@ class CapturingAxes:
         if vmin is not None or vmax is not None:
             collection.set_clim(vmin, vmax)
 
-        x_col = self._register(x, name=x_name if x_name is not None else (f"{name}_x" if name is not None else None))
+        x_col = self._register_x(x, name=x_name if x_name is not None else (f"{name}_x" if name is not None else None))
         y_col = self._register(y, name=name)
         color_by = self._register(color_values, name=f"{name}_color" if name else None) if color_values is not None else None
         size_by = self._register(size_values, name=f"{name}_size" if name else None) if size_values is not None else None
@@ -805,22 +926,23 @@ class CapturingAxes:
         uncaptured.keywords({key: value for key, value in kwargs.items() if key not in ("color", "alpha", "linewidth")})
         return style
 
+    @_recorded("axvspan")
     def axvspan(self, xmin: float, xmax: float, ymin: float = 0, ymax: float = 1, **kwargs: Any) -> Any:
-        from .writer import axes_action_add_axis_window_decorator
-
         uncaptured = _Uncaptured("axvspan")
         if (ymin, ymax) != (0, 1):
             uncaptured.add("the span (ymin=/ymax= other than the full height)")
             uncaptured.report()
             return self.mpl_axes.axvspan(xmin, xmax, ymin, ymax, **kwargs)
         style = self._decorator_style(kwargs, uncaptured, patch=True)
+        xmin, xmax = self._x_number(xmin), self._x_number(xmax)
         artist = panel_render.draw_vspan_decorator(self.mpl_axes, (xmin, xmax), **style)
         if kwargs:
             artist.set(**kwargs)
-        self.actions.append(axes_action_add_axis_window_decorator(lower=xmin, upper=xmax, **style))
+        self.actions.append(_XWindow("window", xmin, xmax, style))
         uncaptured.report()
         return artist
 
+    @_recorded("axhspan")
     def axhspan(self, ymin: float, ymax: float, xmin: float = 0, xmax: float = 1, **kwargs: Any) -> Any:
         from .writer import axes_action_add_y_axis_window_decorator
 
@@ -837,22 +959,23 @@ class CapturingAxes:
         uncaptured.report()
         return artist
 
+    @_recorded("axvline")
     def axvline(self, x: float = 0, ymin: float = 0, ymax: float = 1, **kwargs: Any) -> Any:
-        from .writer import axes_action_add_axis_window_decorator
-
         uncaptured = _Uncaptured("axvline")
         if (ymin, ymax) != (0, 1):
             uncaptured.add("the line (ymin=/ymax= other than the full height)")
             uncaptured.report()
             return self.mpl_axes.axvline(x, ymin, ymax, **kwargs)
         style = self._decorator_style(kwargs, uncaptured, patch=False)
+        x = self._x_number(x)
         artist = panel_render.draw_vspan_decorator(self.mpl_axes, (x, x), **style)
         if kwargs:
             artist.set(**kwargs)
-        self.actions.append(axes_action_add_axis_window_decorator(lower=x, upper=x, **style))
+        self.actions.append(_XWindow("window", x, x, style))
         uncaptured.report()
         return artist
 
+    @_recorded("axhline")
     def axhline(self, y: float = 0, xmin: float = 0, xmax: float = 1, **kwargs: Any) -> Any:
         from .writer import axes_action_add_y_axis_window_decorator
 
@@ -871,17 +994,22 @@ class CapturingAxes:
 
     # -- limits, labels, scales -------------------------------------------
 
+    @_recorded("set_xlim")
     def set_xlim(self, *args: Any, **kwargs: Any) -> Any:
         """`Axes.set_xlim` in any of its forms - `(0, 1)`, `((0, 1))`,
         `left=0` - recording the limits it leaves the axes with."""
 
-        from .writer import axes_action_set_x_float_limits
-
         result = self.mpl_axes.set_xlim(*args, **kwargs)
+        if any(_date_number(value) is not None for value in (*args, *kwargs.values())) or (
+            args and not _is_number(args[0]) and args[0] is not None
+            and any(_date_number(value) is not None for value in np.ravel(np.asarray(args[0], dtype=object)))
+        ):
+            self.x_time = True
         lower, upper = self.mpl_axes.get_xlim()
-        self.actions.append(axes_action_set_x_float_limits(float(lower), float(upper)))
+        self.actions.append(_XWindow("limits", float(lower), float(upper), {}))
         return result
 
+    @_recorded("set_ylim")
     def set_ylim(self, *args: Any, **kwargs: Any) -> Any:
         from .writer import axes_action_set_y_float_limits
 
@@ -899,14 +1027,17 @@ class CapturingAxes:
         uncaptured.report()
         return result
 
+    @_recorded("set_xlabel")
     def set_xlabel(self, xlabel: Any, *args: Any, **kwargs: Any) -> Any:
         self.x_label = str(xlabel)
         return self._set_text("set_xlabel", xlabel, args, kwargs)
 
+    @_recorded("set_ylabel")
     def set_ylabel(self, ylabel: Any, *args: Any, **kwargs: Any) -> Any:
         self.y_label = str(ylabel)
         return self._set_text("set_ylabel", ylabel, args, kwargs)
 
+    @_recorded("set_title")
     def set_title(self, label: Any, *args: Any, **kwargs: Any) -> Any:
         self.title = str(label)
         return self._set_text("set_title", label, args, kwargs)
@@ -922,14 +1053,26 @@ class CapturingAxes:
         uncaptured.report()
         return scale
 
+    @_recorded("set_yscale")
     def set_yscale(self, value: Any, **kwargs: Any) -> None:
         self.y_scale = self._set_scale("set_yscale", value, kwargs)
 
+    @_recorded("set_xscale")
     def set_xscale(self, value: Any, **kwargs: Any) -> None:
         self.x_scale = self._set_scale("set_xscale", value, kwargs)
 
+    @_recorded("legend")
     def legend(self, *args: Any, **kwargs: Any) -> Any:
-        return self.mpl_axes.legend(*args, **kwargs)
+        """Whether a panel has a legend carries over; where it sits and how it
+        looks do not - the interactive figure places it itself."""
+
+        uncaptured = _Uncaptured("legend")
+        if args:
+            uncaptured.add("handles/labels given to legend()")
+        uncaptured.keywords(kwargs)
+        result = self.mpl_axes.legend(*args, **kwargs)
+        uncaptured.report()
+        return result
 
     def grid(self, *args: Any, **kwargs: Any) -> Any:
         return self.mpl_axes.grid(*args, **kwargs)
@@ -978,16 +1121,42 @@ class CapturingAxes:
             artist_data = self.dataset.dataset_of(artist.array, data)
             return artist if artist_data == data else dataclasses.replace(artist, data=artist_data)
 
+        def resolved(action: Any) -> Any:
+            from .writer import (
+                axes_action_add_axis_window_decorator,
+                axes_action_add_utc_time_window_decorator,
+                axes_action_set_x_float_limits,
+                axes_action_set_x_utc_time_limits,
+            )
+
+            if not isinstance(action, _XWindow):
+                return action
+            if self.x_time:
+                start, end = _utc_text(action.lower), _utc_text(action.upper)
+                if action.kind == "limits":
+                    return axes_action_set_x_utc_time_limits(start, end)
+                return axes_action_add_utc_time_window_decorator(start=start, end=end, **action.style)
+            if action.kind == "limits":
+                return axes_action_set_x_float_limits(action.lower, action.upper)
+            return axes_action_add_axis_window_decorator(lower=action.lower, upper=action.upper, **action.style)
+
+        x_axis = (
+            AxisDataType.time_series(label=self.x_label, share_group=self.share_x)
+            if self.x_time
+            else AxisDataType.continuous(label=self.x_label, scale=self.x_scale, share_group=self.share_x)
+        )
+
         return Panel(
             lines=[bound(line) for line in self.lines],
             scatters=[bound(self._with_colorbar(scatter, collection)) for scatter, collection in zip(self.scatters, self._scatter_collections)],
-            actions=self.actions,
+            actions=[resolved(action) for action in self.actions],
             data=data,
             title=self.title,
             id=self.panel_id,
             height=height if height is not None else self.height,
             frame=self.frame,
-            x_axis=AxisDataType.continuous(label=self.x_label, scale=self.x_scale, share_group=self.share_x),
+            legend=None if self.mpl_axes.get_legend() is not None else False,
+            x_axis=x_axis,
             y_axis=AxisDataType.continuous(label=self.y_label, scale=self.y_scale, share_group=self.share_y),
         )
 
@@ -1023,10 +1192,41 @@ class CapturingFigure:
         self.caption: str | None = None
         self.size: Any | None = None
         self.provenance: Any | None = None
-        # How many columns `subplots()` laid the panels out in: more than one,
-        # and the interactive figure places each panel where the preview
-        # has it rather than stacking them.
-        self.ncols = 1
+
+    def _follow_the_real_figure(self) -> None:
+        """Takes what the matplotlib figure itself says - however its Axes
+        were made (`subplots()`, or `plt.subplot()` under `capture()`) - about
+        the panels' order, which axes are linked, and their heights."""
+
+        order = {id(axes): index for index, axes in enumerate(self.mpl_figure.axes)}
+        self.panels.sort(key=lambda panel: order.get(id(panel.mpl_axes), len(order)))
+        by_axes = {id(panel.mpl_axes): panel for panel in self.panels}
+        for panel in self.panels:
+            x_linked = [by_axes[id(a)] for a in panel.mpl_axes.get_shared_x_axes().get_siblings(panel.mpl_axes) if id(a) in by_axes]
+            if len(x_linked) > 1 and all(p.share_x.startswith("panel-") for p in x_linked):
+                group = min(p.share_x for p in x_linked)
+                for linked in x_linked:
+                    linked.share_x = group
+            y_linked = [by_axes[id(a)] for a in panel.mpl_axes.get_shared_y_axes().get_siblings(panel.mpl_axes) if id(a) in by_axes]
+            if len(y_linked) > 1 and all(p.share_y is None for p in y_linked):
+                group = f"share-y-{next(_share_counter)}"
+                for linked in y_linked:
+                    linked.share_y = group
+            spec = panel.mpl_axes.get_subplotspec()
+            if panel.height is None and spec is not None:
+                ratios = spec.get_gridspec().get_height_ratios()
+                if ratios is not None:
+                    panel.height = float(ratios[spec.rowspan.start])
+
+    def _needs_frames(self) -> bool:
+        """A single column is stacked, as the app stacks panels; anything
+        else - a grid, or Axes placed by hand - keeps matplotlib's layout."""
+
+        for panel in self.panels:
+            spec = panel.mpl_axes.get_subplotspec()
+            if spec is None or spec.get_gridspec().ncols > 1:
+                return True
+        return False
 
     def place_panels(self) -> None:
         """Sets each panel's `frame` to where matplotlib laid it out - after
@@ -1135,9 +1335,10 @@ class CapturingFigure:
             # caller can read the dataset id this figure actually ended up
             # registered under, rather than guess it matches that default.
             self.dataset_id = f"{self.id}-data"
-        if self.ncols > 1:
+        self._follow_the_real_figure()
+        if self._needs_frames():
             self.place_panels()
-        return project.add_mpl_figure(
+        figure_spec = project.add_mpl_figure(
             id=self.id,
             title=self.title,
             caption=self.caption,
@@ -1146,6 +1347,9 @@ class CapturingFigure:
             dataset_id=self.dataset_id,
             provenance=self.provenance,
         )
+        for panel in self.panels:
+            panel._added_as = self.id
+        return figure_spec
 
     def __getattr__(self, name: str) -> Any:
         # Same passthrough as CapturingAxes: fig.tight_layout(), fig.suptitle(...),
@@ -1234,7 +1438,6 @@ def subplots(
     uncaptured.report()
 
     capturing_fig = CapturingFigure(mpl_fig, panels, dataset=dataset)
-    capturing_fig.ncols = ncols
     if squeeze:
         return capturing_fig, wrapped.item() if wrapped.size == 1 else wrapped.squeeze()
     return capturing_fig, wrapped
@@ -1264,20 +1467,98 @@ def capture() -> Iterator[list[CapturingFigure]]:
     afterwards - the rest stay exactly what they were: plots you looked at
     while debugging.
 
-    Only `plt.subplots` is patched - `plt.figure()`/`fig.add_subplot()` and
-    other figure-creation entry points aren't covered.
+    pyplot's own drawing functions (`plt.plot`, `plt.scatter`, `plt.xlim`,
+    `plt.title`, ...) are captured too, on whatever Axes is current - so
+    `plt.figure(); plt.subplot(211); plt.plot(...)` scripts work as well.
+    Axes capture cannot see - made with `fig.add_subplot()`/`fig.add_axes()`
+    and drawn on directly, or a `twinx()` - still draw, and an
+    `MplCaptureWarning` at the end of the block says they were left out.
     """
 
     captured: list[CapturingFigure] = []
+    wrappers: dict[int, CapturingAxes] = {}
+    figures: dict[int, CapturingFigure] = {}
+    figures_before = set(_plt.get_fignums())
+
+    def adopt(fig: CapturingFigure) -> None:
+        captured.append(fig)
+        figures[id(fig.mpl_figure)] = fig
+        for panel in fig.panels:
+            wrappers[id(panel.mpl_axes)] = panel
 
     def patched_subplots(*args: Any, **kwargs: Any) -> Any:
         fig, axes = subplots(*args, **kwargs)
-        captured.append(fig)
+        adopt(fig)
         return fig, axes
 
-    original_subplots = _plt.subplots
+    def current_axes() -> CapturingAxes | None:
+        """The CapturingAxes for pyplot's current Axes, wrapping it (and its
+        figure) the first time - so `plt.figure(); plt.subplot(211);
+        plt.plot(...)` is captured too. None for a twin (`twinx`), which
+        overlays another panel rather than being one."""
+
+        axes = _plt.gca()
+        wrapper = wrappers.get(id(axes))
+        if wrapper is not None:
+            return wrapper
+        if any(other is not axes and other.get_position().bounds == axes.get_position().bounds for other in axes.figure.axes):
+            return None
+        fig = figures.get(id(axes.figure))
+        if fig is None:
+            fig = CapturingFigure(axes.figure, [], dataset=CapturingDataset())
+            adopt(fig)
+        wrapper = CapturingAxes(axes, dataset=fig.dataset)
+        fig.panels.append(wrapper)
+        wrappers[id(axes)] = wrapper
+        return wrapper
+
+    def routed(pyplot_name: str, method: str, original: Any) -> Any:
+        @functools.wraps(original)
+        def call(*args: Any, **kwargs: Any) -> Any:
+            if pyplot_name in ("xlim", "ylim") and not args and not kwargs:
+                return original()
+            target = current_axes()
+            if target is None:
+                _warn(f"plt.{pyplot_name}: drawing on a twinned Axes is not captured - it draws in the preview only")
+                return original(*args, **kwargs)
+            result = getattr(target, method)(*args, **kwargs)
+            if pyplot_name == "scatter":
+                # As pyplot.scatter does, so a bare plt.colorbar() finds it.
+                _plt.sci(result)
+            return result
+
+        return call
+
+    originals = {"subplots": _plt.subplots}
     _plt.subplots = patched_subplots
+    for pyplot_name, method in _PYPLOT_ROUTES.items():
+        originals[pyplot_name] = getattr(_plt, pyplot_name)
+        setattr(_plt, pyplot_name, routed(pyplot_name, method, originals[pyplot_name]))
     try:
         yield captured
     finally:
-        _plt.subplots = original_subplots
+        for pyplot_name, original in originals.items():
+            setattr(_plt, pyplot_name, original)
+        _warn_about_uncaptured_drawing(figures_before, wrappers)
+
+
+def _warn_about_uncaptured_drawing(figures_before: set[int], wrappers: dict[int, CapturingAxes]) -> None:
+    """Anything drawn, during a `capture()` block, on Axes that capture never
+    saw - made by `fig.add_subplot`, `fig.add_axes`, `ax.twinx`, ... - is in
+    no captured figure: say so, rather than leave it to be found missing."""
+
+    for number in _plt.get_fignums():
+        if number in figures_before:
+            continue
+        manager = _pylab_helpers.Gcf.get_fig_manager(number)
+        if manager is None:
+            continue
+        for axes in manager.canvas.figure.axes:
+            if id(axes) in wrappers or getattr(axes, "_colorbar", None) is not None:
+                continue
+            if axes.lines or axes.collections or axes.patches or axes.images or axes.texts:
+                _warn(
+                    f"capture(): figure {number} has Axes drawn on through calls capture() does not see "
+                    "(fig.add_subplot, fig.add_axes, ax.twinx, ...) - they are in no captured figure"
+                )
+                break

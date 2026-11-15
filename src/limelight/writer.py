@@ -1505,6 +1505,9 @@ class Panel:
     id: str | None = None
     height: float | None = None
     frame: Frame | None = None
+    # False leaves the panel's legend out; unset, it has one whenever an
+    # artist on it is labelled.
+    legend: bool | None = None
 
     @property
     def has_artists(self) -> bool:
@@ -1919,6 +1922,7 @@ class FigureSpec:
                 ("id", _quote(panel_id)),
                 ("frame", _optional_frame(panel.frame)),
                 ("heightRatio", _optional_double(panel.height)),
+                ("legend", _optional_bool(panel.legend)),
                 ("title", _optional_display_text(panel.title)),
                 ("caption", _optional_display_text(panel.caption)),
                 ("xAxis", _axis_spec(f"{self.id}-x{suffix}-axis", x_axis)),

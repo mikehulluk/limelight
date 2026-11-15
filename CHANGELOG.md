@@ -40,13 +40,16 @@ versions may break things.
   `project.add_figure(fig)` turns them into the interactive figure, its data
   registered once however many panels share it. `sharex`/`sharey` and
   `height_ratios` carry over; a grid of more than one column keeps the
-  layout matplotlib gave it, and a scatter has a colour bar exactly when the
-  script made one. `with limelight.mpl_capture.capture()` does the
-  same for an unmodified script's `plt.subplots`. Whatever the interactive
+  layout matplotlib gave it, a scatter has a colour bar exactly when the
+  script made one, a panel has a legend exactly when the preview does, and
+  dates on x make a time axis. `with limelight.mpl_capture.capture()` does the
+  same for an unmodified script's `plt.subplots`, and its `plt.plot`-style
+  pyplot calls. Whatever the interactive
   figure cannot show still draws in the preview and raises an
   `MplCaptureWarning` saying what will differ - nothing is dropped silently.
 - **Shared y-axes.** Panels whose `yAxis` names the same `shareGroup` now
   pan and zoom together on y. A y-axis without one is still independent.
+- **`AxesSpec.legend`**: `Some False` leaves a panel's legend out.
 - **`drawStyle = stepsMid`**, a step halfway between samples, as
   matplotlib's `steps-mid`.
 - **`ScatterArtist` takes `alpha` and `size`** (one marker area for every
@@ -64,7 +67,9 @@ versions may break things.
 - **A decorator's label is now `floatingLabel`** on `AxesDecoratorVSpan`
   and `AxesDecoratorRect`, as on the new `AxesDecoratorHSpan`. A dhall file
   that sets `label` on one of them needs the new name, and the new optional
-  fields; the Python writer's `label=` argument is unchanged.
+  fields; the Python writer's `label=` argument is unchanged. Packages
+  written before still open with their labels. Hand-written dhall
+  `AxesSpec` records need the new `legend` field (`None Bool`).
 
 ## [0.0.27] - 2026-11-15
 

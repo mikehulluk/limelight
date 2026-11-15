@@ -91,10 +91,13 @@ let AxesAction = < AxesActionAddData : PlotArtists.PlotArtist | AxesActionSetLim
 -- A `frame` places the panel exactly, in normalized figure coordinates, the
 -- way matplotlib's `add_axes` does - for panels side by side, or an inset -
 -- and leaves its margins to the author.
+-- `legend = Some False` leaves the panel's legend out; otherwise it has one
+-- whenever an artist on it is labelled.
 let AxesSpec =
       { id : Types.AxesSpecId
       , frame : Optional Types.Frame
       , heightRatio : Optional Double
+      , legend : Optional Bool
       , title : Optional Core.DisplayText
       , caption : Optional Core.DisplayText
       , xAxis : AxisSpec

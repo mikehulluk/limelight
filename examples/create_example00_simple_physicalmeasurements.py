@@ -187,6 +187,7 @@ in    { limelightVersion = "1.0"
               -- No frame: the panel is laid out by the renderer.
               , frame = None Limelight.Frame
               , heightRatio = None Double
+              , legend = None Bool
               , title = None Text
               , caption = None Limelight.DisplayText
               , xAxis =
