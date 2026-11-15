@@ -7,6 +7,8 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.28] - 2026-11-15
+
 ### Added
 
 - **`limelight-gui --dbg-server [PORT]`: drive the open window from
