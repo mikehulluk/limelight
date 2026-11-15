@@ -68,6 +68,12 @@ versions may break things.
   stem artist (its colour and baseline), and strings on an axis
   (`ax.plot(["north", "south"], ...)`) make it a discrete one, in
   matplotlib's first-appearance order, on x or y.
+- **`FigureViewBuilder.vspan()`/`.hspan()`**: a band across a view's panel
+  between two x (or y) values.
+- **A captured figure can carry forms** (`fig.configure(forms=[FormSpec(...)])`),
+  and a captured categorical axis takes its categories from matplotlib's own
+  axis, so ones declared with `ax.yaxis.update_units([...])` and never drawn
+  keep their row.
 - **Every one-character matplotlib marker** (`.`, `,`, `d`, `X`, `1`...`4`,
   `|`, `_` and the rest) is a valid `marker`; before, only twelve were.
 - **`Index.regular_float(origin, step)`**, a regular index whose step is not

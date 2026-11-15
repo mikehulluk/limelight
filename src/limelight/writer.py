@@ -2625,6 +2625,36 @@ class FigureViewBuilder:
             panel,
         )
 
+    def vspan(
+        self,
+        lower: float,
+        upper: float,
+        *,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        panel: int = 1,
+    ) -> "FigureViewBuilder":
+        """A band over the panel's full height, between two x values."""
+        return self._add(
+            axes_action_add_axis_window_decorator(lower=lower, upper=upper, label=label, color=color, alpha=alpha), panel
+        )
+
+    def hspan(
+        self,
+        lower: float,
+        upper: float,
+        *,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        panel: int = 1,
+    ) -> "FigureViewBuilder":
+        """A band across the panel's full width, between two y values."""
+        return self._add(
+            axes_action_add_y_axis_window_decorator(lower=lower, upper=upper, label=label, color=color, alpha=alpha), panel
+        )
+
     def shade(
         self,
         *,
@@ -3318,6 +3348,7 @@ class LimelightProject:
         size: FigureSize | None = None,
         dataset_id: str | None = None,
         provenance: "SourceProvenance | None" = None,
+        forms: Sequence[FormSpec] = (),
     ) -> FigureSpec:
         """A figure built from `mpl_capture.CapturingAxes` panels: each one
         drew on a real matplotlib Axes with ordinary `scatter`/`plot`/etc
@@ -3362,6 +3393,7 @@ class LimelightProject:
             caption=caption,
             size=size,
             panels=[panel.to_panel(data=dataset_id) for panel in panels],
+            forms=forms,
         )
 
     def _add_or_extend_csv_dataset(

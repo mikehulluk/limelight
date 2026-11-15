@@ -232,6 +232,18 @@ def _categories(values: Any) -> list[str] | None:
     return list(dict.fromkeys(items))
 
 
+def _axis_categories(axis: Any) -> list[str] | None:
+    """A matplotlib axis' categories, in its own order - which includes any
+    the script declared with `axis.update_units([...])` and never drew."""
+
+    from matplotlib.category import UnitData
+
+    units = getattr(axis, "units", None)
+    if isinstance(units, UnitData) and units._mapping:
+        return list(units._mapping)
+    return None
+
+
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool)
 
@@ -1608,14 +1620,16 @@ class CapturingAxes:
                 return axes_action_set_x_float_limits(action.lower, action.upper)
             return axes_action_add_axis_window_decorator(lower=action.lower, upper=action.upper, **action.style)
 
-        if self.x_categories is not None:
-            x_axis = AxisDataType.discrete(label=self.x_label, share_group=self.share_x, categories=self.x_categories)
+        x_categories = _axis_categories(self.mpl_axes.xaxis) or self.x_categories
+        y_categories = _axis_categories(self.mpl_axes.yaxis) or self.y_categories
+        if x_categories is not None:
+            x_axis = AxisDataType.discrete(label=self.x_label, share_group=self.share_x, categories=x_categories)
         elif self.x_time:
             x_axis = AxisDataType.time_series(label=self.x_label, share_group=self.share_x)
         else:
             x_axis = AxisDataType.continuous(label=self.x_label, scale=self.x_scale, share_group=self.share_x)
-        if self.y_categories is not None:
-            y_axis = AxisDataType.discrete(label=self.y_label, share_group=self.share_y, categories=self.y_categories)
+        if y_categories is not None:
+            y_axis = AxisDataType.discrete(label=self.y_label, share_group=self.share_y, categories=y_categories)
         else:
             y_axis = AxisDataType.continuous(label=self.y_label, scale=self.y_scale, share_group=self.share_y)
 
@@ -1667,6 +1681,9 @@ class CapturingFigure:
         self.caption: str | None = None
         self.size: Any | None = None
         self.provenance: Any | None = None
+        # Forms of controls shown with the figure (`FormSpec`s): nothing
+        # matplotlib draws, so they are given here rather than captured.
+        self.forms: list[Any] = []
 
     def _follow_the_real_figure(self) -> None:
         """Takes what the matplotlib figure itself says - however its Axes
@@ -1690,7 +1707,8 @@ class CapturingFigure:
             spec = panel.mpl_axes.get_subplotspec()
             if panel.height is None and spec is not None:
                 ratios = spec.get_gridspec().get_height_ratios()
-                if ratios is not None:
+                # Equal ratios (matplotlib's default) are the app's default too.
+                if ratios is not None and len(set(ratios)) > 1:
                     panel.height = float(ratios[spec.rowspan.start])
 
     def _needs_frames(self) -> bool:
@@ -1741,9 +1759,12 @@ class CapturingFigure:
         size: Any | None = None,
         dataset_id: str | None = None,
         provenance: Any | None = None,
+        forms: Sequence[Any] | None = None,
     ) -> "CapturingFigure":
         if id is not None:
             self.id = id
+        if forms is not None:
+            self.forms = list(forms)
         if title is not None:
             self.title = title
         if caption is not None:
@@ -1821,6 +1842,7 @@ class CapturingFigure:
             panels=self.panels,
             dataset_id=self.dataset_id,
             provenance=self.provenance,
+            forms=self.forms,
         )
         for panel in self.panels:
             panel._added_as = self.id
