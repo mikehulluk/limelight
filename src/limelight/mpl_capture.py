@@ -94,6 +94,7 @@ from .writer import (
     Panel,
     ScatterArtist,
     StatusCode,
+    StemArtist,
     TimeSeriesArtist,
     hdf_source,
 )
@@ -144,6 +145,7 @@ _share_counter = itertools.count()
 _PYPLOT_ROUTES = {
     "plot": "plot",
     "scatter": "scatter",
+    "stem": "stem",
     "fill_between": "fill_between",
     "axvline": "axvline",
     "axhline": "axhline",
@@ -215,6 +217,19 @@ def _capturable_marker(marker: Any, uncaptured: "_Uncaptured") -> str | None:
         return marker
     uncaptured.add(f"marker={marker!r} (a package's markers are matplotlib's one-character codes)")
     return None
+
+
+def _categories(values: Any) -> list[str] | None:
+    """The distinct strings `values` holds, in first-appearance order (as
+    matplotlib orders a categorical axis), or None if they are not strings."""
+
+    try:
+        items = list(values)
+    except TypeError:
+        return None
+    if not items or not all(isinstance(item, str) for item in items):
+        return None
+    return list(dict.fromkeys(items))
 
 
 def _is_number(value: Any) -> bool:
@@ -607,6 +622,11 @@ class CapturingAxes:
         self._plotted: list[_Plotted] = []
         # True once dates are drawn on x: the panel's x-axis is a time axis.
         self.x_time = False
+        # The categories strings drawn on an axis have made it a discrete one,
+        # in matplotlib's first-appearance order; None while it is numeric.
+        self.x_categories: list[str] | None = None
+        self.y_categories: list[str] | None = None
+        self.stems: list[StemArtist] = []
         # The id of the figure this panel was added to a project as; after
         # that, its calls only draw on the preview.
         self._added_as: str | None = None
@@ -623,6 +643,14 @@ class CapturingAxes:
 
     def _register(self, values: Sequence[Any], *, name: str | None) -> str:
         return self.dataset.register(values, name=name)
+
+    def _note_categories(self, x: Any, y: Any) -> None:
+        for axis, values in (("x", x), ("y", y)):
+            found = _categories(values)
+            if found is None:
+                continue
+            current = getattr(self, f"{axis}_categories") or []
+            setattr(self, f"{axis}_categories", list(dict.fromkeys([*current, *found])))
 
     def _register_x(self, values: Sequence[Any], *, name: str | None) -> str:
         column = self.dataset.register_dates(values, name=name)
@@ -804,6 +832,7 @@ class CapturingAxes:
             fill_baseline=fill_baseline if captured_fill is not None else None,
         )
         self.lines.append(artist)
+        self._note_categories(x, y)
         self._plotted.append(_Plotted(x=x, y=y, artist=artist, mpl_line=line))
         uncaptured.report()
         return line
@@ -1010,6 +1039,73 @@ class CapturingAxes:
         )
         uncaptured.report()
         return zoom.lines[0]
+
+    # -- stem -----------------------------------------------------------------
+
+    @_recorded("stem")
+    def stem(
+        self,
+        *args: Any,
+        linefmt: str | None = None,
+        markerfmt: str | None = None,
+        basefmt: str | None = None,
+        bottom: float = 0,
+        label: str | None = None,
+        orientation: str = "vertical",
+        name: str | None = None,
+        x_name: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """`Axes.stem`, recording a `StemArtist`: its colour (from `linefmt`)
+        and baseline (`bottom`). matplotlib's baseline line (`basefmt`), a
+        marker or line style of its own, and horizontal stems are drawn in
+        the preview only."""
+
+        from matplotlib.container import StemContainer
+
+        uncaptured = _Uncaptured("stem")
+        if kwargs.get("data") is not None or orientation != "vertical" or not 1 <= len(args) <= 3:
+            uncaptured.add("data=" if kwargs.get("data") is not None else f"orientation={orientation!r}")
+            uncaptured.report()
+            return self.mpl_axes.stem(
+                *args, linefmt=linefmt, markerfmt=markerfmt, basefmt=basefmt, bottom=bottom, label=label,
+                orientation=orientation, **kwargs,
+            )
+        kwargs.pop("data", None)
+        if len(args) == 1:
+            y = _as_sized(args[0])
+            x = self.dataset.index_for(len(y))
+        else:
+            x, y = _as_sized(args[0]), _as_sized(args[1])
+            if len(args) == 3:
+                linefmt = args[2]
+        line_style, _, line_color = _process_plot_format(linefmt) if linefmt else (None, None, None)
+        if line_style not in (None, "-"):
+            uncaptured.add(f"linefmt={linefmt!r} (a package's stems are solid)")
+        if markerfmt is not None:
+            uncaptured.add(f"markerfmt={markerfmt!r}")
+        if basefmt not in (" ", "", "none", "None"):
+            uncaptured.add("the baseline line (basefmt; pass basefmt=' ' to leave it out)")
+        captured_color = _capturable_color(line_color) if line_color is not None else None
+        uncaptured.keywords(kwargs)
+
+        markerline, stemlines = panel_render.draw_stem(
+            self.mpl_axes, x, y, label=label, color=line_color, baseline=float(bottom)
+        )
+        x_col = self._register_x(x, name=x_name if x_name is not None else (f"{name}_x" if name is not None else None))
+        y_col = self._register(y, name=name)
+        self.stems.append(
+            StemArtist(
+                array=y_col,
+                x=x_col,
+                label=None if label is None else str(label),
+                baseline=float(bottom) if bottom else None,
+                color=captured_color,
+            )
+        )
+        self._note_categories(x, y)
+        uncaptured.report()
+        return StemContainer((markerline, stemlines, None), label=label)
 
     # -- fill_between ---------------------------------------------------------
 
@@ -1262,6 +1358,7 @@ class CapturingAxes:
             )
         )
         self._scatter_collections.append(collection)
+        self._note_categories(x, y)
         uncaptured.report()
         return collection
 
@@ -1511,15 +1608,21 @@ class CapturingAxes:
                 return axes_action_set_x_float_limits(action.lower, action.upper)
             return axes_action_add_axis_window_decorator(lower=action.lower, upper=action.upper, **action.style)
 
-        x_axis = (
-            AxisDataType.time_series(label=self.x_label, share_group=self.share_x)
-            if self.x_time
-            else AxisDataType.continuous(label=self.x_label, scale=self.x_scale, share_group=self.share_x)
-        )
+        if self.x_categories is not None:
+            x_axis = AxisDataType.discrete(label=self.x_label, share_group=self.share_x, categories=self.x_categories)
+        elif self.x_time:
+            x_axis = AxisDataType.time_series(label=self.x_label, share_group=self.share_x)
+        else:
+            x_axis = AxisDataType.continuous(label=self.x_label, scale=self.x_scale, share_group=self.share_x)
+        if self.y_categories is not None:
+            y_axis = AxisDataType.discrete(label=self.y_label, share_group=self.share_y, categories=self.y_categories)
+        else:
+            y_axis = AxisDataType.continuous(label=self.y_label, scale=self.y_scale, share_group=self.share_y)
 
         return Panel(
             lines=[bound(line) for line in self.lines],
             scatters=[bound(self._with_colorbar(scatter, collection)) for scatter, collection in zip(self.scatters, self._scatter_collections)],
+            stems=[bound(stem) for stem in self.stems],
             time_series=[dataclasses.replace(artist, data=self.dataset.source_id(ref, data)) for artist, ref in self._series],
             actions=[resolved(action) for action in self.actions],
             data=data,
@@ -1529,7 +1632,7 @@ class CapturingAxes:
             frame=self.frame,
             legend=None if self.mpl_axes.get_legend() is not None else False,
             x_axis=x_axis,
-            y_axis=AxisDataType.continuous(label=self.y_label, scale=self.y_scale, share_group=self.share_y),
+            y_axis=y_axis,
         )
 
 

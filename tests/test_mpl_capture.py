@@ -546,3 +546,37 @@ def test_every_one_character_matplotlib_marker_is_captured_as_it_is(tmp_path: Pa
     fig.add_to(project, id="fig", title="Fig")
     figure, _ = _write_and_render(project, tmp_path, "fig")
     assert [line.get_marker() for line in figure.axes[0].get_lines()][: len(markers)] == markers
+
+
+def test_strings_on_an_axis_make_it_discrete(tmp_path: Path) -> None:
+    fig, (by_region, by_event) = mpl_subplots(2, 1)
+    by_region.plot(["north", "south", "east"], [3.0, 1.0, 2.0], "o-")
+    by_region.scatter(["west", "north"], [0.5, 2.5])
+    times = np.array([1.0, 2.0, 3.0])
+    by_event.scatter(times, ["start", "stop", "start"])
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, manifest = _write_and_render(project, tmp_path, "fig")
+
+    region_axis = manifest["figures"][0]["axesSpecs"][0]["xAxis"]["dataType"]
+    assert region_axis["categories"] == ["north", "south", "east", "west"]
+    event_axis = manifest["figures"][0]["axesSpecs"][1]["yAxis"]["dataType"]
+    assert event_axis["categories"] == ["start", "stop"]
+    assert [tick.get_text() for tick in figure.axes[0].get_xticklabels()][:4] == ["north", "south", "east", "west"]
+
+
+def test_stems_are_captured_with_their_colour_and_baseline(tmp_path: Path) -> None:
+    fig, ax = mpl_subplots()
+    with pytest.warns(MplCaptureWarning, match="baseline line"):
+        ax.stem([0.0, 1.0, 2.0], [1.0, -1.0, 2.0], linefmt="C2-", bottom=0.5, label="taps")
+    ax.stem(np.array([1.0, 3.0, 2.0]), basefmt=" ")
+    [first, second] = ax.stems
+    # The format string resolves C2 to its colour, which is what is stored.
+    assert (first.color, first.baseline, first.label) == ("#2ca02cff", 0.5, "taps")
+    assert second.x == "index"
+
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, manifest = _write_and_render(project, tmp_path, "fig")
+    stems = [action for action in manifest["figures"][0]["axesSpecs"][0]["actions"] if "baseline" in action.get("AxesActionAddData", action)]
+    assert len(stems) == 2

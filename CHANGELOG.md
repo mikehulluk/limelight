@@ -64,6 +64,10 @@ versions may break things.
   captured package, at the same size and point scale - a PNG of each, a
   difference image, a side-by-side, the share of pixels that differ, and
   every capture warning, in `report.md`.
+- **Captured stem plots and categorical axes.** `ax.stem(...)` records a
+  stem artist (its colour and baseline), and strings on an axis
+  (`ax.plot(["north", "south"], ...)`) make it a discrete one, in
+  matplotlib's first-appearance order, on x or y.
 - **Every one-character matplotlib marker** (`.`, `,`, `d`, `X`, `1`...`4`,
   `|`, `_` and the rest) is a valid `marker`; before, only twelve were.
 - **`Index.regular_float(origin, step)`**, a regular index whose step is not
