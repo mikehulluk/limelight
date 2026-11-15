@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from . import largeseries
+import lightspeed
+from lightspeed.status import FIRST_DECLARED_KIND, StatusMap
+from lightspeed.view import MissingStyle
+
 from . import refs
+from .cachedir import resolve_cache_dir
 from .hdf_sources import hdf_file_path
-from .largeseries.mpl import MissingStyle
-from .largeseries.status import FIRST_DECLARED_KIND, StatusMap
 from .reader import LimelightPackage
 
 if TYPE_CHECKING:
+    from lightspeed.mpl import ZoomSync
     from matplotlib.axes import Axes
 
     from .app import LimelightRuntime
@@ -37,7 +40,7 @@ def missing_styles_of(source: dict[str, Any]) -> dict[int, MissingStyle]:
     return styles
 
 
-def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> largeseries.SourceSpec:
+def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> lightspeed.SourceSpec:
     spec = _hdf_values_spec(source, package, column_name)
     entry = next(e for e in source["yArrays"] if e["schema"]["name"] == column_name)
     status = entry.get("status")
@@ -46,7 +49,7 @@ def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_na
     return spec.with_status(status["dataset"], status_map_of(source), column=status.get("column"))
 
 
-def _hdf_values_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> largeseries.SourceSpec:
+def _hdf_values_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> lightspeed.SourceSpec:
     hdf5_path = hdf_file_path(package, source)
     # name -> (dataset, column): a 1-D dataset, or column j of a 2-D one.
     y_datasets = {entry["schema"]["name"]: (entry["dataset"], entry.get("column")) for entry in source["yArrays"]}
@@ -56,10 +59,10 @@ def _hdf_values_spec(source: dict[str, Any], package: LimelightPackage, column_n
 
     index = source["index"]
     if index == "noIndex":
-        return largeseries.SourceSpec.uniform(hdf5_path, y_dataset, x0=0.0, dx=1.0, y_column=y_column)
+        return lightspeed.SourceSpec.uniform(hdf5_path, y_dataset, x0=0.0, dx=1.0, y_column=y_column)
 
     if "intOrigin" in index:
-        return largeseries.SourceSpec.uniform(
+        return lightspeed.SourceSpec.uniform(
             hdf5_path, y_dataset, x0=float(index["intOrigin"]), dx=float(index["intStep"]), y_column=y_column
         )
 
@@ -68,7 +71,7 @@ def _hdf_values_spec(source: dict[str, Any], package: LimelightPackage, column_n
         # puts that on the axis (days for an absolute origin).
         step = index["timeStepNom"] / index["timeStepDenom"]
         x0, dx = refs.time_axis_affine(index)
-        return largeseries.SourceSpec.uniform(hdf5_path, y_dataset, x0=x0, dx=step * dx, y_column=y_column)
+        return lightspeed.SourceSpec.uniform(hdf5_path, y_dataset, x0=x0, dx=step * dx, y_column=y_column)
 
     if "irregularArrayCoordArray" in index or "irregularTimeCoordArray" in index:
         coord_name = index.get("irregularArrayCoordArray") or index.get("irregularTimeCoordArray")
@@ -78,7 +81,7 @@ def _hdf_values_spec(source: dict[str, Any], package: LimelightPackage, column_n
             )
         x_dataset, x_column = y_datasets[coord_name]
         x0, dx = refs.time_axis_affine(index) if "irregularTimeCoordArray" in index else (0.0, 1.0)
-        return largeseries.SourceSpec.irregular(
+        return lightspeed.SourceSpec.irregular(
             hdf5_path, y_dataset, x_dataset, x0=x0, dx=dx, y_column=y_column, x_column=x_column
         )
 
@@ -92,7 +95,7 @@ def _hdf_values_spec(source: dict[str, Any], package: LimelightPackage, column_n
 
 def get_or_build_cache(
     runtime: "LimelightRuntime", source_id: str, column_name: str, source: dict[str, Any]
-) -> largeseries.CacheHandle:
+) -> lightspeed.CacheHandle:
     cache_key = (source_id, column_name)
     with runtime._largeseries_caches_lock:
         handle = runtime._largeseries_caches.get(cache_key)
@@ -106,8 +109,11 @@ def get_or_build_cache(
                 if report is not None
                 else None
             )
-            handle = largeseries.build_or_get_cache(
+            # Limelight's cache directory, not lightspeed's default, so caches
+            # built before lightspeed was split out are still found.
+            handle = lightspeed.build_or_get_cache(
                 spec,
+                cache_dir=resolve_cache_dir(),
                 chunk_size=source["largeSeriesChunkSize"],
                 timing=runtime.timing,
                 progress=progress,
@@ -123,8 +129,8 @@ def get_or_build_cache(
 
 def install_timeseries_artist(
     ax: "Axes",
-    handle: largeseries.CacheHandle,
-    spec: largeseries.SourceSpec,
+    handle: lightspeed.CacheHandle,
+    spec: lightspeed.SourceSpec,
     *,
     target_buckets: int | None = None,
     color: str | None = None,
@@ -135,7 +141,7 @@ def install_timeseries_artist(
     indicator: bool = True,
     indicator_font: Any | None = None,
     timing: Any | None = None,
-) -> largeseries.ZoomSync:
+) -> "ZoomSync":
     kwargs: dict[str, Any] = {
         "color": color, "fill_color": fill_color, "fill_alpha": fill_alpha, "indicator": indicator,
         "indicator_font": indicator_font, "missing_styles": missing_styles,
@@ -146,11 +152,13 @@ def install_timeseries_artist(
         kwargs["target_buckets"] = target_buckets
     if timing is not None:
         kwargs["timing"] = timing
-    return largeseries.ZoomSync(ax=ax, handle=handle, spec=spec, **kwargs)
+    from lightspeed.mpl import ZoomSync
+
+    return ZoomSync(ax=ax, handle=handle, spec=spec, **kwargs)
 
 
 def close_runtime_caches(runtime: "LimelightRuntime") -> None:
     with runtime._largeseries_caches_lock:
         for handle in runtime._largeseries_caches.values():
-            largeseries.close_cache(handle)
+            lightspeed.close_cache(handle)
         runtime._largeseries_caches.clear()

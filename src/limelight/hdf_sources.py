@@ -42,7 +42,7 @@ def hdf_file_path(package: Any, source: dict[str, Any]) -> Path:
 
 STATUS_MEANINGS = ("valid", "skip", "absent")
 # Bits 0 and 1 of a bucket's missing mask are NaN and undeclared codes; the
-# declared missing codes have the rest (largeseries/status.py).
+# declared missing codes have the rest (lightspeed.status).
 MAX_MISSING_CODES = 30
 _STATUS_SCAN_BLOCK = 1 << 20
 

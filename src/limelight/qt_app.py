@@ -1940,7 +1940,8 @@ def _draw_plot_contents(
             if artist.get("missingMarker") != "none":
                 # The same red cross the large-series view draws at a missing
                 # sample, at the height of the last good one.
-                from .largeseries.mpl import add_missing_marks, missing_sample_marks
+                from lightspeed.mpl import add_missing_marks
+                from lightspeed.view import missing_sample_marks
 
                 mx, my = missing_sample_marks(
                     np.asarray(x_values, dtype=float), np.array([np.nan if y is None else y for y in y_values], dtype=float)
@@ -2022,7 +2023,7 @@ def _draw_plot_contents(
 
 def _legend_entries(axes: Any) -> tuple[list[Any], list[str]]:
     """The axes' legend entries, each kind of missing sample named once however many series hold it."""
-    from .largeseries.mpl import MISSING_GID
+    from lightspeed.mpl import MISSING_GID
 
     handles, labels = axes.get_legend_handles_labels()
     kept_handles: list[Any] = []

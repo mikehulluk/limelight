@@ -9,9 +9,10 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import lightspeed
 import pytest
 
-from limelight import largeseries, largeseries_bridge
+from limelight import largeseries_bridge
 from limelight.hdf_sources import verify_hdf_sources
 from limelight.reader import LimelightError, open_limelight
 from limelight.writer import Index, LimelightProject, TimeSeriesArtist, hdf_array
@@ -33,7 +34,7 @@ def _project(h5: Path, arrays) -> LimelightProject:
 
 def test_a_column_of_a_2d_dataset_reads_as_that_column(tmp_path: Path) -> None:
     h5 = _wide_file(tmp_path / "w.h5")
-    source = largeseries.HdfArraySource(h5, "/values", column=1)
+    source = lightspeed.HdfArraySource(h5, "/values", column=1)
     try:
         assert source.length == 10_000
         np.testing.assert_array_equal(source.read_range(0, 4), [1.0, 4.0, 7.0, 10.0])
@@ -45,19 +46,19 @@ def test_a_column_of_a_2d_dataset_reads_as_that_column(tmp_path: Path) -> None:
 
 def test_columns_of_one_dataset_get_separate_caches(tmp_path: Path) -> None:
     h5 = _wide_file(tmp_path / "w.h5")
-    spec1 = largeseries.SourceSpec.uniform(h5, "/values", x0=0.0, dx=1.0, y_column=1)
-    spec2 = largeseries.SourceSpec.uniform(h5, "/values", x0=0.0, dx=1.0, y_column=2)
-    h1 = largeseries.build_or_get_cache(spec1, cache_dir=tmp_path / "cache", chunk_size=1024)
-    h2 = largeseries.build_or_get_cache(spec2, cache_dir=tmp_path / "cache", chunk_size=1024)
+    spec1 = lightspeed.SourceSpec.uniform(h5, "/values", x0=0.0, dx=1.0, y_column=1)
+    spec2 = lightspeed.SourceSpec.uniform(h5, "/values", x0=0.0, dx=1.0, y_column=2)
+    h1 = lightspeed.build_or_get_cache(spec1, cache_dir=tmp_path / "cache", chunk_size=1024)
+    h2 = lightspeed.build_or_get_cache(spec2, cache_dir=tmp_path / "cache", chunk_size=1024)
     try:
         assert h1.path != h2.path
-        r1 = largeseries.query_range(h1, spec1, 0, 9999, 4)
-        r2 = largeseries.query_range(h2, spec2, 0, 9999, 4)
+        r1 = lightspeed.query_range(h1, spec1, 0, 9999, 4)
+        r2 = lightspeed.query_range(h2, spec2, 0, 9999, 4)
         # Column 2 is column 1 plus one, everywhere.
         np.testing.assert_allclose(r2.y_min - r1.y_min, 1.0)
     finally:
-        largeseries.close_cache(h1)
-        largeseries.close_cache(h2)
+        lightspeed.close_cache(h1)
+        lightspeed.close_cache(h2)
 
 
 def test_manifest_binding_round_trips_through_the_bridge(tmp_path: Path) -> None:

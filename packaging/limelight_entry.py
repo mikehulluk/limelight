@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 def _matplotlib_cache_directory() -> Path:
-    """Pick a per-user cache directory, matching largeseries.cachedir."""
+    """Pick a per-user cache directory, matching limelight.cachedir."""
 
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:

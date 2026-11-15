@@ -7,6 +7,19 @@ versions may break things.
 
 ## [Unreleased]
 
+### Changed
+
+- **The large-series cache is now its own package,
+  [lightspeed-series](https://pypi.org/project/lightspeed-series/).** The
+  min/max level-of-detail pyramids, their HDF5 cache and the zoomable
+  envelope plot were `limelight.largeseries`; they are now `lightspeed`, a
+  dependency (`lightspeed-series[mpl]` 0.0.2 or later), so other projects
+  can use them too, with or without matplotlib. Nothing changes for a
+  reader: the cache stays in Limelight's cache directory
+  (`LIMELIGHT_CACHE_DIR` still moves it), and caches already built are used
+  as they are, not rebuilt. Code that imported `limelight.largeseries` should
+  import `lightspeed` instead; `LargeSeriesError` is now `LightspeedError`.
+
 ## [0.0.26] - 2026-11-08
 
 ### Fixed
