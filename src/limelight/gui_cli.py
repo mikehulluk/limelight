@@ -38,6 +38,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Log detailed UI/data rendering timings while the app is open",
     )
+    parser.add_argument(
+        "--dbg-server",
+        type=int,
+        nargs="?",
+        const=8731,
+        default=None,
+        metavar="PORT",
+        help=(
+            "Start a loopback HTTP debug server (default port 8731) that an external tool can use to "
+            "reload the open package, scroll to a figure or section, pop a figure out, and read "
+            "logs/timing: POST /reload, POST /scroll-to {id}, POST /open-figure {id}, "
+            "GET /logs?lines=N, GET /timing?lines=N. Implies --debug-timing."
+        ),
+    )
 
     # For the packaged-app smoke test: the keychain and the Public Suffix List
     # load from the bundle. Not in --help.
@@ -50,7 +64,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     logger.info("Limelight GUI started with log file %s", log_path)
 
     try:
-        run_app(args.package, debug_timing=args.debug_timing)
+        run_app(args.package, debug_timing=args.debug_timing, dbg_server_port=args.dbg_server)
     except (FileNotFoundError, LimelightError) as error:
         logger.exception("Limelight failed: %s", error)
         return 1

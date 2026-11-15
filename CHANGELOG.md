@@ -7,6 +7,17 @@ versions may break things.
 
 ## [Unreleased]
 
+### Added
+
+- **`limelight-gui --dbg-server [PORT]`: drive the open window from
+  outside.** A loopback-only HTTP server (port 8731 by default) for a script
+  or agent iterating on a package: `POST /reload` after a rebuild,
+  `POST /scroll-to` a figure or section, `POST /open-figure` to pop one out,
+  and `GET /logs` / `GET /timing` for recent log and timing lines. Commands
+  run on the window's own thread, so each answer says what actually
+  happened. It implies `--debug-timing`, binds only 127.0.0.1, and has no
+  authentication - a development aid, not a service.
+
 ## [0.0.27] - 2026-11-15
 
 ### Changed

@@ -628,11 +628,17 @@ def _interrupt_closes(window: "LimelightWindow") -> Any:
         signal.signal(signal.SIGINT, previous_handler)
 
 
-def run_qt_app(package: LimelightPackage, manifest: dict[str, Any], *, debug_timing: bool = False) -> None:
+def run_qt_app(
+    package: LimelightPackage,
+    manifest: dict[str, Any],
+    *,
+    debug_timing: bool = False,
+    dbg_server_port: int | None = None,
+) -> None:
     logger.info("Starting Limelight Qt application for %s", package.path)
     app, owns_app = _ensure_application()
 
-    window = LimelightWindow(package, manifest, debug_timing=debug_timing)
+    window = LimelightWindow(package, manifest, debug_timing=debug_timing, dbg_server_port=dbg_server_port)
     window.resize(1120, 760)
     window.show()
     logger.info("Limelight main window shown for %s", package.path)
@@ -2963,10 +2969,19 @@ class RenderProgressIndicator(QWidget):
 
 
 class LimelightWindow(QMainWindow):
-    def __init__(self, package: LimelightPackage, manifest: dict[str, Any], *, debug_timing: bool = False) -> None:
+    def __init__(
+        self,
+        package: LimelightPackage,
+        manifest: dict[str, Any],
+        *,
+        debug_timing: bool = False,
+        dbg_server_port: int | None = None,
+    ) -> None:
         super().__init__()
         self.debug_timing = debug_timing
         self.runtime = LimelightRuntime(package, manifest, debug_timing=debug_timing)
+        self._dbg_server: Any = None
+        self._dbg_server_port = dbg_server_port
         register_document_fonts(self.runtime)
         # Remote data is fetched once the window is shown (showEvent), never
         # before: the reader sees the window, and the bar says where the data
@@ -3012,6 +3027,37 @@ class LimelightWindow(QMainWindow):
         self._remote_bar_toolbar.setVisible(bool(self.runtime.remote_files()))
 
         self._build_central_tabs()
+
+        if self._dbg_server_port is not None:
+            self._start_dbg_server(self._dbg_server_port)
+
+    def _start_dbg_server(self, port: int) -> None:
+        from . import dbg_server
+
+        self._dbg_server = dbg_server.DebugServer(
+            port=port,
+            on_reload=self._reload_package,
+            on_scroll_to=self._dbg_scroll_to,
+            on_open_figure=self._dbg_open_figure,
+        )
+        self._dbg_server.start()
+
+    def _dbg_scroll_to(self, target: str) -> bool:
+        if self.story_blocks is None:
+            return False
+        if target in self.story_blocks._anchor_widgets:
+            self.story_blocks.scroll_to_anchor(target)
+            return True
+        if target in self.story_blocks._section_widgets:
+            self.story_blocks.scroll_to_section(target)
+            return True
+        return False
+
+    def _dbg_open_figure(self, figure_id: str) -> bool:
+        if figure_id not in self.runtime.figure_specs:
+            return False
+        self._open_or_focus_figure(figure_id)
+        return True
 
     def showEvent(self, event: Any) -> None:
         super().showEvent(event)
@@ -4294,6 +4340,9 @@ class LimelightWindow(QMainWindow):
         self._show_selected_figure(items[0])
 
     def closeEvent(self, event: Any) -> None:
+        if self._dbg_server is not None:
+            self._dbg_server.stop()
+            self._dbg_server = None
         if self.story_blocks is not None:
             self.story_blocks.dispose()
             self.story_blocks = None

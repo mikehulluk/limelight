@@ -79,7 +79,7 @@ def _syntax_overrides() -> tuple[SyntaxStyle, ...]:
         return ()
 
 
-def run_app(path: str | None = None, *, debug_timing: bool = False) -> None:
+def run_app(path: str | None = None, *, debug_timing: bool = False, dbg_server_port: int | None = None) -> None:
     log_path = configure_logging()
     logger.info("Starting Limelight app for %s; log file is %s", path, log_path)
     try:
@@ -102,7 +102,13 @@ def run_app(path: str | None = None, *, debug_timing: bool = False) -> None:
         manifest = package.manifest_json()
         validate_manifest_semantics(manifest)
         logger.info("Launching Limelight Qt app for %s", package.path)
-        run_qt_app(package, manifest, debug_timing=debug_timing)
+        # The debug server implies --debug-timing: otherwise /timing has nothing to serve.
+        run_qt_app(
+            package,
+            manifest,
+            debug_timing=debug_timing or dbg_server_port is not None,
+            dbg_server_port=dbg_server_port,
+        )
     finally:
         logger.debug("Closing Limelight package %s", package.path)
         package.close()
