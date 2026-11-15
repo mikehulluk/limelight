@@ -47,6 +47,19 @@ versions may break things.
   pyplot calls. Whatever the interactive
   figure cannot show still draws in the preview and raises an
   `MplCaptureWarning` saying what will differ - nothing is dropped silently.
+- **Large series from matplotlib-style scripts.** Millions of points go
+  through lightspeed rather than matplotlib and CSV: drawn as its zoomable
+  min/max envelope in the preview, through the same code the app uses, and
+  written as an HDF5 source with a `TimeSeriesArtist`. `ax.series(source,
+  "column")` plots a source declared with the new `limelight.hdf_source(...)`
+  (added to the project with the figure, or with `project.add_source`); a
+  `plot()` of 200,000 points or more (`mpl_capture.LARGE_SERIES_POINTS`;
+  `large=` overrides it) is written to HDF5 for you, in a temporary folder
+  unless `CapturingDataset(build_dir=...)` names one; and an unmodified
+  lightspeed script's `lightspeed.mpl.plot_series(ax, spec)` is captured
+  through lightspeed's plot-series hook. Needs lightspeed-series 0.0.3.
+- **`Index.regular_float(origin, step)`**, a regular index whose step is not
+  a whole number: a uniformly sampled series' x.
 - **Shared y-axes.** Panels whose `yAxis` names the same `shareGroup` now
   pan and zoom together on y. A y-axis without one is still independent.
 - **`AxesSpec.legend`**: `Some False` leaves a panel's legend out.

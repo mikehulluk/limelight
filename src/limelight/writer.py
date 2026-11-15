@@ -663,6 +663,10 @@ class EpochOffset:
         whole = value.replace(microsecond=0)
         return cls.from_unix_ns(int(whole.timestamp()) * 1_000_000_000 + value.microsecond * 1_000)
 
+    def manifest(self) -> dict[str, int]:
+        """This instant as a manifest holds it (dhall-to-json's form)."""
+        return {"epochOffsetGs": self.epoch_offset_gs, "epochOffsetS": self.epoch_offset_s, "epochOffsetNs": self.epoch_offset_ns}
+
     def to_unix_ns(self) -> int:
         return (self.epoch_offset_gs * 1_000_000_000 + self.epoch_offset_s) * 1_000_000_000 + self.epoch_offset_ns
 
@@ -716,6 +720,10 @@ def _time_origin(epoch_offset: EpochOffset | None) -> str:
     return _constructor("Limelight.TimeOrigin.absoluteUtc", epoch_offset.render())
 
 
+def _time_origin_manifest(epoch_offset: EpochOffset | None) -> Any:
+    return "relative" if epoch_offset is None else epoch_offset.manifest()
+
+
 @dataclass(frozen=True)
 class Index:
     expr: str
@@ -723,10 +731,14 @@ class Index:
     # instants, drawn on a calendar (timeSeries) axis. A relative time index,
     # like every other kind, is plain numbers on a continuous axis.
     absolute_time: bool = False
+    # The index as a manifest holds it once dhall-to-json has run - what
+    # the reader's code (refs, the large-series bridge) takes - so a source
+    # a script declares can be drawn before any package is written.
+    manifest: Any = field(default=None, compare=False)
 
     @classmethod
     def no_index(cls) -> "Index":
-        return cls("Limelight.Index.noIndex")
+        return cls("Limelight.Index.noIndex", manifest="noIndex")
 
     @classmethod
     def regular_time(
@@ -749,7 +761,15 @@ class Index:
                 ("timeStepUnit", _step_unit(step_unit)),
             ]
         )
-        return cls(_constructor("Limelight.Index.regularTime", payload), absolute_time=epoch_offset is not None)
+        manifest = {
+            "timeOrigin": _time_origin_manifest(epoch_offset),
+            "timeStepNom": step_nom,
+            "timeStepDenom": step_denom,
+            "timeStepUnit": step_unit,
+        }
+        return cls(
+            _constructor("Limelight.Index.regularTime", payload), absolute_time=epoch_offset is not None, manifest=manifest
+        )
 
     @classmethod
     def regular_int(cls, origin: int, step: int, unit: str | None = None) -> "Index":
@@ -760,7 +780,29 @@ class Index:
                 ("intUnit", _optional_text(unit)),
             ]
         )
-        return cls(_constructor("Limelight.Index.regularInt", payload))
+        return cls(
+            _constructor("Limelight.Index.regularInt", payload),
+            manifest={"intOrigin": origin, "intStep": step, "intUnit": unit},
+        )
+
+    @classmethod
+    def regular_float(cls, origin: float, step: float, unit: str | None = None) -> "Index":
+        """Row n at `origin + n * step`, for a sampling interval that is not
+        a whole number (or not time): a uniformly sampled series' x."""
+
+        if not math.isfinite(origin) or not math.isfinite(step) or step <= 0:
+            raise ValueError(f"a regular float index needs a finite origin and a positive step, got {origin!r}, {step!r}")
+        payload = _record(
+            [
+                ("floatOrigin", _dhall_float(origin)),
+                ("floatStep", _dhall_float(step)),
+                ("floatUnit", _optional_text(unit)),
+            ]
+        )
+        return cls(
+            _constructor("Limelight.Index.regularFloat", payload),
+            manifest={"floatOrigin": float(origin), "floatStep": float(step), "floatUnit": unit},
+        )
 
     @classmethod
     def regular_calendar(
@@ -781,7 +823,14 @@ class Index:
                 ("renderAnchor", _enum("PeriodRenderAnchor", PERIOD_RENDER_ANCHORS, render_anchor)),
             ]
         )
-        return cls(_constructor("Limelight.Index.regularCalendar", payload))
+        manifest = {
+            "calendar": calendar,
+            "calendarUnit": unit,
+            "startOrdinal": start_ordinal,
+            "calendarStep": step,
+            "renderAnchor": render_anchor,
+        }
+        return cls(_constructor("Limelight.Index.regularCalendar", payload), manifest=manifest)
 
     @classmethod
     def irregular_index_time(
@@ -800,7 +849,14 @@ class Index:
                 ("irregularTimeUnit", _step_unit(unit)),
             ]
         )
-        return cls(_constructor("Limelight.Index.irregularIndexTime", payload), absolute_time=origin is not None)
+        manifest = {
+            "irregularTimeCoordArray": coordinate_array,
+            "irregularTimeOrigin": _time_origin_manifest(origin),
+            "irregularTimeUnit": unit,
+        }
+        return cls(
+            _constructor("Limelight.Index.irregularIndexTime", payload), absolute_time=origin is not None, manifest=manifest
+        )
 
     @classmethod
     def irregular_index_calendar(
@@ -819,7 +875,13 @@ class Index:
                 ("irregularRenderAnchor", _enum("PeriodRenderAnchor", PERIOD_RENDER_ANCHORS, render_anchor)),
             ]
         )
-        return cls(_constructor("Limelight.Index.irregularIndexCalendar", payload))
+        manifest = {
+            "irregularCalendarCoordArray": coordinate_array,
+            "irregularCalendar": calendar,
+            "irregularCalendarUnit": unit,
+            "irregularRenderAnchor": render_anchor,
+        }
+        return cls(_constructor("Limelight.Index.irregularIndexCalendar", payload), manifest=manifest)
 
     @classmethod
     def irregular_index_array(cls, coordinate_array: str, unit: str | None = None) -> "Index":
@@ -829,7 +891,10 @@ class Index:
                 ("irregularArrayUnit", _optional_text(unit)),
             ]
         )
-        return cls(_constructor("Limelight.Index.irregularIndexArray", payload))
+        return cls(
+            _constructor("Limelight.Index.irregularIndexArray", payload),
+            manifest={"irregularArrayCoordArray": coordinate_array, "irregularArrayUnit": unit},
+        )
 
 
 @dataclass(frozen=True)
@@ -1302,6 +1367,27 @@ class HdfDataset:
     url: str | None = None
     sha256: str | None = None
     size_bytes: int | None = None
+
+    def manifest_source(self) -> dict[str, Any]:
+        """This source as a manifest holds it - enough of it for the
+        large-series bridge to read the file the way the app will."""
+
+        def y_array(spec: HdfArraySpec) -> dict[str, Any]:
+            entry: dict[str, Any] = {"schema": {"name": spec.name}, "dataset": spec.dataset, "column": spec.column}
+            if spec.status is not None:
+                entry["status"] = {"dataset": spec.status, "column": spec.status_column}
+            return entry
+
+        return {
+            "id": self.id,
+            "index": self.index.manifest,
+            "largeSeriesChunkSize": self.chunk_size,
+            "yArrays": [y_array(spec) for spec in self.y_arrays],
+            "statusCodes": [
+                {"code": code.code, "meaning": code.meaning, "label": code.label, "marker": code.marker, "color": code.color}
+                for code in self.status_codes
+            ],
+        }
 
     def file_fingerprints(self) -> list[tuple[str, str]]:
         if self.sha256 is not None:
@@ -2655,6 +2741,108 @@ class MetadataEntry:
         )
 
 
+def hdf_source(
+    *,
+    id: str,
+    hdf5_path: str | Path | None = None,
+    y_arrays: Sequence[HdfArraySpec | tuple[str, str]],
+    index: Index | None = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    title: str | None = None,
+    path: str | None = None,
+    provenance: SourceProvenance | None = None,
+    signers: Sequence[tuple[str, bytes]] = (),
+    url: str | None = None,
+    status_codes: Sequence[StatusCode] = (),
+    remote: RemoteFile | None = None,
+    shapes: Mapping[str, tuple[str, Sequence[int]]] | None = None,
+) -> HdfDataset:
+    """An hdf source, bundled in the package or, given a `url`, not - checked
+    against its file now, but not yet part of any project:
+    `project.add_source(...)` adds it, `project.add_hdf_dataset(...)` is both
+    at once, and a figure that plots it (`mpl_capture`'s `ax.series`) adds it
+    when the figure is added.
+
+    With a `url` the file is left out of the package, which records the
+    URL with the SHA-256 and size of `hdf5_path`: that local copy is
+    what the bindings are checked against, and the file served at the
+    URL must be byte for byte the same. The viewer asks the reader
+    before downloading it.
+
+    A writer with no copy of the file gives `remote` (its URL, SHA-256
+    and size) instead of `hdf5_path`, and `shapes`, each dataset's numpy
+    dtype and shape: `{"/values": ("f8", (T, R)), "/time_us": ("i8", (T,))}`.
+    The bindings are checked against those, and signatures are over the
+    declared SHA-256; the manifest is the one `hdf5_path` + `url` would
+    give. Only the codes in the status datasets go unchecked until
+    `LL verify` checks the real file once it is downloaded.
+
+    `status_codes` say what the codes in the arrays' `status` datasets
+    mean (see `StatusCode`); one table serves the whole source. A file
+    whose status datasets give one code different meanings is two
+    sources over the same file.
+    """
+    context = f"hdf dataset {id!r}"
+    if (hdf5_path is None) == (remote is None):
+        raise ValueError(f"{context}: give exactly one of hdf5_path and remote")
+    if remote is not None and url is not None:
+        raise ValueError(f"{context}: url goes with hdf5_path; a remote file's URL is in `remote`")
+    if remote is not None and shapes is None:
+        raise ValueError(f"{context}: a remote file needs `shapes`, the dtype and shape of each dataset")
+    if remote is None and shapes is not None:
+        raise ValueError(f"{context}: `shapes` is only for a remote file; the bindings are checked against hdf5_path")
+    dataset = HdfDataset(
+        id=id,
+        title=title,
+        path=path or f"data/{id}.h5",
+        hdf5_source_path=Path(hdf5_path) if hdf5_path is not None else None,
+        y_arrays=[_normalize_hdf_array(entry) for entry in y_arrays],
+        index=index or Index.no_index(),
+        chunk_size=chunk_size,
+        provenance=provenance,
+        status_codes=list(status_codes),
+    )
+    # Check the codes and the bindings against the file now, where the mistake is made.
+    from .hdf_sources import check_declared_bindings, check_hdf_bindings, check_status_codes, declared_datasets
+    from .remote_files import validate_remote
+
+    if remote is not None:
+        if isinstance(remote.size_bytes, bool) or not isinstance(remote.size_bytes, int):
+            raise LimelightError(f"{context}: remote size_bytes must be a whole number, got {remote.size_bytes!r}")
+        validate_remote({"url": remote.url, "sha256": remote.sha256, "sizeBytes": remote.size_bytes}, context)
+    codes_payload = [{"code": c.code, "meaning": c.meaning, "label": c.label, "color": c.color} for c in dataset.status_codes]
+    check_status_codes(codes_payload, context)
+    bindings = [
+        {
+            "schema": {"name": a.name},
+            "dataset": a.dataset,
+            "column": a.column,
+            **({"status": {"dataset": a.status, "column": a.status_column}} if a.status is not None else {}),
+        }
+        for a in dataset.y_arrays
+    ]
+    if remote is not None:
+        assert shapes is not None
+        file_name = PurePosixPath(urlsplit(remote.url).path).name or remote.url
+        check_declared_bindings(
+            declared_datasets(shapes, context), file_name, bindings, context, status_codes=codes_payload
+        )
+        dataset.url = remote.url
+        dataset.sha256 = remote.sha256
+        dataset.size_bytes = remote.size_bytes
+        dataset.signatures = _sign_all_digest(bytes.fromhex(remote.sha256), signers) if signers else []
+        return dataset
+    assert dataset.hdf5_source_path is not None
+    check_hdf_bindings(dataset.hdf5_source_path, bindings, context, status_codes=codes_payload)
+    if url is not None:
+        dataset.url = url
+        dataset.sha256 = _file_sha256(dataset.hdf5_source_path)
+        dataset.size_bytes = dataset.hdf5_source_path.stat().st_size
+        validate_remote({"url": url, "sha256": dataset.sha256, "sizeBytes": dataset.size_bytes}, context)
+    dataset.signatures = _sign_all(dataset.hdf5_source_path.read_bytes(), signers) if signers else []
+    return dataset
+
+
 class LimelightProject:
     def __init__(
         self,
@@ -3046,88 +3234,28 @@ class LimelightProject:
         remote: RemoteFile | None = None,
         shapes: Mapping[str, tuple[str, Sequence[int]]] | None = None,
     ) -> HdfDataset:
-        """An hdf source, bundled in the package or, given a `url`, not.
+        """`hdf_source(...)` (see there), added to this project."""
 
-        With a `url` the file is left out of the package, which records the
-        URL with the SHA-256 and size of `hdf5_path`: that local copy is
-        what the bindings are checked against, and the file served at the
-        URL must be byte for byte the same. The viewer asks the reader
-        before downloading it.
-
-        A writer with no copy of the file gives `remote` (its URL, SHA-256
-        and size) instead of `hdf5_path`, and `shapes`, each dataset's numpy
-        dtype and shape: `{"/values": ("f8", (T, R)), "/time_us": ("i8", (T,))}`.
-        The bindings are checked against those, and signatures are over the
-        declared SHA-256; the manifest is the one `hdf5_path` + `url` would
-        give. Only the codes in the status datasets go unchecked until
-        `LL verify` checks the real file once it is downloaded.
-
-        `status_codes` say what the codes in the arrays' `status` datasets
-        mean (see `StatusCode`); one table serves the whole source. A file
-        whose status datasets give one code different meanings is two
-        sources over the same file.
-        """
-        context = f"hdf dataset {id!r}"
-        if (hdf5_path is None) == (remote is None):
-            raise ValueError(f"{context}: give exactly one of hdf5_path and remote")
-        if remote is not None and url is not None:
-            raise ValueError(f"{context}: url goes with hdf5_path; a remote file's URL is in `remote`")
-        if remote is not None and shapes is None:
-            raise ValueError(f"{context}: a remote file needs `shapes`, the dtype and shape of each dataset")
-        if remote is None and shapes is not None:
-            raise ValueError(f"{context}: `shapes` is only for a remote file; the bindings are checked against hdf5_path")
-        dataset = HdfDataset(
-            id=id,
-            title=title,
-            path=path or f"data/{id}.h5",
-            hdf5_source_path=Path(hdf5_path) if hdf5_path is not None else None,
-            y_arrays=[_normalize_hdf_array(entry) for entry in y_arrays],
-            index=index or Index.no_index(),
-            chunk_size=chunk_size,
-            provenance=provenance,
-            status_codes=list(status_codes),
-        )
-        # Check the codes and the bindings against the file now, where the mistake is made.
-        from .hdf_sources import check_declared_bindings, check_hdf_bindings, check_status_codes, declared_datasets
-        from .remote_files import validate_remote
-
-        if remote is not None:
-            if isinstance(remote.size_bytes, bool) or not isinstance(remote.size_bytes, int):
-                raise LimelightError(f"{context}: remote size_bytes must be a whole number, got {remote.size_bytes!r}")
-            validate_remote({"url": remote.url, "sha256": remote.sha256, "sizeBytes": remote.size_bytes}, context)
-        codes_payload = [{"code": c.code, "meaning": c.meaning, "label": c.label, "color": c.color} for c in dataset.status_codes]
-        check_status_codes(codes_payload, context)
-        bindings = [
-            {
-                "schema": {"name": a.name},
-                "dataset": a.dataset,
-                "column": a.column,
-                **({"status": {"dataset": a.status, "column": a.status_column}} if a.status is not None else {}),
-            }
-            for a in dataset.y_arrays
-        ]
-        if remote is not None:
-            assert shapes is not None
-            file_name = PurePosixPath(urlsplit(remote.url).path).name or remote.url
-            check_declared_bindings(
-                declared_datasets(shapes, context), file_name, bindings, context, status_codes=codes_payload
+        return self.add_source(
+            hdf_source(
+                id=id, hdf5_path=hdf5_path, y_arrays=y_arrays, index=index, chunk_size=chunk_size, title=title,
+                path=path, provenance=provenance, signers=signers, url=url, status_codes=status_codes,
+                remote=remote, shapes=shapes,
             )
-            dataset.url = remote.url
-            dataset.sha256 = remote.sha256
-            dataset.size_bytes = remote.size_bytes
-            dataset.signatures = _sign_all_digest(bytes.fromhex(remote.sha256), signers) if signers else []
-            self.hdf_datasets.append(dataset)
-            return dataset
-        assert dataset.hdf5_source_path is not None
-        check_hdf_bindings(dataset.hdf5_source_path, bindings, context, status_codes=codes_payload)
-        if url is not None:
-            dataset.url = url
-            dataset.sha256 = _file_sha256(dataset.hdf5_source_path)
-            dataset.size_bytes = dataset.hdf5_source_path.stat().st_size
-            validate_remote({"url": url, "sha256": dataset.sha256, "sizeBytes": dataset.size_bytes}, context)
-        dataset.signatures = _sign_all(dataset.hdf5_source_path.read_bytes(), signers) if signers else []
-        self.hdf_datasets.append(dataset)
-        return dataset
+        )
+
+    def add_source(self, source: HdfDataset) -> HdfDataset:
+        """Adds an hdf source made with `hdf_source`. Adding the same source
+        again is a no-op; another source under an id already taken is an error."""
+
+        for existing in (*self.datasets, *self.hdf_datasets):
+            if existing.id != source.id:
+                continue
+            if existing is source:
+                return source
+            raise ValueError(f"this project already has a dataset {source.id!r}; give the new source another id")
+        self.hdf_datasets.append(source)
+        return source
 
     def add_figure(
         self,
@@ -3220,9 +3348,14 @@ class LimelightProject:
                 f"add_mpl_figure {id!r}: the panels capture into {len(datasets)} different CapturingDatasets; "
                 "build them with one subplots() call, or pass the same dataset= to each"
             )
-        groups = next(iter(datasets.values())).partition(dataset_id) if datasets else {}
+        captured = next(iter(datasets.values()), None)
+        groups = captured.partition(dataset_id) if captured is not None else {}
         for group_id, columns in groups.items():
             self._add_or_extend_csv_dataset(group_id, columns, provenance=provenance)
+        # Large series: the hdf sources the panels plot, declared by the
+        # script or written by the capture, each added once.
+        for source in captured.hdf_sources(dataset_id) if captured is not None else ():
+            self.add_source(source)
         return self.add_figure(
             id=id,
             title=title,

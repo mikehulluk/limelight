@@ -25,7 +25,8 @@ let ArraySchema =
       }
 
 -- Index describes what row n means for the arrays in a table: NoIndex, a
--- compact regular sequence (regularTime/regularCalendar/regularInt), or a
+-- compact regular sequence (regularTime/regularCalendar/regularInt/
+-- regularFloat - row n at `origin + n * step`), or a
 -- reference to a materialized coordinate array declared alongside it
 -- (irregularIndexTime/irregularIndexCalendar/irregularIndexArray, which name
 -- that array the same way a `table['column']` binding does - by its
@@ -73,6 +74,7 @@ let Index =
           , renderAnchor : PeriodRenderAnchor
           }
       | regularInt : { intOrigin : Integer, intStep : Integer, intUnit : Optional Text }
+      | regularFloat : { floatOrigin : Double, floatStep : Double, floatUnit : Optional Text }
       | irregularIndexTime :
           { irregularTimeCoordArray : Text
           , irregularTimeOrigin : TimeOrigin

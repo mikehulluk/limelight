@@ -736,7 +736,7 @@ wheels = [
 
 [[package]]
 name = "lightspeed-series"
-version = "0.0.2"
+version = "0.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
@@ -745,9 +745,9 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/64/02/536c245e6696a5056d6ee4d807207cb69a26f87f2c38d88a1da7f74a507f/lightspeed_series-0.0.2.tar.gz", hash = "sha256:b4958462b17b6fd1e2033a609145f84b3cc27f6f14ad1104ff68673c9630220d", size = 187717, upload-time = "2026-11-15T22:43:46.537Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/4d/8ebedeb169b43b234f10601f0adc0d5b696fc279aee6c42ebf0d643b4911/lightspeed_series-0.0.3.tar.gz", hash = "sha256:78ba5f8d91ca0738d45072c20c3798ee27064e43c168814236be3ae25cbf4b37", size = 190327, upload-time = "2026-11-19T20:31:28.207Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cc/dd/69bd872d763a1bc7a32e6dbfac8c0975937275b7cc3c0b02d7a5beb847e3/lightspeed_series-0.0.2-py3-none-any.whl", hash = "sha256:b7d02ec9efc3ae2a63032afab2b828a11c0d103648ec69b947c6bc6df9a6e2ff", size = 33348, upload-time = "2026-11-15T22:43:45.43Z" },
+    { url = "https://files.pythonhosted.org/packages/89/6b/2865cae7855a3c3404a913c5139a3308f54f0d0ee514fa2fa29cc8076a6b/lightspeed_series-0.0.3-py3-none-any.whl", hash = "sha256:be3b25292f6ec26aaf4261f667bb73bf62d14048b4b8a32f599bcd26c8f6f8e8", size = 35727, upload-time = "2026-11-19T20:31:26.715Z" },
 ]
 
 [package.optional-dependencies]
@@ -801,7 +801,7 @@ requires-dist = [
     { name = "fonttools", specifier = ">=4.40" },
     { name = "h5py", specifier = ">=3.10" },
     { name = "keyring", specifier = ">=24.0" },
-    { name = "lightspeed-series", extras = ["mpl"], specifier = ">=0.0.2,<0.1" },
+    { name = "lightspeed-series", extras = ["mpl"], specifier = ">=0.0.3,<0.1" },
     { name = "linkify-it-py", specifier = ">=2.0" },
     { name = "markdown-it-py", extras = ["linkify"], specifier = ">=4.0" },
     { name = "matplotlib", specifier = ">=3.8" },

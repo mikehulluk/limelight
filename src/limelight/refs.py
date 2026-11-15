@@ -108,6 +108,11 @@ def resolve_index_x(
         step = index["intStep"]
         return [origin + i * step for i in range(row_count or 0)]
 
+    if "floatOrigin" in index:
+        origin = float(index["floatOrigin"])
+        step = float(index["floatStep"])
+        return [origin + i * step for i in range(row_count or 0)]
+
     if "timeStepNom" in index:
         nom = index["timeStepNom"]
         denom = index["timeStepDenom"]

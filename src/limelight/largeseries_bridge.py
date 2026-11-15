@@ -41,7 +41,14 @@ def missing_styles_of(source: dict[str, Any]) -> dict[int, MissingStyle]:
 
 
 def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> lightspeed.SourceSpec:
-    spec = _hdf_values_spec(source, package, column_name)
+    return hdf_source_spec_at(source, hdf_file_path(package, source), column_name)
+
+
+def hdf_source_spec_at(source: dict[str, Any], hdf5_path: Any, column_name: str) -> lightspeed.SourceSpec:
+    """`hdf_source_spec` for a source whose file is at `hdf5_path` - one a
+    script has declared (`HdfDataset.manifest_source()`) and not yet
+    packaged - so its preview reads the file exactly as the app will."""
+    spec = _hdf_values_spec(source, hdf5_path, column_name)
     entry = next(e for e in source["yArrays"] if e["schema"]["name"] == column_name)
     status = entry.get("status")
     if not status:
@@ -49,8 +56,7 @@ def hdf_source_spec(source: dict[str, Any], package: LimelightPackage, column_na
     return spec.with_status(status["dataset"], status_map_of(source), column=status.get("column"))
 
 
-def _hdf_values_spec(source: dict[str, Any], package: LimelightPackage, column_name: str) -> lightspeed.SourceSpec:
-    hdf5_path = hdf_file_path(package, source)
+def _hdf_values_spec(source: dict[str, Any], hdf5_path: Any, column_name: str) -> lightspeed.SourceSpec:
     # name -> (dataset, column): a 1-D dataset, or column j of a 2-D one.
     y_datasets = {entry["schema"]["name"]: (entry["dataset"], entry.get("column")) for entry in source["yArrays"]}
     if column_name not in y_datasets:
@@ -64,6 +70,11 @@ def _hdf_values_spec(source: dict[str, Any], package: LimelightPackage, column_n
     if "intOrigin" in index:
         return lightspeed.SourceSpec.uniform(
             hdf5_path, y_dataset, x0=float(index["intOrigin"]), dx=float(index["intStep"]), y_column=y_column
+        )
+
+    if "floatOrigin" in index:
+        return lightspeed.SourceSpec.uniform(
+            hdf5_path, y_dataset, x0=float(index["floatOrigin"]), dx=float(index["floatStep"]), y_column=y_column
         )
 
     if "timeStepNom" in index:

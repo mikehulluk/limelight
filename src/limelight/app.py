@@ -253,7 +253,7 @@ def _is_regular_index(index: Any) -> bool:
     if index == "noIndex":
         return True
     return isinstance(index, dict) and (
-        "intOrigin" in index or "timeStepNom" in index or "calendarStep" in index
+        "intOrigin" in index or "floatOrigin" in index or "timeStepNom" in index or "calendarStep" in index
     )
 
 
@@ -399,6 +399,8 @@ def _regular_index_value_at(index: Any, row_index: int) -> Any:
         return row_index
     if "intOrigin" in index:
         return index["intOrigin"] + row_index * index["intStep"]
+    if "floatOrigin" in index:
+        return index["floatOrigin"] + row_index * index["floatStep"]
     if "timeStepNom" in index:
         # Exported in the index's own unit, from its origin: elapsed time for a
         # relative index, time since the epoch for an absolute one. (The axis

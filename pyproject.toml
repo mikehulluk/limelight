@@ -50,7 +50,7 @@ dependencies = [
     # split out of limelight (it was limelight.largeseries); [mpl] is its
     # matplotlib drawing. Still 0.0.x, so held below 0.1, where its API may
     # change.
-    "lightspeed-series[mpl]>=0.0.2,<0.1",
+    "lightspeed-series[mpl]>=0.0.3,<0.1",
     "matplotlib>=3.8",
     "mdit-py-plugins>=0.6",
     "numpy>=1.26",

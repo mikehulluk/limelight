@@ -36,6 +36,15 @@ Every other Axes method (`text`, `annotate`, `bar`, `tick_params`, ...)
 passes straight through to the real Axes: it draws in the preview and is
 not recorded at all.
 
+Large series - millions of points, which neither matplotlib nor a CSV
+handles well - go through lightspeed instead: drawn as its zoomable min/max
+envelope in the preview, through the same code the app uses, and recorded as
+a `TimeSeriesArtist` over an HDF5 source. Three ways in, one result:
+
+    ax.series(source, "voltage")     # a `limelight.hdf_source(...)` the script declared
+    ax.plot(t, v)                    # LARGE_SERIES_POINTS or more: written to HDF5 for you
+    lightspeed.mpl.plot_series(ax, spec)   # an unmodified lightspeed script (the hook)
+
 Arrays passed to `plot`/`scatter` become columns of a `CapturingDataset`
 shared by every panel of one figure, named from `name=` or auto-numbered,
 deduplicated by array identity - the same array reused across panels (a
@@ -51,7 +60,9 @@ import functools
 import itertools
 import math
 import sys
+import tempfile
 import warnings
+from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 import matplotlib._pylab_helpers as _pylab_helpers
@@ -65,9 +76,33 @@ from matplotlib import cbook
 from matplotlib.axes._base import _process_plot_format
 from matplotlib.colors import is_color_like, to_hex
 
-from . import panel_render
+import lightspeed
+from lightspeed.mpl import plot_series as _plot_series
+
+from . import panel_render, refs
+from .cachedir import resolve_cache_dir
+from .largeseries_bridge import hdf_source_spec_at, missing_styles_of
 from .semantic import _VALID_LINESTYLES, _VALID_MARKERS
-from .writer import AxisDataType, LineArtist, Panel, ScatterArtist
+from .writer import (
+    STATUS_MARKERS,
+    AxisDataType,
+    EpochOffset,
+    HdfArraySpec,
+    HdfDataset,
+    Index,
+    LineArtist,
+    Panel,
+    ScatterArtist,
+    StatusCode,
+    TimeSeriesArtist,
+    hdf_source,
+)
+
+# A plot() of at least this many points is drawn as a large series - written
+# to HDF5 and drawn as lightspeed's zoomable min/max envelope, in the preview
+# and in the app - rather than as an ordinary line. `plot(..., large=False)`
+# keeps one line as a line; `large=True` makes a shorter one a series.
+LARGE_SERIES_POINTS = 200_000
 
 # Captured once, at import time, before `capture()` (below) ever has a
 # chance to replace `matplotlib.pyplot.subplots` - `subplots()` always calls
@@ -236,6 +271,18 @@ def _date_numbers(values: Any) -> np.ndarray | None:
     return None
 
 
+def _date_ns(values: Any) -> np.ndarray | None:
+    """`values` as integer nanoseconds since 1970-01-01 UTC, or None if they
+    are not dates: exact for numpy datetimes, to the microsecond or so for
+    Python ones (which go through matplotlib's date numbers)."""
+
+    array = np.asarray(values)
+    if array.dtype.kind == "M":
+        return array.astype("datetime64[ns]").astype(np.int64)
+    numbers = _date_numbers(array)
+    return None if numbers is None else np.round(numbers * refs.NS_PER_DAY).astype(np.int64)
+
+
 def _date_number(value: Any) -> float | None:
     if isinstance(value, (_datetime.date, np.datetime64)):
         return float(_mdates.date2num(value))
@@ -255,6 +302,58 @@ class _XWindow:
     lower: float
     upper: float
     style: dict[str, Any]
+
+
+def _source_from_spec(spec: Any, missing_styles: Any, chunk_size: int, uncaptured: "_Uncaptured") -> HdfDataset:
+    """An hdf source over the file a lightspeed `SourceSpec` reads, its x
+    turned back into a Limelight index. A uniform x is a regular float
+    index; an irregular one is its stored coordinates, placed in time when
+    the spec's x0/dx are a time unit from an instant. Any other placing of
+    an irregular x is not something an index can say: the interactive
+    figure then draws the stored coordinates, and `uncaptured` says so."""
+
+    arrays = [
+        HdfArraySpec("y", spec.y_dataset, column=spec.y_column, status=spec.status_dataset, status_column=spec.status_column)
+    ]
+    if not spec.irregular_x:
+        index = Index.regular_float(spec.x0, spec.dx)
+    else:
+        arrays.append(HdfArraySpec("x", spec.x_dataset, column=spec.x_column))
+        unit = next(
+            (name for name, ns in refs._UNIT_NS.items() if math.isclose(spec.dx * refs.NS_PER_DAY, ns, rel_tol=1e-9)),
+            None,
+        )
+        if (spec.x0, spec.dx) == (0.0, 1.0):
+            index = Index.irregular_index_array("x")
+        elif unit is not None and spec.x0 >= 0:
+            index = Index.irregular_index_time(
+                "x", origin=EpochOffset.from_unix_ns(round(spec.x0 * refs.NS_PER_DAY)), unit=unit
+            )
+        else:
+            uncaptured.add(
+                f"x placed at {spec.x0} + coordinate * {spec.dx} (the interactive figure draws the stored x coordinates)"
+            )
+            index = Index.irregular_index_array("x")
+
+    status_codes: list[StatusCode] = []
+    if spec.status_map is not None:
+        styles = missing_styles or {}
+        meanings = {lightspeed.status.VALID: "valid", lightspeed.status.SKIP: "skip"}
+        # Absent codes in the order of their kinds: the order the app numbers them in.
+        for code, kind in sorted(zip(spec.status_map.codes, spec.status_map.kinds), key=lambda pair: (pair[1] >= 0, pair[1])):
+            style = styles.get(kind)
+            status_codes.append(
+                StatusCode(
+                    code=int(code),
+                    meaning=meanings.get(kind, "absent"),
+                    label=(style.label if style is not None and style.label else f"status {code}"),
+                    marker=style.marker if style is not None and style.marker in STATUS_MARKERS else None,
+                    color=style.color if style is not None else None,
+                )
+            )
+    return hdf_source(
+        id="series", hdf5_path=spec.hdf5_path, y_arrays=arrays, index=index, chunk_size=chunk_size, status_codes=status_codes
+    )
 
 
 def _recorded(mpl_name: str) -> Any:
@@ -305,8 +404,19 @@ class CapturingDataset:
     still needs the name explicitly (building a `Panel` by hand, say).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, build_dir: str | Path | None = None) -> None:
         self.columns: dict[str, Any] = {}
+        # Where the HDF5 files of large series held only in memory are
+        # written until the package is: `build_dir`, or a temporary
+        # directory made the first time one is needed (and left in place, so
+        # the files are still there whenever the package is written).
+        self._build_dir = Path(build_dir) if build_dir is not None else None
+        # Large series: hdf sources the script declared, by id, and ones
+        # written (or adopted from plot_series) here, by key - their ids are
+        # `<dataset_id>-<key>`, settled when a figure is added.
+        self._declared_sources: dict[str, HdfDataset] = {}
+        self._series_sources: dict[str, HdfDataset] = {}
+        self._series_counter = itertools.count()
         # The id a project actually registered this dataset under, written
         # back by the first `CapturingFigure.add_to` that uses this dataset;
         # every other figure sharing it then defaults to that same id
@@ -344,6 +454,41 @@ class CapturingDataset:
             return None
         self._as_date_numbers[id(values)] = (values, numbers)
         return self.register(numbers, name=name)
+
+    def series_key(self, name: str | None) -> str:
+        key = name or f"series{next(self._series_counter)}"
+        while key in self._series_sources:
+            key = f"{key}_{next(self._series_counter)}"
+        return key
+
+    def build_path(self, key: str) -> Path:
+        if self._build_dir is None:
+            self._build_dir = Path(tempfile.mkdtemp(prefix="limelight-capture-"))
+        self._build_dir.mkdir(parents=True, exist_ok=True)
+        path = self._build_dir / f"{key}.h5"
+        counter = itertools.count(1)
+        while path.exists():
+            path = self._build_dir / f"{key}-{next(counter)}.h5"
+        return path
+
+    def add_series_source(self, key: str, source: HdfDataset) -> None:
+        self._series_sources[key] = source
+
+    def add_declared_source(self, source: HdfDataset) -> None:
+        existing = self._declared_sources.get(source.id)
+        if existing is not None and existing is not source:
+            raise ValueError(f"two different hdf sources are both called {source.id!r}")
+        self._declared_sources[source.id] = source
+
+    def source_id(self, ref: tuple[str, str], dataset_id: str) -> str:
+        kind, name = ref
+        return name if kind == "declared" else f"{dataset_id}-{name}"
+
+    def hdf_sources(self, dataset_id: str) -> list[HdfDataset]:
+        """Every hdf source this dataset's figures plot, with its final id."""
+        for key, source in self._series_sources.items():
+            source.id = f"{dataset_id}-{key}"
+        return [*self._declared_sources.values(), *self._series_sources.values()]
 
     def index_for(self, length: int) -> np.ndarray:
         """The implicit x of `plot(y)` - 0, 1, 2, ... - one array per length,
@@ -457,6 +602,9 @@ class CapturingAxes:
         # Each recorded scatter's preview collection, to see at add time
         # whether the script gave it a colour bar.
         self._scatter_collections: list[Any] = []
+        # Large series drawn on this panel: each artist, with where its
+        # source's id comes from (`CapturingDataset.source_id`).
+        self._series: list[tuple[TimeSeriesArtist, tuple[str, str]]] = []
 
     @property
     def columns(self) -> dict[str, Any]:
@@ -493,6 +641,7 @@ class CapturingAxes:
         fill_color: str | None = None,
         fill_alpha: float | None = None,
         fill_baseline: float = 0.0,
+        large: bool | None = None,
         **kwargs: Any,
     ) -> list[Any]:
         """`Axes.plot`, recording each line as a `LineArtist`.
@@ -534,6 +683,7 @@ class CapturingAxes:
                     fill_color=fill_color,
                     fill_alpha=fill_alpha,
                     fill_baseline=fill_baseline,
+                    large=large,
                 )
             )
         return lines
@@ -550,7 +700,14 @@ class CapturingAxes:
         fill_color: str | None,
         fill_alpha: float | None,
         fill_baseline: float,
+        large: bool | None = None,
     ) -> Any:
+        if large or (large is None and len(y) >= LARGE_SERIES_POINTS):
+            line = self._plot_large(
+                x, y, fmt, kwargs, name=name, explicit=bool(large), fill=fill_color is not None or fill_alpha is not None
+            )
+            if line is not None:
+                return line
         uncaptured = _Uncaptured("plot")
         if x is None:
             x = self.dataset.index_for(len(y))
@@ -637,6 +794,209 @@ class CapturingAxes:
         self._plotted.append(_Plotted(x=x, y=y, artist=artist, mpl_line=line))
         uncaptured.report()
         return line
+
+    # -- large series -------------------------------------------------------
+
+    def series(
+        self,
+        source: HdfDataset,
+        column: str,
+        *,
+        label: str | None = None,
+        color: str | None = None,
+        fill_color: str | None = None,
+        fill_alpha: float | None = None,
+        target_buckets: int | None = None,
+        missing_marker: str | None = None,
+    ) -> Any:
+        """Plots `column` of an hdf source (`limelight.hdf_source(...)`) as a
+        large series: lightspeed's zoomable min/max envelope, drawn in the
+        preview through the same code the app uses, and recorded as a
+        `TimeSeriesArtist`. Adding the figure adds the source to the
+        project. Returns the preview's `lightspeed.mpl.ZoomSync` (None for a
+        remote source with no local copy, which the preview cannot draw)."""
+
+        names = [array.name for array in source.y_arrays]
+        if column not in names:
+            raise ValueError(f"hdf source {source.id!r} has no array {column!r}; it has {', '.join(names)}")
+        style = dict(label=label, color=color, fill_color=fill_color, fill_alpha=fill_alpha, target_buckets=target_buckets)
+        zoom = self._draw_series(source, column, missing_marker=missing_marker, **style)
+        if self._added_as is not None:
+            _warn(f"series: figure {self._added_as!r} was already added to a project, so this draws in the preview only")
+            return zoom
+        self.dataset.add_declared_source(source)
+        self._record_series(("declared", source.id), column, missing_marker=missing_marker, time=source.index.absolute_time, **style)
+        return zoom
+
+    def __lightspeed_plot_series__(
+        self,
+        spec: Any,
+        *,
+        label: str | None = None,
+        color: str | None = None,
+        fill_color: str | None = None,
+        fill_alpha: float | None = None,
+        target_buckets: int | None = None,
+        missing_marker: str = "cross",
+        missing_styles: Any = None,
+        chunk_size: int = lightspeed.DEFAULT_CHUNK_SIZE,
+        **preview_only: Any,
+    ) -> Any:
+        """`lightspeed.mpl.plot_series(ax, spec, ...)` on this panel: drawn
+        in the preview as plot_series draws it, and recorded as a large
+        series over the same file. The spec's x is turned back into a
+        Limelight index; when that cannot be done exactly, an
+        `MplCaptureWarning` says what the interactive figure shows instead."""
+
+        if preview_only.get("cache_dir") is None:
+            # Limelight's cache directory, which the app reads, so the cache
+            # built for the preview is the one the package opens with.
+            preview_only["cache_dir"] = resolve_cache_dir()
+        zoom = _plot_series(
+            self.mpl_axes, spec, label=label, color=color, fill_color=fill_color, fill_alpha=fill_alpha,
+            target_buckets=target_buckets, missing_marker=missing_marker, missing_styles=missing_styles,
+            chunk_size=chunk_size, **preview_only,
+        )
+        if self._added_as is not None:
+            _warn(f"plot_series: figure {self._added_as!r} was already added to a project, so this draws in the preview only")
+            return zoom
+        uncaptured = _Uncaptured("plot_series")
+        source = _source_from_spec(spec, missing_styles, chunk_size, uncaptured)
+        key = self.dataset.series_key(None)
+        self.dataset.add_series_source(key, source)
+        self._record_series(
+            ("written", key), "y", label=label, color=_capturable_color(color) if color is not None else None,
+            fill_color=_capturable_color(fill_color) if fill_color is not None else None, fill_alpha=fill_alpha,
+            target_buckets=target_buckets, missing_marker=missing_marker, time=source.index.absolute_time,
+        )
+        uncaptured.report()
+        return zoom
+
+    def _draw_series(self, source: HdfDataset, column: str, *, missing_marker: str | None, **style: Any) -> Any:
+        if source.hdf5_source_path is None:
+            _warn(
+                f"series: hdf source {source.id!r} is a remote file with no local copy, so the preview leaves it "
+                "out; the interactive figure draws it once the file is downloaded"
+            )
+            return None
+        manifest = source.manifest_source()
+        spec = hdf_source_spec_at(manifest, source.hdf5_source_path, column)
+        if source.index.absolute_time:
+            self.mpl_axes.xaxis_date()
+        return _plot_series(
+            self.mpl_axes, spec, missing_marker=missing_marker or "cross", missing_styles=missing_styles_of(manifest),
+            cache_dir=resolve_cache_dir(), chunk_size=source.chunk_size, **style,
+        )
+
+    def _record_series(
+        self,
+        ref: tuple[str, str],
+        column: str,
+        *,
+        label: str | None,
+        color: str | None,
+        fill_color: str | None,
+        fill_alpha: float | None,
+        target_buckets: int | None,
+        missing_marker: str | None,
+        time: bool,
+    ) -> None:
+        artist = TimeSeriesArtist(
+            data="",
+            array=column,
+            label=None if label is None else str(label),
+            target_buckets=target_buckets,
+            color=color,
+            fill_color=fill_color,
+            fill_alpha=fill_alpha,
+            missing_marker=missing_marker,
+        )
+        self._series.append((artist, ref))
+        if time:
+            self.x_time = True
+
+    def _plot_large(
+        self, x: Any, y: Any, fmt: str | None, kwargs: dict[str, Any], *, name: str | None, explicit: bool, fill: bool
+    ) -> Any:
+        """A `plot()` line drawn as a large series instead; None (with a
+        warning) for one that cannot be, which is then drawn as a line."""
+
+        try:
+            y_values = np.asarray(y, dtype=float)
+            # Dates as integer nanoseconds, so their spacing is compared exactly.
+            dates = _date_ns(x) if x is not None else None
+            x_values = dates if dates is not None else (None if x is None else np.asarray(x, dtype=float))
+        except (TypeError, ValueError):
+            y_values = None
+        if y_values is None or y_values.ndim != 1 or (x_values is not None and x_values.shape != y_values.shape):
+            _warn("plot: these points cannot be a large series (not 1-D numbers), so they are drawn as a plain line")
+            return None
+        if x_values is not None and np.any(x_values[1:] < x_values[:-1]):
+            _warn(
+                f"plot: {len(y_values)} points with an unsorted x cannot be a large series (lightspeed needs x "
+                "non-decreasing), so they are drawn as a plain line - sort them to plot them as one"
+            )
+            return None
+
+        uncaptured = _Uncaptured("plot (a large series, drawn as a min/max envelope)")
+        fmt_linestyle, fmt_marker, fmt_color = _process_plot_format(fmt) if fmt else (None, None, None)
+        label = kwargs.pop("label", None)
+        color = kwargs.pop("color", fmt_color)
+        for key, value in (("linestyle", kwargs.pop("linestyle", fmt_linestyle)), ("marker", kwargs.pop("marker", fmt_marker))):
+            if value not in (None, "None", "none", "", "-", "solid"):
+                uncaptured.add(f"{key}={value!r}")
+        drawstyle = kwargs.pop("drawstyle", None)
+        if drawstyle not in (None, "default"):
+            uncaptured.add(f"drawstyle={drawstyle!r}")
+        if fill:
+            uncaptured.add("fill_color=/fill_alpha= (a large series' band is between its min and max)")
+        for key in ("scalex", "scaley"):
+            kwargs.pop(key, None)
+        uncaptured.keywords(kwargs)
+
+        if dates is not None and len(dates) and dates[0] < 0:
+            _warn("plot: dates before 1970 cannot be a large series' time index, so they are drawn as a plain line")
+            return None
+        key = self.dataset.series_key(name)
+        path = self.dataset.build_path(key)
+        steps = np.diff(x_values) if x_values is not None and len(x_values) > 1 else None
+        if dates is not None:
+            uniform = steps is not None and steps[0] > 0 and bool(np.all(steps == steps[0]))
+        else:
+            uniform = x_values is None or (
+                steps is not None and steps[0] > 0 and np.allclose(steps, steps[0], rtol=1e-9, atol=0.0)
+            )
+        x0 = 0.0 if x_values is None else float(x_values[0])
+        dx = 1.0 if steps is None else float(steps[0])
+        if dates is not None and uniform:
+            lightspeed.write_series(path, y_values)
+            arrays = [HdfArraySpec("y", "/y")]
+            index = Index.regular_time(
+                step_nom=int(steps[0]), step_denom=1, step_unit="ns", epoch_offset=EpochOffset.from_unix_ns(int(dates[0]))
+            )
+        elif dates is not None:
+            # Microseconds from the first sample: exact in a float for centuries.
+            lightspeed.write_series(path, y_values, (dates - dates[0]) / 1_000.0)
+            arrays = [HdfArraySpec("y", "/y"), HdfArraySpec("x", "/x")]
+            index = Index.irregular_index_time("x", origin=EpochOffset.from_unix_ns(int(dates[0])), unit="us")
+        elif uniform:
+            lightspeed.write_series(path, y_values)
+            arrays = [HdfArraySpec("y", "/y")]
+            index = Index.regular_float(x0, dx)
+        else:
+            lightspeed.write_series(path, y_values, x_values)
+            arrays = [HdfArraySpec("y", "/y"), HdfArraySpec("x", "/x")]
+            index = Index.irregular_index_array("x")
+        source = hdf_source(id=key, hdf5_path=path, y_arrays=arrays, index=index)
+
+        zoom = self._draw_series(source, "y", missing_marker=None, label=label, color=color)
+        self.dataset.add_series_source(key, source)
+        self._record_series(
+            ("written", key), "y", label=label, color=_capturable_color(color) if color is not None else None,
+            fill_color=None, fill_alpha=None, target_buckets=None, missing_marker=None, time=dates is not None,
+        )
+        uncaptured.report()
+        return zoom.lines[0]
 
     # -- fill_between ---------------------------------------------------------
 
@@ -1149,6 +1509,7 @@ class CapturingAxes:
         return Panel(
             lines=[bound(line) for line in self.lines],
             scatters=[bound(self._with_colorbar(scatter, collection)) for scatter, collection in zip(self.scatters, self._scatter_collections)],
+            time_series=[dataclasses.replace(artist, data=self.dataset.source_id(ref, data)) for artist, ref in self._series],
             actions=[resolved(action) for action in self.actions],
             data=data,
             title=self.title,
