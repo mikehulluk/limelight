@@ -46,18 +46,34 @@ let AxesDecorator =
           , labelOffsetDx : Optional Double
           , labelOffsetDy : Optional Double
           }
+      -- A vertical band between two x values, or a single dotted line when
+      -- the bounds are equal. `floatingLabel` is written beside it, inside
+      -- the axes.
       | AxesDecoratorVSpan :
           { xLimit : AxisLimit
-          , label : Optional Core.DisplayText
+          , floatingLabel : Optional Core.DisplayText
+          , color : Optional Text
+          , alpha : Optional Double
+          , linewidth : Optional Double
+          }
+      -- The same, horizontal: a band between two y values, or a single
+      -- dotted line when the bounds are equal.
+      | AxesDecoratorHSpan :
+          { yLimit : AxisLimit
+          , floatingLabel : Optional Core.DisplayText
+          , color : Optional Text
+          , alpha : Optional Double
+          , linewidth : Optional Double
           }
       -- A shaded box in data coordinates, bounded on both axes. Like a VSpan
-      -- it decorates the data without changing the axes' limits. `yLimit` is
-      -- what tells it apart from a VSpan once dhall-to-json has flattened the
-      -- union, so it is required.
+      -- it decorates the data without changing the axes' limits. Having both
+      -- `xLimit` and `yLimit` is what tells it apart from a VSpan or an
+      -- HSpan once dhall-to-json has flattened the union, so both are
+      -- required.
       | AxesDecoratorRect :
           { xLimit : AxisLimit
           , yLimit : AxisLimit
-          , label : Optional Core.DisplayText
+          , floatingLabel : Optional Core.DisplayText
           , color : Optional Text
           , alpha : Optional Double
           }

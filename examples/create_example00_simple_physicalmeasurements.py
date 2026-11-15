@@ -217,6 +217,9 @@ in    { limelightVersion = "1.0"
                         , drawStyle = None Limelight.DrawStyle
                         , marker = None Text
                         , missingMarker = None Limelight.MissingMarker
+                        , fillColor = None Text
+                        , fillAlpha = None Double
+                        , fillBaseline = None Double
                         , visibleWhen = None Limelight.TextControlParameterMatch
                         }
                     )
@@ -265,7 +268,10 @@ in    { limelightVersion = "1.0"
                               { xStart = "2026-08-01"
                               , xEnd = "2026-08-04"
                               }
-                        , label = Some "Collection period"
+                        , floatingLabel = Some "Collection period"
+                        , color = None Text
+                        , alpha = None Double
+                        , linewidth = None Double
                         }
                     )
               }

@@ -1,7 +1,8 @@
 """The rect decorator: a shaded box bounded on both axes.
 
-It is a VSpan with a yLimit, and that field is what tells the two apart once
-dhall-to-json has flattened the union, so the tests reach the decorator both
+It has both an xLimit and a yLimit - a VSpan has only the one, an HSpan only
+the other - and that is what tells them apart once dhall-to-json has flattened
+the union, so the tests reach the decorator both
 through the writer and as the flattened dictionary the reader hands on.
 """
 
@@ -68,7 +69,7 @@ def test_a_rect_round_trips_and_validates(tmp_path: Path) -> None:
     rect = _flattened_rect(manifest)
     assert rect["xLimit"] == {"xLower": 1.0, "xUpper": 2.0}
     assert rect["yLimit"] == {"yLower": 4.0, "yUpper": 12.0}
-    assert rect["label"] == "box"
+    assert rect["floatingLabel"] == "box"
     assert rect["alpha"] == 0.25
 
 

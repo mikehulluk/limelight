@@ -25,7 +25,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.collections import PatchCollection
 from matplotlib.figure import Figure as MatplotlibFigure
-from matplotlib.patches import Polygon, Rectangle
+from matplotlib.patches import Polygon
 from matplotlib.ticker import FixedFormatter, FixedLocator, FuncFormatter, LogLocator, MultipleLocator, NullFormatter
 from PySide6.QtCore import (
     QBuffer,
@@ -106,6 +106,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import panel_render
 from . import refs
 from .app import (
     CSS_PIXELS_PER_INCH,
@@ -1763,6 +1764,10 @@ def _draw_scatter_artist(
 ) -> None:
     marker = artist.get("marker") or "o"
     alpha_value = 1.0 if alpha is None else alpha
+    edge_color = artist.get("edgeColor")
+    edge_color = panel_render.DEFAULT_SCATTER_EDGE_COLOR if edge_color is None else edge_color
+    edge_width = _to_float(artist.get("edgeWidth"))
+    edge_width = panel_render.DEFAULT_SCATTER_EDGE_WIDTH if edge_width is None else edge_width
     collection = None
     if series.color_kind == "continuous":
         collection = axes.scatter(
@@ -1773,8 +1778,8 @@ def _draw_scatter_artist(
             c=series.colors,
             cmap="viridis",
             marker=marker,
-            edgecolors="white",
-            linewidths=0.45,
+            edgecolors=edge_color,
+            linewidths=edge_width,
             alpha=alpha_value,
             zorder=3,
         )
@@ -1798,8 +1803,8 @@ def _draw_scatter_artist(
                 s=[series.sizes[index] for index in indices] if series.sizes else 24.0,
                 color=palette[category_index % len(palette)],
                 marker=marker,
-                edgecolors="white",
-                linewidths=0.45,
+                edgecolors=edge_color,
+                linewidths=edge_width,
                 alpha=alpha_value,
                 zorder=3,
             )
@@ -1812,8 +1817,8 @@ def _draw_scatter_artist(
             s=series.sizes or 24.0,
             color=color,
             marker=marker,
-            edgecolors="white",
-            linewidths=0.45,
+            edgecolors=edge_color,
+            linewidths=edge_width,
             alpha=alpha_value,
             zorder=3,
         )
@@ -1931,16 +1936,20 @@ def _draw_plot_contents(
             artist_kind = "stem"
             hover_label = label
         else:
-            (line,) = axes.plot(
+            line = panel_render.draw_line(
+                axes,
                 x_values,
                 y_values,
                 label=series.label,
                 color=artist.get("color"),
-                linestyle=artist.get("linestyle") or "-",
+                linestyle=artist.get("linestyle"),
+                linewidth=_to_float(artist.get("linewidth")),
+                draw_style=artist.get("drawStyle"),
                 marker=artist.get("marker"),
-                linewidth=_to_float(artist.get("linewidth")) or 2.0,
-                drawstyle=_MPL_DRAW_STYLES[artist.get("drawStyle") or "straight"],
-                alpha=1.0 if alpha is None else alpha,
+                alpha=alpha,
+                fill_color=artist.get("fillColor"),
+                fill_alpha=_to_float(artist.get("fillAlpha")),
+                fill_baseline=_to_float(artist.get("fillBaseline")) or 0.0,
             )
             line_colors[y_name] = line.get_color()
             if artist.get("missingMarker") != "none":
@@ -2410,7 +2419,7 @@ def _apply_axes_action_decorators(
 ) -> None:
     for action in axes_actions:
         decorator = action.get("AxesActionAddDecorator")
-        if decorator is None and ("xLimit" in action or "arrow" in action):
+        if decorator is None and ("xLimit" in action or "yLimit" in action or "arrow" in action):
             decorator = action
         if decorator is None:
             continue
@@ -2422,62 +2431,91 @@ def _apply_axes_action_decorators(
             continue
 
         rect = decorator.get("AxesDecoratorRect")
-        if rect is None and "yLimit" in decorator:
+        if rect is None and "xLimit" in decorator and "yLimit" in decorator:
             rect = decorator
         if rect is not None:
             _apply_rect_decorator(axes, axes_spec, rect, text)
             continue
 
         vspan = decorator.get("AxesDecoratorVSpan")
-        if vspan is None and "xLimit" in decorator:
+        if vspan is None and "xLimit" in decorator and "yLimit" not in decorator:
             vspan = decorator
-        if vspan is None:
-            raise TypeError(f"Unknown AxesDecorator constructor: {decorator!r}")
-        point = _axis_limit_point(vspan["xLimit"], axes_spec["xAxis"], axes_spec["yAxis"])
-        if point is not None:
-            limit_axis, marker_x = point
-            if limit_axis != "x":
-                raise TypeError(f"AxesDecoratorVSpan requires an x-axis AxisLimit: {vspan!r}")
-            marker_x = _plot_window((marker_x, marker_x), axes_spec["xAxis"])[0]
-            color = _DEFAULT_DECORATOR_COLOR
-            axes.axvline(
-                marker_x,
-                color=color,
-                linestyle=":",
-                linewidth=1.7,
-                alpha=0.95,
-            )
-            label = vspan.get("label")
-            if label:
-                axes.text(
-                    marker_x,
-                    0.98,
-                    label,
-                    ha="right",
-                    va="top",
-                    rotation=90,
-                    transform=axes.get_xaxis_transform(),
-                    color=color,
-                    fontproperties=text.annotation,
-                )
+        if vspan is not None:
+            _apply_vspan_decorator(axes, axes_spec, vspan, text)
             continue
-        limit_axis, raw_window = _axis_limit_window(vspan["xLimit"], axes_spec["xAxis"], axes_spec["yAxis"])
+
+        hspan = decorator.get("AxesDecoratorHSpan")
+        if hspan is None and "yLimit" in decorator and "xLimit" not in decorator:
+            hspan = decorator
+        if hspan is not None:
+            _apply_hspan_decorator(axes, axes_spec, hspan, text)
+            continue
+
+        raise TypeError(f"Unknown AxesDecorator constructor: {decorator!r}")
+
+
+def _apply_vspan_decorator(axes: Any, axes_spec: dict[str, Any], vspan: dict[str, Any], text: FigureText) -> None:
+    point = _axis_limit_point(vspan["xLimit"], axes_spec["xAxis"], axes_spec["yAxis"])
+    if point is not None:
+        limit_axis, marker_x = point
         if limit_axis != "x":
             raise TypeError(f"AxesDecoratorVSpan requires an x-axis AxisLimit: {vspan!r}")
-        if raw_window is not None:
-            plot_window = _plot_window(raw_window, axes_spec["xAxis"])
-            axes.axvspan(plot_window[0], plot_window[1], color="#f3d36b", alpha=0.35)
-            label = vspan.get("label")
-            if label:
-                axes.text(
-                    sum(plot_window) / 2,
-                    0.96,
-                    label,
-                    ha="center",
-                    va="top",
-                    transform=axes.get_xaxis_transform(),
-                    fontproperties=text.annotation,
-                )
+        marker_x = _plot_window((marker_x, marker_x), axes_spec["xAxis"])[0]
+        panel_render.draw_vspan_decorator(
+            axes,
+            (marker_x, marker_x),
+            color=vspan.get("color"),
+            alpha=_to_float(vspan.get("alpha")),
+            linewidth=_to_float(vspan.get("linewidth")),
+            label=vspan.get("floatingLabel"),
+            label_font=text.annotation,
+        )
+        return
+    limit_axis, raw_window = _axis_limit_window(vspan["xLimit"], axes_spec["xAxis"], axes_spec["yAxis"])
+    if limit_axis != "x":
+        raise TypeError(f"AxesDecoratorVSpan requires an x-axis AxisLimit: {vspan!r}")
+    if raw_window is not None:
+        plot_window = _plot_window(raw_window, axes_spec["xAxis"])
+        panel_render.draw_vspan_decorator(
+            axes,
+            plot_window,
+            color=vspan.get("color"),
+            alpha=_to_float(vspan.get("alpha")),
+            label=vspan.get("floatingLabel"),
+            label_font=text.annotation,
+        )
+
+
+def _apply_hspan_decorator(axes: Any, axes_spec: dict[str, Any], hspan: dict[str, Any], text: FigureText) -> None:
+    point = _axis_limit_point(hspan["yLimit"], axes_spec["xAxis"], axes_spec["yAxis"])
+    if point is not None:
+        limit_axis, marker_y = point
+        if limit_axis != "y":
+            raise TypeError(f"AxesDecoratorHSpan requires a y-axis AxisLimit: {hspan!r}")
+        marker_y = _plot_window((marker_y, marker_y), axes_spec["yAxis"])[0]
+        panel_render.draw_hspan_decorator(
+            axes,
+            (marker_y, marker_y),
+            color=hspan.get("color"),
+            alpha=_to_float(hspan.get("alpha")),
+            linewidth=_to_float(hspan.get("linewidth")),
+            label=hspan.get("floatingLabel"),
+            label_font=text.annotation,
+        )
+        return
+    limit_axis, raw_window = _axis_limit_window(hspan["yLimit"], axes_spec["xAxis"], axes_spec["yAxis"])
+    if limit_axis != "y":
+        raise TypeError(f"AxesDecoratorHSpan requires a y-axis AxisLimit: {hspan!r}")
+    if raw_window is not None:
+        plot_window = _plot_window(raw_window, axes_spec["yAxis"])
+        panel_render.draw_hspan_decorator(
+            axes,
+            plot_window,
+            color=hspan.get("color"),
+            alpha=_to_float(hspan.get("alpha")),
+            label=hspan.get("floatingLabel"),
+            label_font=text.annotation,
+        )
 
 
 def _apply_rect_decorator(axes: Any, axes_spec: dict[str, Any], rect: dict[str, Any], text: FigureText) -> None:
@@ -2497,33 +2535,15 @@ def _apply_rect_decorator(axes: Any, axes_spec: dict[str, Any], rect: dict[str, 
     x_window = _plot_window(x_raw, axes_spec["xAxis"])
     y_window = _plot_window(y_raw, axes_spec["yAxis"])
 
-    color = rect.get("color") or _DEFAULT_RECT_COLOR
-    alpha = _to_float(rect.get("alpha"))
-    box = Rectangle(
-        (x_window[0], y_window[0]),
-        x_window[1] - x_window[0],
-        y_window[1] - y_window[0],
-        facecolor=color,
-        edgecolor=color,
-        alpha=_DEFAULT_RECT_ALPHA if alpha is None else alpha,
-        linewidth=1.2,
-        # Under the data lines, as a VSpan is.
-        zorder=1,
+    panel_render.draw_rect_decorator(
+        axes,
+        x_window,
+        y_window,
+        color=rect.get("color"),
+        alpha=_to_float(rect.get("alpha")),
+        label=rect.get("floatingLabel"),
+        label_font=text.annotation,
     )
-    axes.add_artist(box)
-
-    label = rect.get("label")
-    if label:
-        axes.text(
-            (x_window[0] + x_window[1]) / 2,
-            y_window[1],
-            label,
-            ha="center",
-            va="bottom",
-            fontproperties=text.annotation,
-            color=_DEFAULT_DECORATOR_COLOR,
-            clip_on=True,
-        )
 
 
 def _apply_arrow_annotation(axes: Any, annotation: dict[str, Any], text: FigureText) -> None:
@@ -2593,10 +2613,6 @@ def _axis_is_utc(axis_binding: dict[str, Any]) -> bool:
     before drawing (_plot_x_values), so the date formatter fits them too.
     """
     return axis_data_type_kind(axis_binding) == "timeSeries" and _axis_calendar(axis_binding) != "monthOrdinal1970"
-
-
-# A line artist's drawStyle, as matplotlib's drawstyle names it.
-_MPL_DRAW_STYLES = {"straight": "default", "stepsPre": "steps-pre", "stepsPost": "steps-post"}
 
 
 def _label_log_axis(axis: Any) -> None:
@@ -6323,9 +6339,6 @@ def _install_timeseries_artist(runtime: LimelightRuntime, axes: Any, artist: dic
 
 
 _DEFAULT_DECORATOR_COLOR = "#1f5f73"
-# The VSpan's shade, so the two kinds of region read as the same thing.
-_DEFAULT_RECT_COLOR = "#f3d36b"
-_DEFAULT_RECT_ALPHA = 0.35
 
 
 def _arrow_label_position(

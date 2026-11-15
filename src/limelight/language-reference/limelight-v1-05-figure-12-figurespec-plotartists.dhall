@@ -33,6 +33,10 @@ let MissingMarker = < cross | none >
 -- reads correctly only as steps.
 let DrawStyle = < straight | stepsPre | stepsPost >
 
+-- `fillColor`/`fillAlpha` shade the area between the line and `fillBaseline`
+-- (0 by default) - a filled line with `drawStyle = stepsPost` and narrow,
+-- regularly-spaced samples renders as a histogram, each sample's value held
+-- as a rectangle out to the next sample. Unset `fillColor` draws no fill.
 let LineArtist =
       { id : Core.Id
       , y : Text
@@ -45,9 +49,17 @@ let LineArtist =
       , drawStyle : Optional DrawStyle
       , marker : Optional Text
       , missingMarker : Optional MissingMarker
+      , fillColor : Optional Text
+      , fillAlpha : Optional Double
+      , fillBaseline : Optional Double
       , visibleWhen : Optional TextControlParameterMatch
       }
 
+-- `edgeColor`/`edgeWidth` are each marker's outline, drawn white and 0.45pt
+-- wide when unset. That outline keeps markers distinguishable from each
+-- other and from a panel's lines, but at high point density it can read as
+-- a web of faint lines between overlapping markers; set `edgeWidth = 0.0`
+-- (or match `edgeColor` to `color`) for a dense cloud with no visible edge.
 let ScatterArtist =
       { id : Core.Id
       , x : Text
@@ -57,6 +69,8 @@ let ScatterArtist =
       , sizeBy : Optional Text
       , color : Optional Text
       , marker : Optional Text
+      , edgeColor : Optional Text
+      , edgeWidth : Optional Double
       , visibleWhen : Optional TextControlParameterMatch
       }
 

@@ -1377,6 +1377,12 @@ class LineArtist:
     marker: str | None = None
     # "cross" (default) or "none": how a missing (null/NaN) sample is shown.
     missing_marker: str | None = None
+    # Shades the area between the line and `fill_baseline` (0 by default).
+    # Pair with draw_style="stepsPost" and narrow, regularly-spaced samples
+    # for a histogram look, each sample held as a rectangle to the next.
+    fill_color: str | None = None
+    fill_alpha: float | None = None
+    fill_baseline: float | None = None
     visible_when: "TextControlParameterMatch | None" = None
 
 
@@ -1392,6 +1398,11 @@ class ScatterArtist:
     size_by: str | None = None
     color: str | None = None
     marker: str | None = None
+    # Each marker's outline: white and 0.45pt wide when unset. Set
+    # edge_width=0.0 (or edge_color matching color) for a dense scatter
+    # with no visible edge between overlapping markers.
+    edge_color: str | None = None
+    edge_width: float | None = None
     visible_when: "TextControlParameterMatch | None" = None
 
 
@@ -1798,6 +1809,9 @@ class FigureSpec:
                     ("drawStyle", _optional_enum("DrawStyle", DRAW_STYLES, line.draw_style)),
                     ("missingMarker", _optional_enum("MissingMarker", MISSING_MARKERS, line.missing_marker)),
                     ("marker", _optional_text(line.marker)),
+                    ("fillColor", _optional_text(line.fill_color)),
+                    ("fillAlpha", _optional_double(line.fill_alpha)),
+                    ("fillBaseline", _optional_double(line.fill_baseline)),
                     ("visibleWhen", _optional_expr("Limelight.TextControlParameterMatch", visible_when)),
                 ]
             )
@@ -1819,6 +1833,8 @@ class FigureSpec:
                     ("sizeBy", _optional_text(_column_ref(data, scatter.size_by) if scatter.size_by else None)),
                     ("color", _optional_text(scatter.color)),
                     ("marker", _optional_text(scatter.marker)),
+                    ("edgeColor", _optional_text(scatter.edge_color)),
+                    ("edgeWidth", _optional_double(scatter.edge_width)),
                     ("visibleWhen", _optional_expr(
                         "Limelight.TextControlParameterMatch",
                         scatter.visible_when.render() if scatter.visible_when is not None else None,
@@ -2228,6 +2244,9 @@ def axes_action_add_axis_window_decorator(
     lower: float,
     upper: float,
     label: str | None = None,
+    color: str | None = None,
+    alpha: float | None = None,
+    linewidth: float | None = None,
 ) -> AxesAction:
     decorator = _record(
         [
@@ -2238,13 +2257,51 @@ def axes_action_add_axis_window_decorator(
                     _record([("xLower", _dhall_float(lower)), ("xUpper", _dhall_float(upper))]),
                 ),
             ),
-            ("label", _optional_display_text(label)),
+            ("floatingLabel", _optional_display_text(label)),
+            ("color", _optional_text(color)),
+            ("alpha", _optional_double(alpha)),
+            ("linewidth", _optional_double(linewidth)),
         ]
     )
     return AxesAction(
         _constructor(
             "Limelight.AxesAction.AxesActionAddDecorator",
             f"({_constructor('Limelight.AxesDecorator.AxesDecoratorVSpan', decorator)})",
+        )
+    )
+
+
+def axes_action_add_y_axis_window_decorator(
+    *,
+    lower: float,
+    upper: float,
+    label: str | None = None,
+    color: str | None = None,
+    alpha: float | None = None,
+    linewidth: float | None = None,
+) -> AxesAction:
+    """Like `axes_action_add_axis_window_decorator`, but a horizontal line
+    (`lower == upper`) or band at a y value/range instead of a vertical one."""
+
+    decorator = _record(
+        [
+            (
+                "yLimit",
+                _constructor(
+                    "Limelight.AxisLimit.AxisLimitYFloat",
+                    _record([("yLower", _dhall_float(lower)), ("yUpper", _dhall_float(upper))]),
+                ),
+            ),
+            ("floatingLabel", _optional_display_text(label)),
+            ("color", _optional_text(color)),
+            ("alpha", _optional_double(alpha)),
+            ("linewidth", _optional_double(linewidth)),
+        ]
+    )
+    return AxesAction(
+        _constructor(
+            "Limelight.AxesAction.AxesActionAddDecorator",
+            f"({_constructor('Limelight.AxesDecorator.AxesDecoratorHSpan', decorator)})",
         )
     )
 
@@ -2270,6 +2327,9 @@ def axes_action_add_utc_time_window_decorator(
     start: str,
     end: str,
     label: str | None = None,
+    color: str | None = None,
+    alpha: float | None = None,
+    linewidth: float | None = None,
 ) -> AxesAction:
     decorator = _record(
         [
@@ -2280,7 +2340,10 @@ def axes_action_add_utc_time_window_decorator(
                     _record([("xStart", _quote(start)), ("xEnd", _quote(end))]),
                 ),
             ),
-            ("label", _optional_display_text(label)),
+            ("floatingLabel", _optional_display_text(label)),
+            ("color", _optional_text(color)),
+            ("alpha", _optional_double(alpha)),
+            ("linewidth", _optional_double(linewidth)),
         ]
     )
     return AxesAction(
@@ -2327,7 +2390,7 @@ def axes_action_add_rect_decorator(
         [
             ("xLimit", _axis_limit("x", x_lower, x_upper)),
             ("yLimit", _axis_limit("y", y_lower, y_upper)),
-            ("label", _optional_display_text(label)),
+            ("floatingLabel", _optional_display_text(label)),
             ("color", _optional_text(color)),
             ("alpha", _optional_double(alpha)),
         ]

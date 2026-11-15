@@ -367,7 +367,7 @@ class _SemanticValidator:
         if decorator is not None:
             self._validate_axes_decorator(axes_spec, decorator)
             return
-        if "xLimit" in action or "arrow" in action:
+        if "xLimit" in action or "yLimit" in action or "arrow" in action:
             self._validate_axes_decorator(axes_spec, action)
             return
         raise LimelightError(f"AxesSpec {axes_spec['id']!r} has unknown AxesAction payload {action!r}")
@@ -460,7 +460,7 @@ class _SemanticValidator:
         visible_when = artist.get("visibleWhen")
         if visible_when is not None:
             self._require_text_control_parameter(visible_when["controlParameter"], f"artist {artist['id']!r} visibleWhen")
-        for color_field in ("color", "fillColor"):
+        for color_field in ("color", "fillColor", "edgeColor"):
             color = artist.get(color_field)
             if color is not None and not is_color_like(color):
                 raise LimelightError(
@@ -472,6 +472,12 @@ class _SemanticValidator:
             raise LimelightError(
                 f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
                 f"fillAlpha {fill_alpha!r} is outside 0..1"
+            )
+        edge_width = artist.get("edgeWidth")
+        if edge_width is not None and float(edge_width) < 0.0:
+            raise LimelightError(
+                f"FigureSpec {figure_id!r} AxesSpec {axes_spec['id']!r} artist {artist['id']!r} "
+                f"edgeWidth {edge_width!r} must not be negative"
             )
         missing_marker = artist.get("missingMarker")
         if missing_marker is not None and missing_marker not in ("cross", "none"):
@@ -674,25 +680,43 @@ class _SemanticValidator:
             self._validate_annotation_color(axes_spec, decorator)
             return
         rect = decorator.get("AxesDecoratorRect")
-        if rect is None and "yLimit" in decorator:
+        if rect is None and "xLimit" in decorator and "yLimit" in decorator:
             rect = decorator
         if rect is not None:
             self._validate_rect_decorator(axes_spec, rect)
             return
         vspan = decorator.get("AxesDecoratorVSpan")
+        if vspan is None and "xLimit" in decorator and "yLimit" not in decorator:
+            vspan = decorator
         if vspan is not None:
             shape = axis_limit_shape(vspan["xLimit"])
             if shape.axis != "x":
                 raise LimelightError(f"AxesSpec {axes_spec['id']!r} AxesDecoratorVSpan must use an x-axis AxisLimit")
             self._validate_axis_limit(axes_spec, vspan["xLimit"])
+            self._validate_decorator_style(axes_spec, vspan, "AxesDecoratorVSpan")
             return
-        if "xLimit" in decorator:
-            shape = axis_limit_shape(decorator["xLimit"])
-            if shape.axis != "x":
-                raise LimelightError(f"AxesSpec {axes_spec['id']!r} AxesDecoratorVSpan must use an x-axis AxisLimit")
-            self._validate_axis_limit(axes_spec, decorator["xLimit"])
+        hspan = decorator.get("AxesDecoratorHSpan")
+        if hspan is None and "yLimit" in decorator and "xLimit" not in decorator:
+            hspan = decorator
+        if hspan is not None:
+            shape = axis_limit_shape(hspan["yLimit"])
+            if shape.axis != "y":
+                raise LimelightError(f"AxesSpec {axes_spec['id']!r} AxesDecoratorHSpan must use a y-axis AxisLimit")
+            self._validate_axis_limit(axes_spec, hspan["yLimit"])
+            self._validate_decorator_style(axes_spec, hspan, "AxesDecoratorHSpan")
             return
         raise LimelightError(f"AxesSpec {axes_spec['id']!r} has unknown AxesDecorator payload {decorator!r}")
+
+    def _validate_decorator_style(self, axes_spec: dict[str, Any], decorator: dict[str, Any], kind: str) -> None:
+        color = optional_field(decorator, "color")
+        if color is not None and not is_color_like(color):
+            raise LimelightError(f"AxesSpec {axes_spec['id']!r} {kind} has an invalid color {color!r}")
+        alpha = optional_field(decorator, "alpha")
+        if alpha is not None and not 0.0 <= float(alpha) <= 1.0:
+            raise LimelightError(f"AxesSpec {axes_spec['id']!r} {kind} alpha {alpha!r} is not within 0..1")
+        linewidth = optional_field(decorator, "linewidth")
+        if linewidth is not None and float(linewidth) <= 0.0:
+            raise LimelightError(f"AxesSpec {axes_spec['id']!r} {kind} linewidth {linewidth!r} must be positive")
 
     def _validate_rect_decorator(self, axes_spec: dict[str, Any], rect: dict[str, Any]) -> None:
         for axis, key in (("x", "xLimit"), ("y", "yLimit")):

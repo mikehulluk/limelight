@@ -17,6 +17,27 @@ versions may break things.
   run on the window's own thread, so each answer says what actually
   happened. It implies `--debug-timing`, binds only 127.0.0.1, and has no
   authentication - a development aid, not a service.
+- **Horizontal lines and bands: `AxesDecoratorHSpan`**, written with
+  `axes_action_add_y_axis_window_decorator` - the y-axis counterpart of the
+  VSpan, a dotted line when its bounds are equal and a shaded band when not.
+- **Decorators take a style.** VSpans and HSpans (and the writer's
+  `axes_action_add_axis_window_decorator` and
+  `axes_action_add_utc_time_window_decorator`) take `color`, `alpha` and
+  `linewidth`.
+- **Filled lines.** A `LineArtist`'s `fillColor`, `fillAlpha` and
+  `fillBaseline` shade the area between the line and the baseline; with
+  `drawStyle = stepsPost` and regularly spaced samples it draws as a
+  histogram. The legend shows the fill's colour.
+- **Scatter marker edges.** `ScatterArtist`'s `edgeColor` and `edgeWidth`
+  set each marker's outline, white and 0.45pt by default; `edgeWidth = 0.0`
+  gives a dense cloud without a web of outlines.
+
+### Changed
+
+- **A decorator's label is now `floatingLabel`** on `AxesDecoratorVSpan`
+  and `AxesDecoratorRect`, as on the new `AxesDecoratorHSpan`. A dhall file
+  that sets `label` on one of them needs the new name, and the new optional
+  fields; the Python writer's `label=` argument is unchanged.
 
 ## [0.0.27] - 2026-11-15
 
