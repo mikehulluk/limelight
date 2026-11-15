@@ -11,7 +11,11 @@ from .metadata import METADATA_TYPES, MetadataError, parse_metadata_value
 from .reader import LimelightError
 from .typography import validate_fonts_and_typography
 
-_VALID_MARKERS = ("o", "s", "^", "v", "D", "x", "+", "*", "p", "h", "<", ">")
+# matplotlib's one-character marker codes, which the app draws with as they are.
+_VALID_MARKERS = (
+    ".", ",", "o", "v", "^", "<", ">", "1", "2", "3", "4", "8",
+    "s", "p", "P", "*", "h", "H", "+", "x", "X", "D", "d", "|", "_",
+)
 # "none" draws a line artist's markers alone, as a raster of events.
 _VALID_LINESTYLES = ("-", "--", "-.", ":", "none")
 

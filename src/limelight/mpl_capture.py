@@ -206,6 +206,17 @@ def _capturable_color(value: Any) -> str | None:
     return None
 
 
+def _capturable_marker(marker: Any, uncaptured: "_Uncaptured") -> str | None:
+    """`marker` as a package can hold it - any of matplotlib's one-character
+    codes - or None, with a warning, for one it cannot (a `$...$` mathtext
+    marker, a Path, a vertex list)."""
+
+    if marker is None or marker in _VALID_MARKERS:
+        return marker
+    uncaptured.add(f"marker={marker!r} (a package's markers are matplotlib's one-character codes)")
+    return None
+
+
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool)
 
@@ -737,9 +748,11 @@ class CapturingAxes:
             captured_linestyle = None
             uncaptured.add(f"linestyle={linestyle!r}")
         captured_marker = None if marker in (None, "None", "none", "") else marker
-        if captured_marker is not None and captured_marker not in _VALID_MARKERS:
-            uncaptured.add(f"marker={marker!r} (a package's markers are {', '.join(_VALID_MARKERS)})")
-            captured_marker = None
+        captured_marker = _capturable_marker(captured_marker, uncaptured)
+        if captured_linestyle == "none" and captured_marker is None and marker not in (None, "None", "none", ""):
+            # A markers-only line whose marker a package cannot hold would draw
+            # nothing at all; plain circles are the nearest thing that draws.
+            captured_marker = "o"
         captured_linewidth = linewidth if linewidth is not None and _is_number(linewidth) and linewidth > 0 else None
         if linewidth is not None and captured_linewidth is None:
             uncaptured.add(f"linewidth={linewidth!r}")
@@ -1182,9 +1195,7 @@ class CapturingAxes:
                 uncaptured.add(f"s={s!r}")
 
         captured_marker = None if marker is None else marker
-        if captured_marker is not None and captured_marker not in _VALID_MARKERS:
-            uncaptured.add(f"marker={marker!r} (a package's markers are {', '.join(_VALID_MARKERS)})")
-            captured_marker = None
+        captured_marker = _capturable_marker(captured_marker, uncaptured)
         captured_alpha = alpha if alpha is not None and _is_number(alpha) and 0.0 <= alpha <= 1.0 else None
         if alpha is not None and captured_alpha is None:
             uncaptured.add("alpha (a package's scatter takes one alpha)")

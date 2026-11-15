@@ -255,8 +255,10 @@ def test_fidelity_losses_all_warn() -> None:
     _, ax = mpl_subplots()
     with pytest.warns(MplCaptureWarning, match="symlog"):
         ax.set_yscale("symlog")
-    with pytest.warns(MplCaptureWarning, match="marker='.'"):
-        ax.plot([0.0, 1.0], [1.0, 2.0], "k.")
+    with pytest.warns(MplCaptureWarning, match=r"marker='\$a\$'"):
+        ax.plot([0.0, 1.0], [1.0, 2.0], linestyle="none", marker="$a$")
+    # A markers-only line is never recorded as drawing nothing.
+    assert ax.lines[-1].marker == "o"
     with pytest.warns(MplCaptureWarning, match="xmin=/xmax="):
         ax.axhline(0.5, 0.0, 0.5)
     with pytest.warns(MplCaptureWarning, match="linestyle"):
@@ -527,3 +529,20 @@ def test_a_package_from_before_floating_label_keeps_its_span_labels() -> None:
 
     assert _decorator_label({"xLimit": {}, "label": "old"}) == "old"
     assert _decorator_label({"xLimit": {}, "floatingLabel": "new", "label": "old"}) == "new"
+
+
+def test_every_one_character_matplotlib_marker_is_captured_as_it_is(tmp_path: Path) -> None:
+    import warnings
+
+    fig, ax = mpl_subplots()
+    markers = [".", ",", "d", "X", "1", "|"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", MplCaptureWarning)
+        x = np.array([0.0, 1.0, 2.0])
+        for offset, marker in enumerate(markers):
+            ax.plot(x, np.array([offset, offset + 1.0, offset]), "k" + marker)
+    assert [line.marker for line in ax.lines] == markers
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    assert [line.get_marker() for line in figure.axes[0].get_lines()][: len(markers)] == markers

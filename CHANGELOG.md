@@ -58,6 +58,14 @@ versions may break things.
   unless `CapturingDataset(build_dir=...)` names one; and an unmodified
   lightspeed script's `lightspeed.mpl.plot_series(ax, spec)` is captured
   through lightspeed's plot-series hook. Needs lightspeed-series 0.0.3.
+- **`limelight-cli mpl-compare SCRIPT`** (and `limelight.mpl_compare.compare`):
+  runs a matplotlib script plainly and under `mpl_capture.capture()`, and
+  draws each figure both as matplotlib does and as Limelight does from the
+  captured package, at the same size and point scale - a PNG of each, a
+  difference image, a side-by-side, the share of pixels that differ, and
+  every capture warning, in `report.md`.
+- **Every one-character matplotlib marker** (`.`, `,`, `d`, `X`, `1`...`4`,
+  `|`, `_` and the rest) is a valid `marker`; before, only twelve were.
 - **`Index.regular_float(origin, step)`**, a regular index whose step is not
   a whole number: a uniformly sampled series' x.
 - **Shared y-axes.** Panels whose `yAxis` names the same `shareGroup` now

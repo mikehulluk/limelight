@@ -207,6 +207,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     desktop_parser.add_argument("--remove", action="store_true", help="Remove the entry instead")
 
+    compare_parser = subparsers.add_parser(
+        "mpl-compare",
+        help="Draw a matplotlib script's figures plainly and through Limelight, and compare them",
+        description=(
+            "Runs SCRIPT twice: as it is, saving each figure it makes, and under mpl_capture.capture(), "
+            "drawing each captured figure as Limelight does. Writes both PNGs, a difference image and a "
+            "side-by-side per figure, and report.md, to --out."
+        ),
+    )
+    compare_parser.add_argument("script", help="A Python script that draws with matplotlib")
+    compare_parser.add_argument("--out", help="Output folder (default: <script>-compare next to the script)")
+    compare_parser.add_argument("--dpi", type=float, default=100.0, help="Pixels per inch for both renders (default 100)")
+    compare_parser.add_argument(
+        "--threshold", type=float, default=None, help="How far (0..1) a pixel may differ before it counts (default 0.1)"
+    )
+
     args = parser.parse_args(argv)
     log_path = configure_logging()
     logger.info("Limelight CLI started with log file %s", log_path)
@@ -217,6 +233,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_login(args.url)
     if args.command == "logout":
         return _run_logout(args.resource)
+    if args.command == "mpl-compare":
+        return _run_mpl_compare(args.script, args.out, dpi=args.dpi, threshold=args.threshold)
     if args.command == "verify":
         return _run_verify(args.packages, allow_download=_download_policy(args.allow_downloads))
     if args.command == "pdf":
@@ -249,6 +267,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.exception("Unexpected Limelight failure")
         return 1
 
+    return 0
+
+
+def _run_mpl_compare(script: str, out: str | None, *, dpi: float, threshold: float | None) -> int:
+    from . import mpl_compare
+
+    script_path = Path(script)
+    out_dir = Path(out) if out is not None else script_path.with_name(f"{script_path.stem}-compare")
+    try:
+        results = mpl_compare.compare(
+            script_path, out_dir, dpi=dpi, threshold=mpl_compare.DEFAULT_THRESHOLD if threshold is None else threshold
+        )
+    except (FileNotFoundError, ValueError, LimelightError) as error:
+        print(f"mpl-compare: {error}", file=sys.stderr)
+        return 1
+    for result in results:
+        print(f"{result.figure_id}: {result.mismatch:.1%} of pixels differ  ({result.side_by_side_png})")
+    warnings_count = len(results[0].warnings) if results else 0
+    print(f"{warnings_count} capture warning(s); see {out_dir / 'report.md'}")
     return 0
 
 
