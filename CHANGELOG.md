@@ -7,6 +7,8 @@ versions may break things.
 
 ## [Unreleased]
 
+## [0.0.27] - 2026-11-15
+
 ### Changed
 
 - **The large-series cache is now its own package,
@@ -689,7 +691,8 @@ First release on PyPI, as `limelight-app`.
   `axes_action_add_rect_decorator`; bounds are dates on a calendar axis and
   numbers elsewhere.
 
-[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.26...HEAD
+[Unreleased]: https://github.com/mikehulluk/limelight/compare/v0.0.27...HEAD
+[0.0.27]: https://github.com/mikehulluk/limelight/compare/v0.0.26...v0.0.27
 [0.0.26]: https://github.com/mikehulluk/limelight/compare/v0.0.25...v0.0.26
 [0.0.25]: https://github.com/mikehulluk/limelight/compare/v0.0.24...v0.0.25
 [0.0.24]: https://github.com/mikehulluk/limelight/compare/v0.0.23...v0.0.24
