@@ -2450,6 +2450,145 @@ def figure_view_action(figure_id: str, action: AxesAction | str, *, panel: int =
     return FigureViewAction(ref=panel_axes_id(figure_id, panel), action=action)
 
 
+class FigureViewBuilder:
+    """A chainable builder for one FigureView of a figure already added to a
+    project - a zoom window, a shaded region, a reference line, layered on
+    top of the base figure's own panels without re-describing the data.
+
+    Each call appends a `FigureViewAction` targeting `panel` (the first,
+    unless said otherwise) and returns `self`, so a view reads as one
+    expression:
+
+        view = figure_view_builder("dt-scatter-zoom", id="dt-scatter-zoom-c1") \\
+            .xlim(1.5, 2.2) \\
+            .shade_regions(regions, colors=STEP_COLORS, y=(0.0, y_max)) \\
+            .hline(1.0, label="1.0s", color="#888888", alpha=0.5, linewidth=0.9)
+        markdown = view.story(project)
+
+    `shade_regions`/`shade`/`vline`/`hline` all accept `panel=` for a
+    multi-panel figure; `shade_regions` clips to whatever `xlim` last set on
+    this view unless its own `x=` overrides that.
+    """
+
+    def __init__(self, figure_id: str, *, id: str | None = None) -> None:
+        self.figure_id = figure_id
+        self.id = id
+        self.actions: list[FigureViewAction] = []
+        self._x_window: tuple[float, float] | None = None
+
+    def _add(self, action: AxesAction, panel: int) -> "FigureViewBuilder":
+        self.actions.append(figure_view_action(self.figure_id, action, panel=panel))
+        return self
+
+    def xlim(self, lower: float, upper: float, *, panel: int = 1) -> "FigureViewBuilder":
+        self._x_window = (lower, upper)
+        return self._add(axes_action_set_x_float_limits(lower, upper), panel)
+
+    def ylim(self, lower: float, upper: float, *, panel: int = 1) -> "FigureViewBuilder":
+        return self._add(axes_action_set_y_float_limits(lower, upper), panel)
+
+    def vline(
+        self,
+        x: float,
+        *,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        linewidth: float | None = None,
+        panel: int = 1,
+    ) -> "FigureViewBuilder":
+        return self._add(
+            axes_action_add_axis_window_decorator(lower=x, upper=x, label=label, color=color, alpha=alpha, linewidth=linewidth),
+            panel,
+        )
+
+    def hline(
+        self,
+        y: float,
+        *,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        linewidth: float | None = None,
+        panel: int = 1,
+    ) -> "FigureViewBuilder":
+        return self._add(
+            axes_action_add_y_axis_window_decorator(lower=y, upper=y, label=label, color=color, alpha=alpha, linewidth=linewidth),
+            panel,
+        )
+
+    def shade(
+        self,
+        *,
+        x: tuple[float, float],
+        y: tuple[float, float],
+        color: str | None = None,
+        alpha: float | None = None,
+        label: str | None = None,
+        panel: int = 1,
+    ) -> "FigureViewBuilder":
+        return self._add(
+            axes_action_add_rect_decorator(x_lower=x[0], x_upper=x[1], y_lower=y[0], y_upper=y[1], label=label, color=color, alpha=alpha),
+            panel,
+        )
+
+    def annotate(
+        self,
+        *,
+        start: tuple[float, float],
+        end: tuple[float, float] | None = None,
+        label: str | None = None,
+        color: str | None = None,
+        label_offset: tuple[float, float] | None = None,
+        panel: int = 1,
+    ) -> "FigureViewBuilder":
+        """An arrow (or, with `end` left unset, a point marker with a label)
+        at data coordinates `start`/`end`, as `axes_action_add_annotation`'s
+        `PlotArrow` takes them."""
+
+        arrow = PlotArrow(start=start, end=end if end is not None else start)
+        return self._add(axes_action_add_annotation(arrow, label=label, color=color, label_offset=label_offset), panel)
+
+    def shade_regions(
+        self,
+        regions: Sequence[tuple[float, float, str]],
+        *,
+        colors: Mapping[str, str],
+        y: tuple[float, float],
+        x: tuple[float, float] | None = None,
+        alpha: float = 0.25,
+        panel: int = 1,
+    ) -> "FigureViewBuilder":
+        """Shades each `(start, end, label)` region `colors.get(label)` gives
+        a color for, clipped to `x` (or, left unset, whatever `xlim()` last
+        set on this view); a region outside that window, or whose label
+        isn't in `colors`, is skipped."""
+
+        x_lower, x_upper = x if x is not None else (self._x_window or (None, None))
+        for start, end, label in regions:
+            color = colors.get(label)
+            if color is None:
+                continue
+            if x_lower is not None and end < x_lower:
+                continue
+            if x_upper is not None and start > x_upper:
+                continue
+            clipped_start = max(start, x_lower) if x_lower is not None else start
+            clipped_end = min(end, x_upper) if x_upper is not None else end
+            self.shade(x=(clipped_start, clipped_end), y=y, color=color, alpha=alpha, panel=panel)
+        return self
+
+    def story(self, project: "LimelightProject") -> str:
+        return project.story_figure(self.figure_id, id=self.id, actions=self.actions)
+
+
+def figure_view_builder(figure_id: str, *, id: str | None = None) -> FigureViewBuilder:
+    """A `FigureViewBuilder` for `figure_id` - see that class for the chainable
+    `.xlim()`/`.shade_regions()`/`.hline()`/... methods it offers."""
+
+    return FigureViewBuilder(figure_id, id=id)
+
+
 @dataclass(frozen=True)
 class PlotArrow:
     start: tuple[float, float]
@@ -2970,21 +3109,41 @@ class LimelightProject:
 
     def add_figure(
         self,
+        source: Any | None = None,
         *,
-        id: str,
-        title: str,
+        id: str | None = None,
+        title: str | None = None,
         panels: Sequence[Panel] = (),
         caption: str | None = None,
         size: FigureSize | None = None,
         map_specs: Sequence[MapSpec] = (),
         table_views: Sequence[TableViewSpec] = (),
         forms: Sequence[FormSpec] = (),
+        dataset_id: str | None = None,
+        provenance: "SourceProvenance | None" = None,
     ) -> FigureSpec:
         """A figure of however many panels and forms, each said in full.
 
         Every panel is a Panel and every form a FormSpec; `add_line_figure`
         is the case of one of each, named on the call.
+
+        `source`, given instead, is an `mpl_capture.CapturingFigure` (or
+        anything else with a matching `.add_to(project, **overrides)`
+        method): `project.add_figure(cap_fig)` alone is enough once
+        `cap_fig.configure(id=..., title=...)` has set what it needs; any
+        `id`/`title`/`caption`/`size`/`dataset_id`/`provenance` given here
+        too overrides what `configure()` set. `panels`/`map_specs`/
+        `table_views`/`forms` do not apply with `source` - a captured
+        figure's panels are its own `CapturingAxes`, not `Panel`s.
         """
+
+        if source is not None:
+            return source.add_to(
+                self, id=id, title=title, caption=caption, size=size, dataset_id=dataset_id, provenance=provenance
+            )
+
+        if id is None or title is None:
+            raise TypeError("add_figure needs id and title, either directly or via a CapturingFigure's configure()")
 
         figure_spec = FigureSpec(
             id=id,
@@ -2998,6 +3157,50 @@ class LimelightProject:
         )
         self.figure_specs.append(figure_spec)
         return figure_spec
+
+    def add_mpl_figure(
+        self,
+        *,
+        id: str,
+        title: str,
+        panels: Sequence[Any],
+        caption: str | None = None,
+        size: FigureSize | None = None,
+        dataset_id: str | None = None,
+        provenance: "SourceProvenance | None" = None,
+    ) -> FigureSpec:
+        """A figure built from `mpl_capture.CapturingAxes` panels: each one
+        drew on a real matplotlib Axes with ordinary `scatter`/`plot`/etc
+        calls (good for an instant preview) while recording the same calls
+        as artists. This registers one dataset holding every panel's
+        plotted arrays (by the column names `CapturingAxes` assigned) and
+        turns each panel into the matching `Panel` of the real figure - one
+        set of draw calls, no second description of the same data.
+
+        If `dataset_id` already names a dataset this project has (typically
+        another figure's, captured earlier), nothing is registered here -
+        these panels are trusted to have captured their arrays under that
+        dataset's actual column names (e.g. via another `CapturingFigure`'s
+        `name_for`), and just bind to it instead of duplicating it.
+
+        Any panel object with `.columns` (a `{name: values}` mapping) and
+        `.to_panel(data=...)` works here; `CapturingAxes` is simply the one
+        this module provides.
+        """
+
+        dataset_id = dataset_id or f"{id}-data"
+        if not any(dataset.id == dataset_id for dataset in (*self.datasets, *self.hdf_datasets)):
+            merged_columns: dict[str, Any] = {}
+            for panel in panels:
+                merged_columns.update(panel.columns)
+            self.add_csv_dataset(id=dataset_id, arrays=merged_columns, provenance=provenance)
+        return self.add_figure(
+            id=id,
+            title=title,
+            caption=caption,
+            size=size,
+            panels=[panel.to_panel(data=dataset_id) for panel in panels],
+        )
 
     def add_line_figure(
         self,

@@ -1,10 +1,10 @@
 """Pure matplotlib drawing for Panel artists and decorators.
 
 This is the one place a line's draw style, fill, and decorator shapes are
-defined. `qt_app.py` calls it to render a loaded package's figures, and
-anything else that wants to draw a panel the way the app does - straight
-from a script, before a package's dhall manifest exists - calls the same
-functions, so both end up drawing the same pixels from the same code.
+defined. `qt_app.py` calls it to render a loaded package's figures;
+`mpl_capture.py` calls it to draw a panel straight out of a script that is
+building one, before that panel ever goes through a package's dhall
+manifest. Both call sites end up drawing the same pixels from the same code.
 
 Nothing here knows about `LimelightRuntime`, loaded packages, or the writer's
 dataclasses - it only takes plain arrays and plain keyword styling, the

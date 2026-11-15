@@ -15,6 +15,9 @@ from .signing import (
     verify_manifest_signatures,
 )
 
+from .mpl_capture import CapturingAxes, CapturingDataset, CapturingFigure
+from .mpl_capture import capture as mpl_capture
+from .mpl_capture import subplots as mpl_subplots
 from .typography import SyntaxStyle, TextStyle, Typography
 from .writer import (
     ArraySpec,
@@ -28,6 +31,7 @@ from .writer import (
     FigureSize,
     FigureView,
     FigureViewAction,
+    FigureViewBuilder,
     FigureSpec,
     FormSpec,
     HdfArraySpec,
@@ -58,6 +62,7 @@ from .writer import (
     array,
     axes_action_add_annotation,
     axes_action_add_axis_window_decorator,
+    axes_action_add_y_axis_window_decorator,
     axes_action_add_rect_decorator,
     axes_action_add_utc_time_window_decorator,
     axes_action_set_x_float_limits,
@@ -65,6 +70,7 @@ from .writer import (
     axes_action_set_y_float_limits,
     axes_action_set_y_utc_time_limits,
     figure_view_action,
+    figure_view_builder,
     panel_axes_id,
     hdf_array,
     map_action_add_geojson_layer,
@@ -77,6 +83,9 @@ __all__ = [
     "ArraySpec",
     "AxisDataType",
     "AxesAction",
+    "CapturingAxes",
+    "CapturingDataset",
+    "CapturingFigure",
     "CellStyleRule",
     "ColumnFormat",
     "ColumnWidth",
@@ -85,6 +94,7 @@ __all__ = [
     "EpochOffset",
     "FigureView",
     "FigureViewAction",
+    "FigureViewBuilder",
     "FigureSize",
     "FigureSpec",
     "FormSpec",
@@ -123,6 +133,7 @@ __all__ = [
     "array",
     "axes_action_add_annotation",
     "axes_action_add_axis_window_decorator",
+    "axes_action_add_y_axis_window_decorator",
     "axes_action_add_rect_decorator",
     "axes_action_add_utc_time_window_decorator",
     "axes_action_set_x_float_limits",
@@ -130,6 +141,9 @@ __all__ = [
     "axes_action_set_y_float_limits",
     "axes_action_set_y_utc_time_limits",
     "figure_view_action",
+    "figure_view_builder",
+    "mpl_capture",
+    "mpl_subplots",
     "panel_axes_id",
     "generate_ed25519_keypair",
     "hdf_array",

@@ -31,6 +31,18 @@ versions may break things.
 - **Scatter marker edges.** `ScatterArtist`'s `edgeColor` and `edgeWidth`
   set each marker's outline, white and 0.45pt by default; `edgeWidth = 0.0`
   gives a dense cloud without a web of outlines.
+- **Build figures with ordinary matplotlib calls.** `limelight.mpl_subplots`
+  is `plt.subplots` with every Axes wrapped: `plot`, `scatter`,
+  `fill_between`, `axvspan`/`axhspan`, `axvline`/`axhline`, limits, labels
+  and scales draw a normal preview *and* record the same calls, and
+  `project.add_figure(fig)` turns them into the interactive figure, its data
+  registered once however many panels share it. `with limelight.mpl_capture()`
+  does the same for an unmodified script's `plt.subplots`; anything not
+  captured still draws in the preview.
+- **`FigureViewBuilder`**, from `figure_view_builder(...)` or a captured
+  figure's `.view()`: a figure view written as one chain -
+  `.xlim()`, `.shade()`, `.shade_regions()`, `.vline()`, `.hline()`,
+  `.annotate()`, then `.story(project)`.
 
 ### Changed
 
