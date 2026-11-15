@@ -1210,7 +1210,7 @@ class LimelightRuntime:
             color_table, color_column = refs.parse_column_ref(color_ref)
             color_rows = y_rows if color_table == y_table else self.rows_for_source(color_table)
             raw_color_values = [row.get(color_column) for row in color_rows]
-            color_label = color_column
+            color_label = artist.get("colorLabel") if artist.get("colorLabel") is not None else color_column
             non_null = [value for value in raw_color_values if value is not None]
             if non_null and all(_to_float(value) is not None for value in non_null):
                 color_kind = "continuous"

@@ -371,3 +371,70 @@ def test_limelight_mpl_capture_is_the_module() -> None:
 
     assert limelight.mpl_capture is module
     assert limelight.mpl_subplots is module.subplots
+
+
+# --- grids and colour bars ---------------------------------------------------
+
+
+def _positions(figure: Figure) -> list[tuple[float, ...]]:
+    figure.draw_without_rendering()
+    return [tuple(round(float(value), 3) for value in axes.get_position().bounds) for axes in figure.axes]
+
+
+def test_a_grid_keeps_its_layout_in_the_app(tmp_path: Path) -> None:
+    x = np.linspace(0.0, 1.0, 10)
+    fig, grid = mpl_subplots(2, 2, figsize=(8, 5))
+    for axes in grid.flat:
+        axes.plot(x, x)
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    assert all(panel.frame is not None for panel in fig.panels)
+
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    figure.set_size_inches(8, 5)
+    assert _positions(figure) == _positions(fig.mpl_figure)
+
+
+def test_a_single_column_still_stacks() -> None:
+    fig, (top, bottom) = mpl_subplots(2, 1)
+    top.plot([0.0, 1.0], [0.0, 1.0])
+    bottom.plot([0.0, 1.0], [1.0, 0.0])
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    assert [panel.frame for panel in fig.panels] == [None, None]
+
+
+def test_a_grid_colour_bar_sits_beside_its_panel_as_in_the_preview(tmp_path: Path) -> None:
+    x = np.linspace(0.0, 1.0, 10)
+    fig, grid = mpl_subplots(1, 2, figsize=(8, 3))
+    grid[0].plot(x, x)
+    points = grid[1].scatter(x, x, c=x)
+    fig.colorbar(points, ax=grid[1], label="level")
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    figure.set_size_inches(8, 3)
+    assert _positions(figure) == _positions(fig.mpl_figure)
+    assert figure.axes[-1].get_ylabel() == "level"
+
+
+def test_a_colour_bar_appears_only_when_the_script_made_one(tmp_path: Path) -> None:
+    x = np.linspace(0.0, 1.0, 10)
+    fig, ax = mpl_subplots()
+    ax.scatter(x, x, c=x)
+    project = LimelightProject(title="T", authors=["Test"])
+    fig.add_to(project, id="fig", title="Fig")
+    figure, _ = _write_and_render(project, tmp_path, "fig")
+    assert len(figure.axes) == 1
+
+
+def test_a_framed_colour_bar_with_no_room_beside_its_frame_takes_a_share_of_it() -> None:
+    from limelight.qt_app import _add_colorbar
+
+    figure = Figure()
+    axes = figure.add_axes((0.6, 0.1, 0.38, 0.8))
+    colorbar = _add_colorbar(axes, axes.scatter([0, 1], [0, 1], c=[0, 1]))
+    figure.draw_without_rendering()
+    left, _, width, _ = colorbar.ax.get_position().bounds
+    assert left + width <= 1.0

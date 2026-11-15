@@ -39,7 +39,9 @@ versions may break things.
   matplotlib's own call shapes (format strings, `plot(y)`, `lw=`, ...), and
   `project.add_figure(fig)` turns them into the interactive figure, its data
   registered once however many panels share it. `sharex`/`sharey` and
-  `height_ratios` carry over. `with limelight.mpl_capture.capture()` does the
+  `height_ratios` carry over; a grid of more than one column keeps the
+  layout matplotlib gave it, and a scatter has a colour bar exactly when the
+  script made one. `with limelight.mpl_capture.capture()` does the
   same for an unmodified script's `plt.subplots`. Whatever the interactive
   figure cannot show still draws in the preview and raises an
   `MplCaptureWarning` saying what will differ - nothing is dropped silently.
@@ -48,7 +50,10 @@ versions may break things.
 - **`drawStyle = stepsMid`**, a step halfway between samples, as
   matplotlib's `steps-mid`.
 - **`ScatterArtist` takes `alpha` and `size`** (one marker area for every
-  point, when `sizeBy` gives none).
+  point, when `sizeBy` gives none), and `colorbar` and `colorLabel`: a
+  numeric `colorBy` still draws a colour bar by default, now labelled
+  `colorLabel` when given; `colorbar = Some False` leaves it out. A panel
+  placed by `frame` keeps its frame, with the bar just beside it.
 - **`FigureViewBuilder`**, from `figure_view_builder(...)` or a captured
   figure's `.view()`: a figure view written as one chain -
   `.xlim()`, `.shade()`, `.shade_regions()`, `.vline()`, `.hline()`,

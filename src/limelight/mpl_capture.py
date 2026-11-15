@@ -348,7 +348,14 @@ class CapturingAxes:
         # This panel's height relative to the others in a stacked figure
         # (`subplots(height_ratios=...)` sets it); unset is 1.
         self.height: float | None = None
+        # The panel's exact place in the figure, (left, bottom, width,
+        # height) as figure fractions, for a grid that is not one column -
+        # `CapturingFigure.add_to` sets it from where matplotlib put it.
+        self.frame: tuple[float, float, float, float] | None = None
         self._plotted: list[_Plotted] = []
+        # Each recorded scatter's preview collection, to see at add time
+        # whether the script gave it a colour bar.
+        self._scatter_collections: list[Any] = []
 
     @property
     def columns(self) -> dict[str, Any]:
@@ -762,6 +769,7 @@ class CapturingAxes:
                 edge_width=captured_edge_width,
             )
         )
+        self._scatter_collections.append(collection)
         uncaptured.report()
         return collection
 
@@ -939,6 +947,20 @@ class CapturingAxes:
             raise AttributeError(name)
         return getattr(self.mpl_axes, name)
 
+    @staticmethod
+    def _with_colorbar(scatter: ScatterArtist, collection: Any) -> ScatterArtist:
+        """A per-point-coloured scatter has a colour bar in the interactive
+        figure exactly when the script gave it one (`fig.colorbar(sc)` or
+        `plt.colorbar(sc)`), labelled as the script labelled it."""
+
+        if scatter.color_by is None:
+            return scatter
+        colorbar = getattr(collection, "colorbar", None)
+        if colorbar is None:
+            return dataclasses.replace(scatter, colorbar=False)
+        label = colorbar.ax.get_ylabel() if colorbar.orientation == "vertical" else colorbar.ax.get_xlabel()
+        return dataclasses.replace(scatter, colorbar=True, color_label=label)
+
     def to_panel(self, *, data: str | None = None, height: float | None = None) -> Panel:
         """This panel as a `Panel`, bound to the package dataset its arrays
         went into - `data`, or the `dataset_id` its `CapturingDataset` was
@@ -958,12 +980,13 @@ class CapturingAxes:
 
         return Panel(
             lines=[bound(line) for line in self.lines],
-            scatters=[bound(scatter) for scatter in self.scatters],
+            scatters=[bound(self._with_colorbar(scatter, collection)) for scatter, collection in zip(self.scatters, self._scatter_collections)],
             actions=self.actions,
             data=data,
             title=self.title,
             id=self.panel_id,
             height=height if height is not None else self.height,
+            frame=self.frame,
             x_axis=AxisDataType.continuous(label=self.x_label, scale=self.x_scale, share_group=self.share_x),
             y_axis=AxisDataType.continuous(label=self.y_label, scale=self.y_scale, share_group=self.share_y),
         )
@@ -1000,6 +1023,20 @@ class CapturingFigure:
         self.caption: str | None = None
         self.size: Any | None = None
         self.provenance: Any | None = None
+        # How many columns `subplots()` laid the panels out in: more than one,
+        # and the interactive figure places each panel where the preview
+        # has it rather than stacking them.
+        self.ncols = 1
+
+    def place_panels(self) -> None:
+        """Sets each panel's `frame` to where matplotlib laid it out - after
+        any `tight_layout()` or layout engine. A colour bar goes beside the
+        frame in the interactive figure, as it does here."""
+
+        self.mpl_figure.draw_without_rendering()
+        for panel in self.panels:
+            left, bottom, width, height = panel.mpl_axes.get_position().bounds
+            panel.frame = (float(left), float(bottom), float(width), float(height))
 
     @property
     def dataset_id(self) -> str | None:
@@ -1098,6 +1135,8 @@ class CapturingFigure:
             # caller can read the dataset id this figure actually ended up
             # registered under, rather than guess it matches that default.
             self.dataset_id = f"{self.id}-data"
+        if self.ncols > 1:
+            self.place_panels()
         return project.add_mpl_figure(
             id=self.id,
             title=self.title,
@@ -1163,8 +1202,9 @@ def subplots(
     (`fig, (ax1, ax2) = subplots(2, 1)`, `axs[0, 1]`, `axs.flat`) is
     unaffected. `sharex`/`sharey` link the panels' axes in the real figure
     as they do in matplotlib (`True`, `"col"`, `"row"`); `share_x`/
-    `share_y` name that group explicitly. A stacked figure's `height_ratios` become the panels'
-    heights.
+    `share_y` name that group explicitly. A single column's `height_ratios`
+    become the panels' heights; a grid of more than one column keeps the
+    layout matplotlib gives it, each panel placed where the preview has it.
 
     `dataset`, given, is a `CapturingDataset` this figure's panels register
     their arrays into instead of a fresh one - pass the same `CapturingDataset`
@@ -1176,8 +1216,6 @@ def subplots(
     mpl_fig, mpl_axes = _REAL_SUBPLOTS(nrows, ncols, sharex=sharex, sharey=sharey, squeeze=False, **kwargs)
 
     uncaptured = _Uncaptured("subplots")
-    if ncols > 1:
-        uncaptured.add(f"ncols={ncols} (the interactive figure stacks every panel in one column)")
     height_ratios = kwargs.get("height_ratios") or (kwargs.get("gridspec_kw") or {}).get("height_ratios")
 
     x_groups = _share_groups(nrows, ncols, sharex, share_x, axis="x")
@@ -1196,6 +1234,7 @@ def subplots(
     uncaptured.report()
 
     capturing_fig = CapturingFigure(mpl_fig, panels, dataset=dataset)
+    capturing_fig.ncols = ncols
     if squeeze:
         return capturing_fig, wrapped.item() if wrapped.size == 1 else wrapped.squeeze()
     return capturing_fig, wrapped

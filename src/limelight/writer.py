@@ -513,6 +513,10 @@ def _optional_double(value: float | None) -> str:
     return f"Some {_dhall_float(value)}" if value is not None else "None Double"
 
 
+def _optional_bool(value: bool | None) -> str:
+    return "None Bool" if value is None else ("Some True" if value else "Some False")
+
+
 def _optional_natural(value: int | None) -> str:
     return f"Some {value}" if value is not None else "None Natural"
 
@@ -1403,6 +1407,10 @@ class ScatterArtist:
     # Every marker's area in points squared (24 when unset), unless size_by
     # gives one per point.
     size: float | None = None
+    # A numeric color_by draws a colour bar unless colorbar=False, labelled
+    # color_label (the color_by column's name when unset).
+    colorbar: bool | None = None
+    color_label: str | None = None
     # Each marker's outline: white and 0.45pt wide when unset. Set
     # edge_width=0.0 (or edge_color matching color) for a dense scatter
     # with no visible edge between overlapping markers.
@@ -1841,6 +1849,8 @@ class FigureSpec:
                     ("marker", _optional_text(scatter.marker)),
                     ("alpha", _optional_double(scatter.alpha)),
                     ("size", _optional_double(scatter.size)),
+                    ("colorbar", _optional_bool(scatter.colorbar)),
+                    ("colorLabel", _optional_display_text(scatter.color_label)),
                     ("edgeColor", _optional_text(scatter.edge_color)),
                     ("edgeWidth", _optional_double(scatter.edge_width)),
                     ("visibleWhen", _optional_expr(

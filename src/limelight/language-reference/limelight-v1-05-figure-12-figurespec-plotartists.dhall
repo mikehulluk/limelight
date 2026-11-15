@@ -62,7 +62,9 @@ let LineArtist =
 -- a web of faint lines between overlapping markers; set `edgeWidth = 0.0`
 -- (or match `edgeColor` to `color`) for a dense cloud with no visible edge.
 -- `size` is every marker's area in points squared (24 when unset) when
--- `sizeBy` does not give one per point.
+-- `sizeBy` does not give one per point. A numeric `colorBy` draws a colour
+-- bar beside the panel unless `colorbar = Some False`, labelled `colorLabel`
+-- (the `colorBy` column's name when unset).
 let ScatterArtist =
       { id : Core.Id
       , x : Text
@@ -74,6 +76,8 @@ let ScatterArtist =
       , marker : Optional Text
       , alpha : Optional Double
       , size : Optional Double
+      , colorbar : Optional Bool
+      , colorLabel : Optional Core.DisplayText
       , edgeColor : Optional Text
       , edgeWidth : Optional Double
       , visibleWhen : Optional TextControlParameterMatch

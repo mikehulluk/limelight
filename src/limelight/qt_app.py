@@ -1769,6 +1769,33 @@ def _share_y_axes(panels: Sequence[Any], axes_specs: Sequence[dict[str, Any]]) -
             axes.sharey(leader)
 
 
+def _add_colorbar(axes: Any, mappable: Any) -> Any:
+    """A colour bar to the right of `axes`.
+
+    A stacked panel gives up some of its width for it, as matplotlib's
+    `figure.colorbar(ax=...)` does. A panel placed by `frame` keeps its frame
+    - the frame is where the author put the plot - and the bar goes just
+    outside it, where `figure.colorbar` would have put it had the frame been
+    the part of the panel left after the bar took its share; unless that is
+    off the figure, when the bar takes its share of the frame after all.
+    """
+    if axes.get_subplotspec() is not None:
+        return axes.figure.colorbar(mappable, ax=axes)
+    # matplotlib's defaults: the bar's slot is `fraction` of the original
+    # width, after a `pad` gap, and the plot keeps the rest.
+    fraction, pad, aspect = 0.15, 0.05, 20
+    left, bottom, width, height = axes.get_position().bounds
+    original_width = width / (1.0 - fraction - pad)
+    if left + original_width > 1.0:
+        # No room beside a frame that reaches the figure's edge: the bar
+        # takes its share of the frame instead.
+        return axes.figure.colorbar(mappable, ax=axes)
+    cax = axes.figure.add_axes((left + width + pad * original_width, bottom, fraction * original_width, height))
+    cax.set_box_aspect(aspect)
+    cax.set_anchor((0.0, 0.5))
+    return axes.figure.colorbar(mappable, cax=cax)
+
+
 def _draw_scatter_artist(
     axes: Any,
     artist: dict[str, Any],
@@ -1803,9 +1830,10 @@ def _draw_scatter_artist(
             alpha=alpha_value,
             zorder=3,
         )
-        colorbar = axes.figure.colorbar(collection, ax=axes)
-        colorbar.set_label(series.color_label, fontproperties=text.axis_label, labelpad=text.axis_label_pad_pt)
-        text.style_ticks(colorbar.ax)
+        if artist.get("colorbar") is not False:
+            colorbar = _add_colorbar(axes, collection)
+            colorbar.set_label(series.color_label, fontproperties=text.axis_label, labelpad=text.axis_label_pad_pt)
+            text.style_ticks(colorbar.ax)
     elif series.color_kind == "categorical":
         palette = matplotlib.colormaps["tab10"].colors
         categories: list[str] = []
